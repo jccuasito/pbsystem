@@ -1,7 +1,9 @@
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 
 const isDark = ref(false)
+const email = ref(''); const message = ref(''); const busy = ref(false)
+async function submit() { busy.value = true; try { message.value = (await $fetch<any>('/api/auth/forgot-password', { method: 'POST', body: { email: email.value } })).message } finally { busy.value = false } }
 
 onMounted(() => {
   const savedTheme = localStorage.getItem('dja-theme')
@@ -40,12 +42,12 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
           <div class="auth-panel__inner">
             <h2 id="forgot-title">Forgot password?</h2>
             <p class="auth-panel__lead">Enter the email address linked to your account and we'll send you a reset link.</p>
-            <form class="auth-form" @submit.prevent>
+            <form class="auth-form" @submit.prevent="submit">
               <div class="auth-field">
                 <label for="forgot-email">Email address</label>
-                <input id="forgot-email" type="email" autocomplete="email" placeholder="name@company.com" required />
+                <input id="forgot-email" v-model="email" type="email" autocomplete="email" placeholder="name@company.com" required />
               </div>
-              <AppButton type="submit" class="auth-submit">Send reset link <span>&rarr;</span></AppButton>
+              <p v-if="message" style="color:#087443">{{ message }}</p><AppButton type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Sending…' : 'Send reset link' }} <span>&rarr;</span></AppButton>
             </form>
             <p class="auth-switch">Remembered your password? <NuxtLink to="/loginscreen">Log in</NuxtLink></p>
           </div>
