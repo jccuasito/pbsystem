@@ -1,6 +1,6 @@
-import pool from '~/server/connections/dbconnect'
-import { verifyGoogleToken } from '~/server/connections/googleAuth'
-import { signToken } from '~/server/connections/jwt'
+import dbconnect from '../../connection/dbconnect'
+   import jwt from '../../connection/jwt'
+   import googleAuth from '../../connection/googleAuth'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)

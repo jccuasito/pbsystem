@@ -1,21 +1,31 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
+import EmailVerification from '../../../components/modals/emailverification.vue'
 
 const isDark = ref(false)
-const form = ref({ firstName: '', lastName: '', gender: '', email: '', password: '', confirmPassword: '', departmentId: null as number | null })
-const departments = ref<any[]>([]); const error = ref(''); const message = ref(''); const busy = ref(false)
+const form = ref({ firstName: '', lastName: '', gender: '', departmentName: '', email: '', password: '', confirmPassword: '' })
+const error = ref(''); const message = ref(''); const busy = ref(false)
 const googleReady = ref(false)
 const googleCodeClient = ref<any>(null)
-const googleSelected = ref(false); const showVerification = ref(false); const verificationCode = ref(''); const verificationMessage = ref('')
-async function register() { error.value = ''; message.value = ''; if (form.value.password !== form.value.confirmPassword) { error.value = 'Passwords do not match.'; return }; busy.value = true; try { const result: any = await $fetch('/api/auth/register', { method: 'POST', body: form.value }); message.value = result.message; showVerification.value = Boolean(result.requiresVerification) } catch (e: any) { error.value = e.data?.statusMessage || 'Unable to create account.' } finally { busy.value = false } }
+const googleSelected = ref(false); const showVerification = ref(false); const verificationMessage = ref(''); const verifyingCode = ref(false)
+async function register() {
+  error.value = ''; message.value = ''
+  if (!form.value.firstName.trim() || !form.value.lastName.trim() || !form.value.gender || !form.value.email.trim() || !form.value.password) { error.value = 'First name, last name, gender, email, and password are required.'; return }
+  if (form.value.password.length < 12 || !/[a-z]/i.test(form.value.password) || !/\d/.test(form.value.password)) { error.value = 'Password must have at least 12 characters and include letters and numbers.'; return }
+  if (form.value.password !== form.value.confirmPassword) { error.value = 'Passwords do not match.'; return }
+  busy.value = true
+  try { const result: any = await $fetch('/api/auth/register', { method: 'POST', body: form.value }); message.value = result.message; showVerification.value = Boolean(result.requiresVerification) }
+  catch (e: any) { console.error('Signup failed:', e); error.value = e.data?.statusMessage || e.data?.message || e.message || 'Unable to create account.' }
+  finally { busy.value = false }
+}
 async function googleSignup(response: { code?: string; error?: string }) { if (!response.code) { error.value = response.error || 'Google sign-up was cancelled.'; return }; error.value = ''; busy.value = true; try { const result: any = await $fetch('/api/auth/google-code', { method: 'POST', body: { code: response.code, intent: 'signup' } }); form.value.firstName = result.profile.firstName; form.value.lastName = result.profile.lastName; form.value.email = result.profile.email; googleSelected.value = true; message.value = 'Google account selected. Complete the remaining fields, then create your account.' } catch (e: any) { error.value = e.data?.statusMessage || 'Google sign-up failed.' } finally { busy.value = false } }
-async function verifyEmail() { verificationMessage.value = ''; try { verificationMessage.value = (await $fetch<any>('/api/auth/verify-email', { method: 'POST', body: { email: form.value.email, code: verificationCode.value } })).message; setTimeout(() => navigateTo('/loginscreen'), 1200) } catch (e: any) { verificationMessage.value = e.data?.statusMessage || 'Unable to verify code.' } }
+async function verifyEmail(code: string) { verificationMessage.value = ''; verifyingCode.value = true; try { verificationMessage.value = (await $fetch<any>('/api/auth/verify-email', { method: 'POST', body: { email: form.value.email, code } })).message; setTimeout(() => navigateTo('/loginscreen'), 900) } catch (e: any) { verificationMessage.value = e.data?.statusMessage || e.data?.message || 'Unable to verify code.' } finally { verifyingCode.value = false } }
+function openVerification() { if (!form.value.email.trim()) { error.value = 'Enter the email address where the verification code was sent.'; return }; verificationMessage.value = ''; showVerification.value = true }
 function startGoogle() { error.value = ''; if (!googleReady.value || !googleCodeClient.value) { error.value = 'Google sign-in is still loading. Please try again.'; return }; googleCodeClient.value.requestCode() }
 
 onMounted(async () => {
   const savedTheme = localStorage.getItem('dja-theme')
   isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
-  try { departments.value = (await $fetch<any>('/api/auth/departments')).departments } catch { /* form still works without an optional department */ }
   const id = useRuntimeConfig().public.googleClientId; if (!id) return
   const script = document.createElement('script'); script.src = 'https://accounts.google.com/gsi/client'; script.async = true; script.onload = () => { const google = (window as any).google; googleCodeClient.value = google?.accounts.oauth2.initCodeClient({ client_id: id, scope: 'openid email profile', ux_mode: 'popup', callback: googleSignup }); googleReady.value = Boolean(googleCodeClient.value) }; document.head.appendChild(script)
 })
@@ -45,13 +55,13 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
           <div class="auth-panel__inner">
             <h2 id="signup-title">Create your account</h2>
             <p class="auth-panel__lead">Set up your secure DJA Payroll access.</p>
-            <form class="auth-form" @submit.prevent="register">
+            <form class="auth-form" novalidate @submit.prevent="register">
               <div class="auth-form__grid"><div class="auth-field"><label for="first-name">First name</label><input id="first-name" v-model="form.firstName" autocomplete="given-name" placeholder="Juan" required /></div><div class="auth-field"><label for="last-name">Last name</label><input id="last-name" v-model="form.lastName" autocomplete="family-name" placeholder="Dela Cruz" required /></div></div>
-              <div class="auth-form__grid"><div class="auth-field"><label for="gender">Gender</label><select id="gender" v-model="form.gender" required><option value="" disabled>Select</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></div><div class="auth-field"><label for="department">Department (optional)</label><select id="department" v-model="form.departmentId"><option :value="null">Select</option><option v-for="department in departments" :key="department.DepartmentID" :value="department.DepartmentID">{{ department.DepartmentName }}</option></select></div></div>
+              <div class="auth-form__grid"><div class="auth-field"><label for="gender">Gender</label><select id="gender" v-model="form.gender" required><option value="" disabled>Select</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></div><div class="auth-field"><label for="department">Department (optional)</label><input id="department" v-model.trim="form.departmentName" autocomplete="organization" maxlength="100" placeholder="e.g. Human Resources" /></div></div>
               <div class="auth-field"><label for="signup-email">Email address</label><input id="signup-email" v-model="form.email" type="email" autocomplete="email" placeholder="name@company.com" required /></div>
               <div class="auth-field"><label for="new-password">Password</label><input id="new-password" v-model="form.password" type="password" autocomplete="new-password" placeholder="12+ chars, letters and numbers" minlength="12" required /></div>
               <div class="auth-field"><label for="confirm-password">Confirm password</label><input id="confirm-password" v-model="form.confirmPassword" type="password" autocomplete="new-password" placeholder="Re-enter your password" minlength="12" required /></div>
-              <p v-if="error" role="alert" style="color:#b42318">{{ error }}</p><p v-if="message" style="color:#8ff0bc">{{ message }}</p><AppButton type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Creating…' : 'Create account' }} <span>&rarr;</span></AppButton>
+              <p v-if="error" role="alert" aria-live="polite" style="color:#ffb4aa">{{ error }}</p><p v-if="message" aria-live="polite" style="color:#8ff0bc">{{ message }}</p><button v-if="message.includes('verification code')" type="button" class="auth-verify-link" @click="openVerification">Enter verification code</button><button type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Creating…' : 'Create account' }} <span>&rarr;</span></button>
             </form>
             <div class="auth-divider">or</div>
             <button type="button" class="auth-google-btn" :disabled="busy" @click="startGoogle">
@@ -68,15 +78,7 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
           <div class="auth-line"></div><div class="auth-orb"></div>
         </section>
       </main>
-      <div v-if="showVerification" class="verification-modal" role="dialog" aria-modal="true" aria-labelledby="verification-title">
-        <div class="verification-modal__card">
-          <h2 id="verification-title">Verify your email</h2>
-          <p>We sent a 6-digit code to <strong>{{ form.email }}</strong>.</p>
-          <input v-model="verificationCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" aria-label="Verification code" />
-          <p v-if="verificationMessage" :style="verificationMessage.startsWith('Email verified') ? 'color:#087443' : 'color:#b42318'">{{ verificationMessage }}</p>
-          <button type="button" class="auth-submit" @click="verifyEmail">Verify code</button>
-        </div>
-      </div>
+      <EmailVerification v-model="showVerification" :email="form.email" :error="verificationMessage" :busy="verifyingCode" @verify="verifyEmail" />
     </div>
   </div>
 </template>

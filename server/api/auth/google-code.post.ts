@@ -12,9 +12,9 @@ export default defineEventHandler(async (event) => {
   try { google = await verifyGoogleAuthorizationCode(code) } catch { throw createError({ statusCode: 401, statusMessage: 'Google authorization could not be verified.' }) }
   if (!google.email || !google.emailVerified) throw createError({ statusCode: 403, statusMessage: 'A verified Google email is required.' })
   if (intent === 'signup') {
-    const [existing] = await pool.execute<any[]>('SELECT UserID FROM `user` WHERE GoogleID = ? OR Email = ? LIMIT 1', [google.googleId, google.email.toLowerCase()])
-    if (existing.length) throw createError({ statusCode: 409, statusMessage: 'An account already exists for this Google email. Please use Continue with Google to log in.' })
-    setCookie(event, 'pbs_google_signup', signToken({ signup: true, googleId: google.googleId, email: google.email.toLowerCase(), firstName: google.firstName, lastName: google.lastName }), { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 * 15 })
+    const [existing] = await pool.execute<any[]>('SELECT UserID, Password FROM `user` WHERE GoogleID = ? OR Email = ? LIMIT 1', [google.googleId, google.email.toLowerCase()])
+    if (existing.length && existing[0].Password) throw createError({ statusCode: 409, statusMessage: 'An account already exists for this Google email. Please use Continue with Google to log in.' })
+    setCookie(event, 'pbs_google_signup', signToken({ signup: true, completeUserId: existing[0]?.UserID || null, googleId: google.googleId, email: google.email.toLowerCase(), firstName: google.firstName, lastName: google.lastName }), { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 * 15 })
     return { profile: { firstName: google.firstName || '', lastName: google.lastName || '', email: google.email.toLowerCase() } }
   }
   const connection = await pool.getConnection()
