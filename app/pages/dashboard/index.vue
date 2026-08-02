@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from '#app'
+import LogoutAlert from '../../../components/alertmessage/logoutalert.vue'
 
 const route = useRoute()
 
@@ -9,6 +10,8 @@ const isPinned = ref(false)
 const isHovering = ref(false)
 const isMobileNavOpen = ref(false)
 const currentUser = ref<any>(null)
+const showLogoutAlert = ref(false)
+const loggingOut = ref(false)
 
 onMounted(() => {
   const savedTheme = localStorage.getItem('dja-theme')
@@ -138,8 +141,26 @@ const statusClass = (status) => 'status-badge status-badge--' + status.toLowerCa
 
 const userInitials = computed(() => currentUser.value ? `${currentUser.value.firstName[0]}${currentUser.value.lastName[0]}`.toUpperCase() : '')
 const userName = computed(() => currentUser.value ? `${currentUser.value.firstName} ${currentUser.value.lastName}` : '')
+const userDepartment = computed(() => currentUser.value?.departmentName || 'Unassigned')
+
 async function logout() { await $fetch('/api/auth/logout', { method: 'POST' }); await navigateTo('/loginscreen') }
-onMounted(async () => { try { currentUser.value = (await $fetch<any>('/api/auth/me')).user } catch { await navigateTo('/loginscreen') } })
+
+async function confirmLogout() {
+  loggingOut.value = true
+  try { await logout() } finally { loggingOut.value = false; showLogoutAlert.value = false }
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(async () => {
+  try { currentUser.value = (await $fetch<any>('/api/auth/me')).user } catch { await navigateTo('/loginscreen') }
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onBeforeUnmount(() => { window.removeEventListener('beforeunload', handleBeforeUnload) })
 </script>
 
 <template>
@@ -216,12 +237,16 @@ onMounted(async () => { try { currentUser.value = (await $fetch<any>('/api/auth/
         </nav>
 
         <div class="dash-sidebar__footer">
-          <span class="dash-avatar">{{ userInitials }}</span>
-          <div class="dash-sidebar__user">
+          <NuxtLink to="/userprofile/viewprofile" class="dash-avatar" :title="userName">
+            <img v-if="currentUser?.image" :src="currentUser.image" alt="" />
+            <template v-else>{{ userInitials }}</template>
+          </NuxtLink>
+          <NuxtLink to="/userprofile/viewprofile" class="dash-sidebar__user">
             <strong>{{ userName }}</strong>
             <small>{{ currentUser?.userType || 'User' }}</small>
-          </div>
-          <button type="button" class="dash-logout" aria-label="Log out" title="Log out" @click="logout">
+            <small style="display:block;opacity:.75">{{ userDepartment }}</small>
+          </NuxtLink>
+          <button type="button" class="dash-logout" aria-label="Log out" title="Log out" @click="showLogoutAlert = true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
           </button>
         </div>
@@ -242,10 +267,13 @@ onMounted(async () => { try { currentUser.value = (await $fetch<any>('/api/auth/
             <button type="button" class="dash-icon-btn" aria-label="Notifications">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6.5H4c.5-1 2-2.5 2-6.5Z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>
             </button>
-            <div class="dash-user-chip">
-              <span class="dash-avatar">{{ userInitials }}</span>
+            <NuxtLink to="/userprofile/viewprofile" class="dash-user-chip">
+              <span class="dash-avatar">
+                <img v-if="currentUser?.image" :src="currentUser.image" alt="" />
+                <template v-else>{{ userInitials }}</template>
+              </span>
               <span>{{ userName }}</span>
-            </div>
+            </NuxtLink>
           </div>
         </header>
 
@@ -259,7 +287,7 @@ onMounted(async () => { try { currentUser.value = (await $fetch<any>('/api/auth/
           </div>
 
           <section class="dash-stats">
-            <article v-for="stat in stats" :key="stat.label" class="dash-stat-card">
+            <article v-for="stat in stats" :key="stat.label" class="dash-stat-card" :class="`dash-stat-card--${stat.icon}`">
               <div class="dash-stat-card__top">
                 <span class="dash-stat-card__icon" v-html="iconSvg(stat.icon)"></span>
                 <span class="dash-stat-card__trend" :class="`dash-stat-card__trend--${stat.trendType}`">{{ stat.trend }}</span>
@@ -307,6 +335,8 @@ onMounted(async () => { try { currentUser.value = (await $fetch<any>('/api/auth/
           </section>
         </main>
       </div>
+
+      <LogoutAlert v-model="showLogoutAlert" :busy="loggingOut" :dark="isDark" @confirm="confirmLogout" />
     </div>
   </div>
 </template>
