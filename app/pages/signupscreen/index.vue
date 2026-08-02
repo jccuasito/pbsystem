@@ -5,6 +5,7 @@ import EmailVerification from '../../../components/modals/emailverification.vue'
 const isDark = ref(false)
 const form = ref({ firstName: '', lastName: '', gender: '', departmentName: '', email: '', password: '', confirmPassword: '' })
 const error = ref(''); const message = ref(''); const busy = ref(false)
+const showPassword = ref(false); const showConfirmPassword = ref(false)
 const googleReady = ref(false)
 const googleCodeClient = ref<any>(null)
 const googleSelected = ref(false); const showVerification = ref(false); const verificationMessage = ref(''); const verifyingCode = ref(false)
@@ -59,8 +60,26 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
               <div class="auth-form__grid"><div class="auth-field"><label for="first-name">First name</label><input id="first-name" v-model="form.firstName" autocomplete="given-name" placeholder="Juan" required /></div><div class="auth-field"><label for="last-name">Last name</label><input id="last-name" v-model="form.lastName" autocomplete="family-name" placeholder="Dela Cruz" required /></div></div>
               <div class="auth-form__grid"><div class="auth-field"><label for="gender">Gender</label><select id="gender" v-model="form.gender" required><option value="" disabled>Select</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></div><div class="auth-field"><label for="department">Department (optional)</label><input id="department" v-model.trim="form.departmentName" autocomplete="organization" maxlength="100" placeholder="e.g. Human Resources" /></div></div>
               <div class="auth-field"><label for="signup-email">Email address</label><input id="signup-email" v-model="form.email" type="email" autocomplete="email" placeholder="name@company.com" required /></div>
-              <div class="auth-field"><label for="new-password">Password</label><input id="new-password" v-model="form.password" type="password" autocomplete="new-password" placeholder="12+ chars, letters and numbers" minlength="12" required /></div>
-              <div class="auth-field"><label for="confirm-password">Confirm password</label><input id="confirm-password" v-model="form.confirmPassword" type="password" autocomplete="new-password" placeholder="Re-enter your password" minlength="12" required /></div>
+              <div class="auth-field">
+                <label for="new-password">Password</label>
+                <div class="auth-password-wrap">
+                  <input id="new-password" v-model="form.password" :type="showPassword ? 'text' : 'password'" autocomplete="new-password" placeholder="12+ chars, letters and numbers" minlength="12" required />
+                  <button type="button" class="auth-password-toggle" :aria-label="showPassword ? 'Hide password' : 'Show password'" @click="showPassword = !showPassword">
+                    <svg v-if="!showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="auth-field">
+                <label for="confirm-password">Confirm password</label>
+                <div class="auth-password-wrap">
+                  <input id="confirm-password" v-model="form.confirmPassword" :type="showConfirmPassword ? 'text' : 'password'" autocomplete="new-password" placeholder="Re-enter your password" minlength="12" required />
+                  <button type="button" class="auth-password-toggle" :aria-label="showConfirmPassword ? 'Hide password' : 'Show password'" @click="showConfirmPassword = !showConfirmPassword">
+                    <svg v-if="!showConfirmPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-1１-7-１１-7z"/><circle cx="１２" cy="１２" r="３  "/></svg>
+                  </button>
+                </div>
+              </div>
               <p v-if="error" role="alert" aria-live="polite" style="color:#ffb4aa">{{ error }}</p><p v-if="message" aria-live="polite" style="color:#8ff0bc">{{ message }}</p><button v-if="message.includes('verification code')" type="button" class="auth-verify-link" @click="openVerification">Enter verification code</button><button type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Creating…' : 'Create account' }} <span>&rarr;</span></button>
             </form>
             <div class="auth-divider">or</div>

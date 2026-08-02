@@ -3,6 +3,7 @@ import { ref, onMounted, watch } from 'vue'
 
 const isDark = ref(false)
 const email = ref(''); const password = ref(''); const error = ref(''); const busy = ref(false)
+const showPassword = ref(false)
 const googleReady = ref(false)
 const googleCodeClient = ref<any>(null)
 
@@ -66,9 +67,18 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
             <p class="auth-panel__lead">Enter your credentials to continue to DJA Payroll.</p>
             <form class="auth-form" @submit.prevent="login">
               <div class="auth-field"><label for="login-email">Email address</label><input id="login-email" v-model="email" type="email" autocomplete="email" placeholder="name@company.com" required /></div>
-              <div class="auth-field"><label for="login-password">Password</label><input id="login-password" v-model="password" type="password" autocomplete="current-password" placeholder="Enter your password" required /></div>
+              <div class="auth-field">
+                <label for="login-password">Password</label>
+                <div class="auth-password-wrap">
+                  <input id="login-password" v-model="password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="Enter your password" required />
+                  <button type="button" class="auth-password-toggle" :aria-label="showPassword ? 'Hide password' : 'Show password'" @click="showPassword = !showPassword">
+                    <svg v-if="!showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+              </div>
               <div class="auth-options"><label><input type="checkbox" /> Remember me</label><a href="/forgotpass">Forgot password?</a></div>
-              <p v-if="error" role="alert" style="color:#b42318">{{ error }}</p><AppButton type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Logging in…' : 'Log in' }} <span>&rarr;</span></AppButton>
+              <p v-if="error" role="alert" style="color:#b42318">{{ error }}</p><button type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Logging in…' : 'Log in' }} <span>&rarr;</span></button>
             </form>
             <div class="auth-divider">or</div>
             <button type="button" class="auth-google-btn" :disabled="busy" @click="startGoogle">

@@ -47,7 +47,7 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
                 <label for="forgot-email">Email address</label>
                 <input id="forgot-email" v-model="email" type="email" autocomplete="email" placeholder="name@company.com" required />
               </div>
-              <p v-if="message" style="color:#087443">{{ message }}</p><AppButton type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Sending…' : 'Send reset link' }} <span>&rarr;</span></AppButton>
+              <p v-if="message" style="color:#087443">{{ message }}</p><button type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Sending…' : 'Send reset link' }} <span>&rarr;</span></button>
             </form>
             <p class="auth-switch">Remembered your password? <NuxtLink to="/loginscreen">Log in</NuxtLink></p>
           </div>
