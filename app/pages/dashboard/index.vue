@@ -13,6 +13,41 @@ const currentUser = ref<any>(null)
 const showLogoutAlert = ref(false)
 const loggingOut = ref(false)
 
+// --- OFFLINE / CACHE SUPPORT ---
+const isOffline = ref(false)
+const isUsingCachedData = ref(false)
+
+const CACHE_KEYS = {
+  user: 'dja-cache-user',
+  stats: 'dja-cache-stats',
+  recentPayroll: 'dja-cache-payroll',
+  recentActivity: 'dja-cache-activity',
+}
+
+function saveCache(key: string, data: any) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, savedAt: Date.now() }))
+  } catch (e) {
+    console.warn('Failed to save cache', key, e)
+  }
+}
+
+function loadCache(key: string) {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.data ?? null
+  } catch {
+    return null
+  }
+}
+
+function updateOnlineStatus() {
+  isOffline.value = !navigator.onLine
+}
+// --- END OFFLINE / CACHE SUPPORT ---
+
 onMounted(() => {
   const savedTheme = localStorage.getItem('dja-theme')
   isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -112,30 +147,39 @@ onMounted(() => {
   })
 })
 
-// TODO: replace with real fetched values (employee, attendance, payroll, billing tables)
-const stats = [
+// TODO: replace with real fetched values — now with offline cache fallback
+const stats = ref(loadCache(CACHE_KEYS.stats) || [
   { label: 'Total Employees', value: '128', trend: '+4 this month', trendType: 'up', icon: 'user' },
   { label: 'Present Today', value: '112', trend: '87.5% attendance', trendType: 'flat', icon: 'clock' },
   { label: 'Pending Payroll', value: '3', trend: 'For Approval', trendType: 'warn', icon: 'peso' },
   { label: "This Month's Billing", value: '₱842,300', trend: '+12% vs last month', trendType: 'up', icon: 'file-text' },
   { label: 'Active Deployments', value: '96', trend: 'across 14 sites', trendType: 'flat', icon: 'building' },
   { label: 'Active Loans', value: '21', trend: '2 completing soon', trendType: 'warn', icon: 'peso' }
-]
+])
 
-// TODO: replace with real employee_deployment / payroll rows
-const recentPayroll = [
+// TODO: replace with real employee_deployment / payroll rows — now with offline cache fallback
+const recentPayroll = ref(loadCache(CACHE_KEYS.recentPayroll) || [
   { name: 'Maria Santos', period: 'Jul 1–15', amount: '₱18,450.00', status: 'Released' },
   { name: 'Juan Dela Cruz', period: 'Jul 1–15', amount: '₱16,200.00', status: 'Approved' },
   { name: 'Ana Reyes', period: 'Jul 1–15', amount: '₱17,800.00', status: 'For Approval' },
   { name: 'Mark Villanueva', period: 'Jul 1–15', amount: '₱15,950.00', status: 'Draft' }
-]
+])
 
-const recentActivity = [
+const recentActivity = ref(loadCache(CACHE_KEYS.recentActivity) || [
   { text: 'Payroll for Jul 1–15 cutoff was released', time: '2 hours ago' },
   { text: 'New employee Ana Reyes added under Finance', time: '5 hours ago' },
   { text: 'Billing invoice #INV-0231 sent to Client A', time: 'Yesterday, 4:12 PM' },
   { text: '3 attendance records flagged as Late', time: 'Yesterday, 9:05 AM' }
-]
+])
+
+// Kapag nag-fetch ka na ng totoong data galing sa API mo (hal. sa isang onMounted / composable),
+// i-assign lang sa .value at i-save agad sa cache, halimbawa:
+//   stats.value = freshStats
+//   saveCache(CACHE_KEYS.stats, freshStats)
+//   recentPayroll.value = freshPayroll
+//   saveCache(CACHE_KEYS.recentPayroll, freshPayroll)
+//   recentActivity.value = freshActivity
+//   saveCache(CACHE_KEYS.recentActivity, freshActivity)
 
 const statusClass = (status) => 'status-badge status-badge--' + status.toLowerCase().replace(/\s+/g, '-')
 
@@ -156,11 +200,54 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
 }
 
 onMounted(async () => {
-  try { currentUser.value = (await $fetch<any>('/api/auth/me')).user } catch { await navigateTo('/loginscreen') }
+  // 1. Agad i-load yung cached user para instant may laman kahit walang net pa
+  const cachedUser = loadCache(CACHE_KEYS.user)
+  if (cachedUser) {
+    currentUser.value = cachedUser
+    isUsingCachedData.value = true
+  }
+
+  // 2. Setup online/offline listeners
+  updateOnlineStatus()
+  window.addEventListener('online', updateOnlineStatus)
+  window.addEventListener('offline', updateOnlineStatus)
+
+  // 3. Subukan mag-fetch ng fresh session
+  try {
+    const res = await $fetch<any>('/api/auth/me')
+    currentUser.value = res.user
+    isUsingCachedData.value = false
+    isOffline.value = false
+    saveCache(CACHE_KEYS.user, res.user)
+  } catch (err: any) {
+    const status = err?.response?.status || err?.status
+
+    if (status === 401 || status === 403) {
+      // Totoong hindi authenticated (expired session, invalid token) — dapat i-logout talaga
+      localStorage.removeItem(CACHE_KEYS.user)
+      await navigateTo('/loginscreen')
+      return
+    }
+
+    // Malamang network error lang (walang internet / timeout)
+    if (cachedUser) {
+      // May cached session tayo — manatili sa dashboard, offline mode na lang
+      isOffline.value = true
+      isUsingCachedData.value = true
+    } else {
+      // Walang cache at walang connection — wala tayong choice, kailangan mag-login
+      await navigateTo('/loginscreen')
+    }
+  }
+
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
-onBeforeUnmount(() => { window.removeEventListener('beforeunload', handleBeforeUnload) })
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.removeEventListener('online', updateOnlineStatus)
+  window.removeEventListener('offline', updateOnlineStatus)
+})
 </script>
 
 <template>
@@ -278,6 +365,11 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', handleBeforeU
         </header>
 
         <main class="dash-content">
+          <div v-if="isOffline" class="offline-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 9a15.9 15.9 0 0 1 5.5-3.5M8.5 16.5a8 8 0 0 1 7-1M23 9a15.9 15.9 0 0 0-5.5-3.5M2 2l20 20"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+            <span>No internet connection. Showing the last saved data. It may not be up to date.</span>
+          </div>
+
           <div class="dash-header-row">
             <div class="dash-header">
               <h1>Dashboard</h1>

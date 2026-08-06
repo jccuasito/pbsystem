@@ -436,3 +436,26 @@
   object-fit: cover;
   border-radius: 50%;
 }
+
+.offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #fff4e5;
+  color: #92400e;
+  border: 1px solid #fbbf24;
+  padding: 0.65rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+.offline-banner svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+[data-theme="dark"] .offline-banner {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.35);
+}

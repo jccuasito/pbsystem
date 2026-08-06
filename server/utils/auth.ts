@@ -24,8 +24,8 @@ export function safeUser(user: AuthUser) {
   return { id: user.UserID, firstName: user.FirstName, lastName: user.LastName, email: user.Email, departmentId: user.DepartmentID, userType: user.UserType }
 }
 
-export function setSession(event: any, user: AuthUser) {
-  setCookie(event, SESSION_COOKIE, signToken({ sub: user.UserID, email: user.Email, userType: user.UserType }), {
+export function setSession(event: any, user: AuthUser, historyId?: number) {
+  setCookie(event, SESSION_COOKIE, signToken({ sub: user.UserID, email: user.Email, userType: user.UserType, historyId }), {
     httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 7
   })
 }
@@ -37,5 +37,6 @@ export function clearSession(event: any) {
 export function requireSession(event: any) {
   const token = getCookie(event, SESSION_COOKIE)
   if (!token) throw createError({ statusCode: 401, statusMessage: 'Please sign in.' })
-  try { return verifyToken(token) as { sub: number } } catch { throw createError({ statusCode: 401, statusMessage: 'Your session has expired. Please sign in again.' }) }
+  try { return verifyToken(token) as { sub: number; email: string; userType: string; historyId?: number } }
+  catch { throw createError({ statusCode: 401, statusMessage: 'Your session has expired. Please sign in again.' }) }
 }
