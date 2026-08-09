@@ -378,7 +378,6 @@ onBeforeUnmount(() => {
               <h1>Dashboard</h1>
               <p>Welcome back! Here's your payroll overview.</p>
             </div>
-            <AppButton to="/employees" variant="primary">+ Add Employee</AppButton>
           </div>
 
           <section class="dash-stats">
