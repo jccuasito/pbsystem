@@ -147,39 +147,37 @@ onMounted(() => {
   })
 })
 
-// TODO: replace with real fetched values — now with offline cache fallback
-const stats = ref(loadCache(CACHE_KEYS.stats) || [
-  { label: 'Total Employees', value: '128', trend: '+4 this month', trendType: 'up', icon: 'user' },
-  { label: 'Present Today', value: '112', trend: '87.5% attendance', trendType: 'flat', icon: 'clock' },
-  { label: 'Pending Payroll', value: '3', trend: 'For Approval', trendType: 'warn', icon: 'peso' },
-  { label: "This Month's Billing", value: '₱842,300', trend: '+12% vs last month', trendType: 'up', icon: 'file-text' },
-  { label: 'Active Deployments', value: '96', trend: 'across 14 sites', trendType: 'flat', icon: 'building' },
-  { label: 'Active Loans', value: '21', trend: '2 completing soon', trendType: 'warn', icon: 'peso' }
-])
+const stats = ref(loadCache(CACHE_KEYS.stats) || [])
+const recentPayroll = ref(loadCache(CACHE_KEYS.recentPayroll) || [])
+const recentActivity = ref(loadCache(CACHE_KEYS.recentActivity) || [])
 
-// TODO: replace with real employee_deployment / payroll rows — now with offline cache fallback
-const recentPayroll = ref(loadCache(CACHE_KEYS.recentPayroll) || [
-  { name: 'Maria Santos', period: 'Jul 1–15', amount: '₱18,450.00', status: 'Released' },
-  { name: 'Juan Dela Cruz', period: 'Jul 1–15', amount: '₱16,200.00', status: 'Approved' },
-  { name: 'Ana Reyes', period: 'Jul 1–15', amount: '₱17,800.00', status: 'For Approval' },
-  { name: 'Mark Villanueva', period: 'Jul 1–15', amount: '₱15,950.00', status: 'Draft' }
-])
+const numberFormat = new Intl.NumberFormat('en-PH')
+const pesoFormat = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 })
 
-const recentActivity = ref(loadCache(CACHE_KEYS.recentActivity) || [
-  { text: 'Payroll for Jul 1–15 cutoff was released', time: '2 hours ago' },
-  { text: 'New employee Ana Reyes added under Finance', time: '5 hours ago' },
-  { text: 'Billing invoice #INV-0231 sent to Client A', time: 'Yesterday, 4:12 PM' },
-  { text: '3 attendance records flagged as Late', time: 'Yesterday, 9:05 AM' }
-])
+function formatStatValue(stat: { label?: string; value?: unknown }) {
+  const rawValue = typeof stat.value === 'string' ? stat.value.replace(/[^0-9.-]/g, '') : stat.value
+  const numericValue = Number(rawValue)
+  const safeValue = Number.isFinite(numericValue) ? numericValue : 0
+  return stat.label === "This Month's Billing" ? pesoFormat.format(safeValue) : numberFormat.format(safeValue)
+}
 
-// Kapag nag-fetch ka na ng totoong data galing sa API mo (hal. sa isang onMounted / composable),
-// i-assign lang sa .value at i-save agad sa cache, halimbawa:
-//   stats.value = freshStats
-//   saveCache(CACHE_KEYS.stats, freshStats)
-//   recentPayroll.value = freshPayroll
-//   saveCache(CACHE_KEYS.recentPayroll, freshPayroll)
-//   recentActivity.value = freshActivity
-//   saveCache(CACHE_KEYS.recentActivity, freshActivity)
+async function refreshDashboardData() {
+  try {
+    const [statsResponse, payrollResponse, activityResponse] = await Promise.all([
+      $fetch<any>('/api/dashboard/stats'),
+      $fetch<any>('/api/dashboard/recent-payroll'),
+      $fetch<any>('/api/dashboard/recent-activity')
+    ])
+    stats.value = statsResponse.stats
+    recentPayroll.value = payrollResponse.payroll
+    recentActivity.value = activityResponse.activities
+    saveCache(CACHE_KEYS.stats, stats.value)
+    saveCache(CACHE_KEYS.recentPayroll, recentPayroll.value)
+    saveCache(CACHE_KEYS.recentActivity, recentActivity.value)
+  } catch (error) {
+    console.warn('Failed to refresh dashboard data; showing cached data when available.', error)
+  }
+}
 
 const statusClass = (status) => 'status-badge status-badge--' + status.toLowerCase().replace(/\s+/g, '-')
 
@@ -212,6 +210,9 @@ onMounted(async () => {
   window.addEventListener('online', updateOnlineStatus)
   window.addEventListener('offline', updateOnlineStatus)
 
+  // Fetch dashboard data in parallel with the existing session request.
+  const dashboardRefresh = refreshDashboardData()
+
   // 3. Subukan mag-fetch ng fresh session
   try {
     const res = await $fetch<any>('/api/auth/me')
@@ -239,6 +240,8 @@ onMounted(async () => {
       await navigateTo('/loginscreen')
     }
   }
+
+  await dashboardRefresh
 
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
@@ -384,7 +387,7 @@ onBeforeUnmount(() => {
                 <span class="dash-stat-card__icon" v-html="iconSvg(stat.icon)"></span>
                 <span class="dash-stat-card__trend" :class="`dash-stat-card__trend--${stat.trendType}`">{{ stat.trend }}</span>
               </div>
-              <div class="dash-stat-card__value">{{ stat.value }}</div>
+              <div class="dash-stat-card__value">{{ formatStatValue(stat) }}</div>
               <div class="dash-stat-card__label">{{ stat.label }}</div>
             </article>
           </section>
