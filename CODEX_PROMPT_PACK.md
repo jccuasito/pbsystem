@@ -15,8 +15,31 @@
 Project: DJA Group of Companies — Payroll & Billing System
 Stack: Nuxt 3 (Vue 3, <script setup lang="ts">), Nitro server routes (/server/api),
        MySQL (schema: pbsystem, script sa /database/auth-migration.sql or /database/*.sql)
-Auth: existing (local + Google), files sa app/middleware/auth.global.ts, app/pages/loginscreen,
-      app/pages/signupscreen, app/pages/forgotpass
+Auth: KUMPLETO NA — huwag na ito ipagawa muli. Existing files:
+  - server/connection/dbconnect.ts — shared mysql2 pool (import this everywhere, never make a
+    new pool)
+  - server/utils/auth.ts — hashPassword, passwordMatches, assertPassword, setSession,
+    clearSession, requireSession(event) [PALAGING GAMITIN ITO para sa auth guard sa bagong
+    endpoints], safeUser, normalizeEmail, hashToken/randomToken/randomVerificationCode
+  - server/utils/jwt.ts — signToken/verifyToken (named exports, HINDI default export)
+  - server/utils/googleAuth.ts — verifyGoogleToken, verifyGoogleAuthorizationCode (named
+    exports, HINDI default export)
+  - server/utils/mailer.ts — sendVerificationEmail, sendPasswordResetEmail (Gmail SMTP)
+  - server/api/auth/: login.post.ts, register.post.ts, logout.post.ts, me.get.ts,
+    forgot-password.post.ts, reset-password.post.ts, verify-email.get.ts, verify-email.post.ts,
+    verify-reset-token.get.ts, resend-verification.post.ts, update-profile.post.ts,
+    upload-avatar.post.ts, departments.get.ts, google-code.post.ts (ito ang TAMANG Google flow)
+  - KNOWN ISSUE: server/api/auth/google.post.ts ay SIRA/duplicate — mali ang imports (gumagamit
+    ng default import sa named exports), gumagamit ng pool na hindi na-import, at nagse-set ng
+    ibang cookie name (`auth_token`) kaysa sa totoong session system (`pbs_session` via
+    setSession()). I-DELETE o i-deprecate ito, huwag gamitin, huwag ayusin — ang
+    google-code.post.ts na lang ang gagamitin para sa Google login/signup.
+  - Session pattern na dapat sundin sa LAHAT ng bagong protected endpoint:
+    `const session = requireSession(event)` sa taas, tapos gamitin ang `session.sub` bilang
+    UserID. Huwag gagawa ng bagong auth check pattern.
+
+app/middleware/auth.global.ts, app/pages/loginscreen, app/pages/signupscreen,
+app/pages/forgotpass — existing frontend, huwag na rin galawin maliban kung sinabi ko.
 
 Rules:
 - Sundin ang existing DB schema EXACTLY (table/column names, ENUMs, FKs) — huwag gagawa ng
@@ -51,20 +74,21 @@ Rules:
 
 ---
 
-## PHASE 1 — Auth check + Dashboard shell (Backend + wire)
+## PHASE 1 — Dashboard stats endpoints (Backend + wire)
 
 ```
 Context: Master context above applies. Focus lang dito sa Phase 1.
 
-Ginagawa ko ang /api/auth/me endpoint (ginagamit na ito sa app/pages/dashboard/index.vue
-sa onMounted — check mo yung file). Kailangan ko:
+Ang buong Auth module ay KUMPLETO NA (see Master Context) — huwag mo na siyang galawin,
+i-reuse lang. Dalawang bagay lang ang gagawin dito:
 
-1. I-verify/i-complete ang /server/api/auth/me.get.ts para: kunin ang current session user
-   mula sa `user` table (JOIN sa `department` para makuha ang DepartmentName), i-return yung
-   fields na ginagamit na sa dashboard/index.vue (firstName, lastName, userType, departmentName,
-   image). Kung walang valid session, mag-throw ng 401.
-2. Gumawa ng /server/api/auth/logout.post.ts kung wala pa (ginagamit na sa confirmLogout()).
-3. Gumawa ng /server/api/dashboard/stats.get.ts na nagre-return ng totoong values (hindi mock):
+0. I-delete ang server/api/auth/google.post.ts — sirang duplicate ito (mali ang imports,
+   hindi tugma sa session system). Ang google-code.post.ts na ang gagamitin. Kumpirmahin mo
+   muna sa akin bago mo i-delete kung may reference pa ba dito sa frontend (grep for
+   "/api/auth/google" sa buong app/ folder, hindi "/api/auth/google-code").
+1. Gumawa ng /server/api/dashboard/stats.get.ts na nagre-return ng totoong values (hindi mock).
+   Gamitin ang `const session = requireSession(event)` pattern mula sa server/utils/auth.ts
+   para protected ito, tulad ng ginawa sa me.get.ts:
    - Total Employees: COUNT(*) FROM employee WHERE Status='Active'
    - Present Today: COUNT DISTINCT attendance WHERE AttendanceDate=CURDATE() AND
      AttendanceStatus='Present'
@@ -75,15 +99,16 @@ sa onMounted — check mo yung file). Kailangan ko:
    Match the exact shape na inaasahan ng `stats` ref sa dashboard/index.vue (label, value,
    trend, trendType, icon) — huwag baguhin ang icon keys, gamitin lang yung existing set
    ('user','clock','peso','file-text','building').
-4. Gumawa ng /server/api/dashboard/recent-payroll.get.ts (LIMIT 5, latest payroll runs,
+2. Gumawa ng /server/api/dashboard/recent-payroll.get.ts (LIMIT 5, latest payroll runs,
    JOIN employee para sa pangalan) at /server/api/dashboard/recent-activity.get.ts
    (pwedeng simpleng union ng latest payroll/attendance/billing changes, o gumawa ng minimal
    activity_log table kung wala pa — sabihin mo muna sa akin bago gawin kung kailangan ng
    bagong table).
-5. I-wire ang dashboard/index.vue: palitan yung TODO comments, i-fetch itong mga endpoint sa
-   onMounted (parallel sa existing /api/auth/me call), i-save pa rin sa cache gamit ang
-   existing saveCache() function nila para gumana pa rin ang offline mode.
-6. I-update ang docs/API_MAP.md.
+3. I-wire ang dashboard/index.vue: palitan yung TODO comments, i-fetch itong mga endpoint sa
+   onMounted (parallel sa existing /api/auth/me call na huwag mo nang galawin), i-save pa rin
+   sa cache gamit ang existing saveCache() function nila para gumana pa rin ang offline mode.
+4. I-update ang docs/API_MAP.md — isama rin ang existing auth endpoints dito (buod lang,
+   isang linya bawat isa) para kumpleto ang map mula umpisa.
 
 Huwag mo munang galawin ang ibang modules (Organization, Employee, etc.) — Phase 2+ na yun.
 ```
