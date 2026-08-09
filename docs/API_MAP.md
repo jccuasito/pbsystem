@@ -27,3 +27,16 @@
 | GET | `/api/dashboard/stats` | `employee`, `attendance`, `payroll`, `billing`, `employee_deployment`, `employee_loan` | `app/pages/dashboard/index.vue` | Session required. `{ stats: Array<{ label, value: number, trend, trendType, icon }> }`; null/invalid aggregates return `0`. |
 | GET | `/api/dashboard/recent-payroll` | `payroll`, `employee` | `app/pages/dashboard/index.vue` | Session required. `{ payroll: Array<{ id, name, period, amount, status }> }` (latest 5). |
 | GET | `/api/dashboard/recent-activity` | `payroll`, `attendance`, `billing` | `app/pages/dashboard/index.vue` | Session required. `{ activities: Array<{ text, time }> }` (latest 5). |
+
+## Organization
+
+All organization CRUD routes are session-protected and accept only these whitelisted `:resource` values: `agency`, `position`, `agency-position`, `client`, `client-policy`, `site`, `site-policy`, and `site-shift`.
+
+| Method | Path | Tables used | Caller | Request / response |
+| --- | --- | --- | --- | --- |
+| GET | `/api/organization/:resource` | Resource table; joined tables: `agency`/`position`, `region`, `client`, `site`, `shift_code`; `vw_effective_site_policy` for site-related effective policy | `app/pages/organization/{agency,position,client,site}/index.vue` | Returns `{ items }` plus required active lookup arrays (`regions`, `clients`, `sites`, `agencies`, `positions`, or `shiftCodes`). |
+| POST | `/api/organization/:resource` | Target resource table | Organization add modal/API consumers | Body contains the resource's non-ID columns. Returns `{ id }`. |
+| PUT | `/api/organization/:resource` | Target resource table | Organization edit modal/API consumers | Body is `{ id, ...resourceFields }`. Returns `{ success: true }`. |
+| DELETE | `/api/organization/:resource` | Target resource table | Organization table/API consumers | Body is `{ id }`; soft-deletes with `Status = 'Inactive'`. Returns `{ success: true }`. |
+
+Site and site-shift lists use `vw_effective_site_policy` for client/site policy resolution. `site-shift.EffectiveNDEnabled` applies its `NDPolicyOverride` only after the view's resolved client/site policy, preserving the documented precedence: site-shift override > site policy > client policy.
