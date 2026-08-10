@@ -93,7 +93,8 @@ const navGroups = [
       { label: 'Agency', to: '/organization/agency', icon: 'building' },
       { label: 'Position', to: '/organization/position', icon: 'user' },
       { label: 'Client', to: '/organization/client', icon: 'user' },
-      { label: 'Site', to: '/organization/site', icon: 'building' }
+      { label: 'Site', to: '/organization/site', icon: 'building' },
+      { label: 'Region', to: '/organization/region', icon: 'building' }
     ]
   },
   { label: 'Attendance', to: '/attendance', icon: 'clock' },

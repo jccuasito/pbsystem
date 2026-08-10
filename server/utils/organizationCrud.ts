@@ -2,7 +2,7 @@ import { createError, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 
-type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-policy' | 'site' | 'site-policy' | 'site-shift'
+type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-policy' | 'site' | 'site-policy' | 'site-shift' | 'region'
 
 type Config = { table: string; id: string; fields: string[]; listSql: string; lookups?: () => Promise<Record<string, unknown>> }
 
@@ -12,7 +12,7 @@ const numberFields = new Set(['AgencyID', 'PositionID', 'RegionID', 'ClientID', 
 
 const activeAgencies = async () => { const [rows] = await pool.execute<any[]>('SELECT AgencyID, AgencyName FROM agency WHERE Status = \'Active\' ORDER BY AgencyName'); return { agencies: rows } }
 const activePositions = async () => { const [rows] = await pool.execute<any[]>('SELECT PositionID, PositionName FROM `position` WHERE Status = \'Active\' ORDER BY PositionName'); return { positions: rows } }
-const activeRegions = async () => { const [rows] = await pool.execute<any[]>('SELECT RegionID, RegionCode, RegionName FROM region ORDER BY RegionName'); return { regions: rows } }
+const activeRegions = async () => { const [rows] = await pool.execute<any[]>('SELECT RegionID, RegionCode, RegionName FROM region WHERE Status = \'Active\' ORDER BY RegionName'); return { regions: rows } }
 const activeClients = async () => { const [rows] = await pool.execute<any[]>('SELECT ClientID, ClientName FROM client WHERE Status = \'Active\' ORDER BY ClientName'); return { clients: rows } }
 const activeSites = async () => { const [rows] = await pool.execute<any[]>('SELECT SiteID, SiteName, ClientID FROM site WHERE Status = \'Active\' ORDER BY SiteName'); return { sites: rows } }
 const activeShiftCodes = async () => { const [rows] = await pool.execute<any[]>('SELECT ShiftCodeID, ShiftCode, ShiftName FROM shift_code WHERE Status = \'Active\' ORDER BY ShiftCode, ShiftName'); return { shiftCodes: rows } }
@@ -21,6 +21,7 @@ const configs: Record<Resource, Config> = {
   agency: { table: 'agency', id: 'AgencyID', fields: ['AgencyName', 'AgencyAddress', 'AgencyEmail', 'AgencyContact', 'Status'], listSql: 'SELECT AgencyID, AgencyName, AgencyAddress, AgencyEmail, AgencyContact, Status, CreatedAt FROM agency ORDER BY AgencyName' },
   position: { table: '`position`', id: 'PositionID', fields: ['PositionName', 'Description', 'Status'], listSql: 'SELECT PositionID, PositionName, Description, Status FROM `position` ORDER BY PositionName' },
   'agency-position': { table: 'agency_position', id: 'AgencyPositionID', fields: ['AgencyID', 'PositionID', 'Status'], listSql: 'SELECT ap.AgencyPositionID, ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName, ap.Status FROM agency_position ap INNER JOIN agency a ON a.AgencyID = ap.AgencyID INNER JOIN position p ON p.PositionID = ap.PositionID ORDER BY a.AgencyName, p.PositionName', lookups: async () => ({ ...(await activeAgencies()), ...(await activePositions()) }) },
+  region: { table: 'region', id: 'RegionID', fields: ['RegionCode', 'RegionName', 'Status'], listSql: 'SELECT RegionID, RegionCode, RegionName, Status FROM region ORDER BY RegionName' },
   client: { table: 'client', id: 'ClientID', fields: ['ClientName', 'RegionID', 'ClientAddress', 'ContractStart', 'ContractEnd', 'Status'], listSql: 'SELECT c.ClientID, c.ClientName, c.RegionID, r.RegionCode, r.RegionName, c.ClientAddress, c.ContractStart, c.ContractEnd, c.Status FROM client c LEFT JOIN region r ON r.RegionID = c.RegionID ORDER BY c.ClientName', lookups: activeRegions },
   'client-policy': { table: 'client_policy', id: 'ClientPolicyID', fields: ['ClientID', ...policyFields], listSql: 'SELECT cp.*, c.ClientName FROM client_policy cp INNER JOIN client c ON c.ClientID = cp.ClientID ORDER BY c.ClientName', lookups: activeClients },
   site: { table: 'site', id: 'SiteID', fields: ['ClientID', 'SiteName', 'SiteAddress', 'Status'], listSql: `SELECT s.SiteID, s.ClientID, c.ClientName, s.SiteName, s.SiteAddress, s.Status, v.PolicySource, v.NDEnabled, v.NDStartTime, v.NDEndTime FROM site s INNER JOIN client c ON c.ClientID = s.ClientID LEFT JOIN vw_effective_site_policy v ON v.SiteID = s.SiteID ORDER BY c.ClientName, s.SiteName`, lookups: activeClients },
