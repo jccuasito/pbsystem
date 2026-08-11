@@ -40,3 +40,14 @@ All organization CRUD routes are session-protected and accept only these whiteli
 | DELETE | `/api/organization/:resource` | Target resource table | Organization table/API consumers | Body is `{ id }`; soft-deletes with `Status = 'Inactive'`. Returns `{ success: true }`. |
 
 Site and site-shift lists use `vw_effective_site_policy` for client/site policy resolution. `site-shift.EffectiveNDEnabled` applies its `NDPolicyOverride` only after the view's resolved client/site policy, preserving the documented precedence: site-shift override > site policy > client policy.
+
+## Rates
+
+All rate routes are session-protected. `:resource` is whitelisted to `payroll-rate`, `billing-rate`, or `client-rate`.
+
+| Method | Path | Tables used | Caller | Request / response |
+| --- | --- | --- | --- | --- |
+| GET | `/api/rates/:resource` | `payroll_rate` or `billing_rate` with `agency_position`, `agency`, `position`, `region`; `client_rate` also joins `client` | `app/pages/rates/{payroll,billing,client}/index.vue` | Returns `{ items }` and lookup arrays. Client-rate includes agency-position-filterable payroll/billing rates. |
+| POST | `/api/rates/:resource` | Target rate table; client rate can also create `payroll_rate` and/or `billing_rate` in one transaction | Rate add/link forms | Rate body contains `AgencyPositionID`, optional `RegionID`, monetary fields, effective date, and status. Client-rate body links `ClientID`, matching rate IDs, or `inlinePayrollRate` / `inlineBillingRate`. Returns `{ id }`. |
+| PUT | `/api/rates/:resource` | Target rate table | Rate edit forms | Body is `{ id, ...fields }`; client-rate validates its payroll/billing pair belongs to the selected agency position. Returns `{ success: true }`. |
+| DELETE | `/api/rates/:resource` | Target rate table | Rate tables | Body `{ id }`; soft-deletes through `Status = 'Inactive'`. Returns `{ success: true }`. |

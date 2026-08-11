@@ -117,7 +117,8 @@ const navGroups = [
     label: 'Rates', icon: 'settings', key: 'rates',
     children: [
       { label: 'Payroll Rate', to: '/rates/payroll', icon: 'peso' },
-      { label: 'Billing Rate', to: '/rates/billing', icon: 'peso' }
+      { label: 'Billing Rate', to: '/rates/billing', icon: 'peso' },
+      { label: 'Client Rate', to: '/rates/client', icon: 'building' }
     ]
   },
   {
