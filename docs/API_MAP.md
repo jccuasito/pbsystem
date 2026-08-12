@@ -28,6 +28,21 @@
 | GET | `/api/dashboard/recent-payroll` | `payroll`, `employee` | `app/pages/dashboard/index.vue` | Session required. `{ payroll: Array<{ id, name, period, amount, status }> }` (latest 5). |
 | GET | `/api/dashboard/recent-activity` | `payroll`, `attendance`, `billing` | `app/pages/dashboard/index.vue` | Session required. `{ activities: Array<{ text, time }> }` (latest 5). |
 
+## Employees
+
+| Method | Path | Tables used | Caller | Request / response |
+| --- | --- | --- | --- | --- |
+| GET | `/api/employees` | `employee`, `agency_position`, `agency`, `position`, latest active `employee_deployment`, `client_rate`, `client`, `site`, `site_shift`, `shift_code` | `app/pages/employees/index.vue` | Session required. Supports `agencyId` and `positionId` filters. Returns `{ items, agencies, positions, agencyPositions }`; each row includes latest deployment/site data. |
+| POST | `/api/employees` | `employee` | `app/pages/employees/index.vue` | Session required. Creates the employee basic info row and returns `{ id }`. |
+| PUT | `/api/employees/:id` | `employee` | `app/pages/employees/index.vue` | Session required. Updates the basic employee row. Returns `{ success: true }`. |
+| DELETE | `/api/employees/:id` | `employee` | `app/pages/employees/index.vue` | Session required. Soft-deletes by setting `Status = 'Inactive'`. Returns `{ success: true }`. |
+| GET | `/api/employees/documents` | `employee`, `employee_profile`, `government`, `education`, `license`, `training`, `clearance`, `bank`, `insurance` | `app/pages/employees/documents/index.vue` | Session required. Query `employeeId`. Returns `{ employee, employees, profile, government, education, license, training, clearance, bank, insurance }`. |
+| POST | `/api/employees/documents` | `employee_profile`, `government`, `education`, `license`, `training`, `clearance`, `bank`, `insurance` | `app/pages/employees/documents/index.vue` | Session required. Body includes `section`, `employeeId`, and section fields. Creates a related row or upserts the one-to-one profile row. Returns `{ success: true, id }`. |
+| PUT | `/api/employees/documents` | `employee_profile`, `government`, `education`, `license`, `training`, `clearance`, `bank`, `insurance` | `app/pages/employees/documents/index.vue` | Session required. Body includes `section`, `employeeId`, `id`, and section fields. Updates the selected row. Returns `{ success: true }`. |
+| DELETE | `/api/employees/documents` | `employee_profile`, `government`, `education`, `license`, `training`, `clearance`, `bank`, `insurance` | `app/pages/employees/documents/index.vue` | Session required. Body includes `section`, `employeeId`, and `id`. Deletes the selected related row. Returns `{ success: true }`. |
+| GET | `/api/employees/deployments` | `employee_deployment`, `employee`, `client_rate`, `payroll_rate`, `agency_position`, `agency`, `position`, `site`, `site_shift`, `shift_code`, `client` | `app/pages/employees/deployment-history/index.vue` | Session required. Returns `{ items, employees, clientRates, sites, shiftCodes }` for the deployment history table and create form. |
+| POST | `/api/employees/deployments` | `employee_deployment` | `app/pages/employees/deployment-history/index.vue` | Session required. Creates a new deployment row, closes any active prior row for the employee, and returns `{ success: true, id }`. |
+
 ## Organization
 
 All organization CRUD routes are session-protected and accept only these whitelisted `:resource` values: `agency`, `position`, `agency-position`, `client`, `client-policy`, `site`, `site-policy`, and `site-shift`.
