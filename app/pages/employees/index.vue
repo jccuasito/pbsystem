@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
 const items = ref<any[]>([])
 const agencies = ref<any[]>([])
@@ -8,6 +9,7 @@ const agencyPositions = ref<any[]>([])
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
+const formError = ref('')
 const modalOpen = ref(false)
 const editing = ref<any>(null)
 const filters = ref({ agencyId: '', positionId: '' })
@@ -48,6 +50,7 @@ function reset(item: any = null) {
     Status: item?.Status ?? 'Active'
   }
   error.value = ''
+  formError.value = ''
 }
 
 async function load() {
@@ -67,16 +70,17 @@ async function load() {
 
 async function save() {
   busy.value = true
-  error.value = ''
+  formError.value = ''
   try {
     await $fetch(editing.value ? `/api/employees/${editing.value.EmployeeID}` : '/api/employees', {
       method: editing.value ? 'PUT' : 'POST',
       body: editing.value ? { id: editing.value.EmployeeID, ...form.value } : form.value
     })
     modalOpen.value = false
+    reset()
     await load()
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to save employee.'
+    formError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to save employee.'
   } finally {
     busy.value = false
   }
@@ -93,7 +97,7 @@ async function deactivate(item: any) {
 }
 
 function format(value: any) {
-  return value === null || value === undefined || value === '' ? '—' : value
+  return value === null || value === undefined || value === '' ? '\u2014' : value
 }
 
 onMounted(load)
@@ -135,7 +139,8 @@ onMounted(load)
       <table>
         <thead>
           <tr>
-            <th>Employee Number</th>
+            <th>Employee ID</th>
+            <th>Employee No.</th>
             <th>Name</th>
             <th>Agency</th>
             <th>Position</th>
@@ -146,11 +151,12 @@ onMounted(load)
           </tr>
         </thead>
         <tbody>
-          <tr v-if="loading"><td colspan="8">Loading…</td></tr>
-          <tr v-else-if="!items.length"><td colspan="8">No employees found.</td></tr>
+          <tr v-if="loading"><td colspan="9">Loading...</td></tr>
+          <tr v-else-if="!items.length"><td colspan="9">No employees found.</td></tr>
           <tr v-for="item in items" :key="item.EmployeeID">
-            <td>{{ format(item.EmployeeNumber) }}</td>
-            <td>{{ format(item.FirstName) }} {{ format(item.MiddleName) }} {{ format(item.LastName) }}</td>
+            <td class="employee-id">{{ formatEmployeeId(item.EmployeeID) }}</td>
+            <td>{{ formatEmployeeNumber(item.EmployeeNumber) }}</td>
+            <td>{{ formatEmployeeName(item) }}</td>
             <td>{{ format(item.AgencyName) }}</td>
             <td>{{ format(item.PositionName) }}</td>
             <td>{{ format(item.SiteName) }}</td>
@@ -165,11 +171,11 @@ onMounted(load)
     <Teleport to="body">
       <div v-if="modalOpen" class="backdrop" @click.self="!busy && (modalOpen = false)">
         <form class="modal" @submit.prevent="save">
-          <button class="close" type="button" @click="modalOpen = false">×</button>
+          <button class="close" type="button" @click="modalOpen = false">x</button>
           <h2>{{ editing ? 'Edit employee' : 'Add employee' }}</h2>
 
-          <label>Employee number<input v-model="form.EmployeeNumber" required /></label>
-          <label>Agency position<select v-model="form.AgencyPositionID" required><option value="">Select agency position</option><option v-for="item in agencyPositions" :key="item.AgencyPositionID" :value="item.AgencyPositionID">{{ item.AgencyName }} — {{ item.PositionName }}</option></select></label>
+          <label>Employee number <small>Optional badge/reference</small><input v-model="form.EmployeeNumber" placeholder="Assign later if unavailable" /></label>
+          <label>Agency position<select v-model="form.AgencyPositionID" required><option value="">Select agency position</option><option v-for="item in agencyPositions" :key="item.AgencyPositionID" :value="item.AgencyPositionID">{{ item.AgencyName }} - {{ item.PositionName }}</option></select></label>
           <div class="grid">
             <label>First name<input v-model="form.FirstName" required /></label>
             <label>Middle name<input v-model="form.MiddleName" /></label>
@@ -193,8 +199,8 @@ onMounted(load)
           </div>
           <label>Status<select v-model="form.Status"><option>Active</option><option>Inactive</option></select></label>
 
-          <p v-if="error" class="error">{{ error }}</p>
-          <footer><button type="button" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving…' : 'Save' }}</button></footer>
+          <p v-if="formError" class="error">{{ formError }}</p>
+          <footer><button type="button" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving...' : 'Save' }}</button></footer>
         </form>
       </div>
     </Teleport>
@@ -202,5 +208,5 @@ onMounted(load)
 </template>
 
 <style scoped>
-.employees-page{padding:32px;max-width:1400px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.filters{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 16px}.filters label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters select{min-height:40px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.5rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:760px){.employees-page{padding:20px}.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
+.employees-page{padding:32px;max-width:1400px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.filters{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 16px}.filters label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters select{min-height:40px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:760px){.employees-page{padding:20px}.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
 </style>

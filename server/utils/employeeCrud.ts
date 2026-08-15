@@ -53,10 +53,16 @@ const activeAgencyPositions = async () => {
 
 const activeEmployees = async () => {
   const [rows] = await pool.execute<any[]>(
-    `SELECT e.EmployeeID, e.EmployeeNumber, CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName
-     FROM employee e
-     WHERE e.Status = 'Active'
-     ORDER BY e.LastName, e.FirstName, e.EmployeeNumber`
+    [
+      'SELECT e.EmployeeID, e.EmployeeNumber, CONCAT_WS(\' \', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,',
+      '  ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName',
+      'FROM employee e',
+      'INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID',
+      'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
+      positionJoin,
+      "WHERE e.Status = 'Active'",
+      'ORDER BY e.LastName, e.FirstName, e.EmployeeNumber'
+    ].join('\n')
   )
   return rows
 }
@@ -95,6 +101,22 @@ function parseStatus(value: unknown, fallback = 'Active') {
   if (value === null || value === undefined || value === '') return fallback
   if (value === 'Active' || value === 'Inactive') return value
   throw createError({ statusCode: 400, statusMessage: 'Status must be Active or Inactive.' })
+}
+
+function employeeWriteError(error: any) {
+  if (error?.code === 'ER_DUP_ENTRY') {
+    return createError({ statusCode: 409, statusMessage: 'Employee number is already assigned to another employee.' })
+  }
+
+  if (error?.code === 'ER_BAD_NULL_ERROR' && String(error?.message || '').includes('EmployeeNumber')) {
+    return createError({ statusCode: 400, statusMessage: 'Employee number is optional only after running the employee-number-null migration.' })
+  }
+
+  if (error?.code === 'ER_NO_REFERENCED_ROW_2') {
+    return createError({ statusCode: 400, statusMessage: 'Selected agency position or user reference does not exist.' })
+  }
+
+  return error
 }
 
 function employeeValues(body: Record<string, unknown>) {
@@ -237,7 +259,14 @@ async function deploymentLookups() {
     activeClientRates(),
     activeEmployees(),
     pool.execute<any[]>('SELECT s.SiteID, s.ClientID, c.ClientName, s.SiteName FROM site s INNER JOIN client c ON c.ClientID = s.ClientID WHERE s.Status = \'Active\' AND c.Status = \'Active\' ORDER BY c.ClientName, s.SiteName').then(([rows]) => rows),
-    pool.execute<any[]>('SELECT ShiftCodeID, ShiftCode, ShiftName FROM shift_code WHERE Status = \'Active\' ORDER BY ShiftCode, ShiftName').then(([rows]) => rows)
+    pool.execute<any[]>(
+      `SELECT ss.SiteShiftID, ss.SiteID, sc.ShiftCodeID, sc.ShiftCode, sc.ShiftName
+       FROM site_shift ss
+       INNER JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID
+       INNER JOIN site s ON s.SiteID = ss.SiteID
+       WHERE ss.Status = 'Active' AND sc.Status = 'Active' AND s.Status = 'Active'
+       ORDER BY s.SiteName, sc.ShiftCode, sc.ShiftName`
+    ).then(([rows]) => rows)
   ])
   return { clientRates, employees, sites, shiftCodes }
 }
@@ -296,18 +325,26 @@ export async function createEmployee(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
   const values = employeeValues(body)
-  if (!values[0] || !values[1] || !values[2] || !values[4]) throw createError({ statusCode: 400, statusMessage: 'Agency position, employee number, first name, and last name are required.' })
-  const [result] = await pool.execute<any>(`INSERT INTO employee (${employeeFields.join(', ')}, CreatedBy) VALUES (${employeeFields.map(() => '?').join(', ')}, ?)`, [...values, session.sub] as any[])
-  return { id: result.insertId }
+  if (!values[0] || !values[2] || !values[4]) throw createError({ statusCode: 400, statusMessage: 'Agency position, first name, and last name are required.' })
+  try {
+    const [result] = await pool.execute<any>(`INSERT INTO employee (${employeeFields.join(', ')}, CreatedBy) VALUES (${employeeFields.map(() => '?').join(', ')}, ?)`, [...values, session.sub] as any[])
+    return { id: result.insertId }
+  } catch (error) {
+    throw employeeWriteError(error)
+  }
 }
 
 export async function updateEmployee(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
   const employeeId = parseInteger(body.id, 'id') as number
-  const [result] = await pool.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body), session.sub, employeeId] as any[])
-  if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
-  return { success: true }
+  try {
+    const [result] = await pool.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body), session.sub, employeeId] as any[])
+    if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+    return { success: true }
+  } catch (error) {
+    throw employeeWriteError(error)
+  }
 }
 
 export async function deleteEmployee(event: any) {
