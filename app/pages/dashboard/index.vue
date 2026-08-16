@@ -1,9 +1,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRoute } from '#app'
+import { useRoute, useRouter } from '#app'
 import LogoutAlert from '../../../components/alertmessage/logoutalert.vue'
+import EmployeeListPage from '../employees/index.vue'
+import DeploymentHistoryPage from '../employees/deployment-history/index.vue'
+import EmployeeDocumentsPage from '../employees/documents/index.vue'
+import AgencyPage from '../organization/agency/index.vue'
+import PositionPage from '../organization/position/index.vue'
+import ClientPage from '../organization/client/index.vue'
+import SitePage from '../organization/site/index.vue'
+import RegionPage from '../organization/region/index.vue'
+import PayrollRatePage from '../rates/payroll/index.vue'
+import BillingRatePage from '../rates/billing/index.vue'
+import ClientRatePage from '../rates/client/index.vue'
 
 const route = useRoute()
+const router = useRouter()
 
 const isDark = ref(false)
 const isPinned = ref(false)
@@ -12,6 +24,23 @@ const isMobileNavOpen = ref(false)
 const currentUser = ref<any>(null)
 const showLogoutAlert = ref(false)
 const loggingOut = ref(false)
+type WorkspaceView =
+  | 'employees-list' | 'employees-deployments' | 'employees-documents'
+  | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
+  | 'attendance' | 'payroll-processing' | 'payslip' | 'payroll-history'
+  | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-client'
+  | 'deductions' | 'loans' | 'reports' | 'settings'
+const workspaceViews = new Set<WorkspaceView>([
+  'employees-list', 'employees-deployments', 'employees-documents',
+  'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
+  'attendance', 'payroll-processing', 'payslip', 'payroll-history',
+  'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-client',
+  'deductions', 'loans', 'reports', 'settings'
+])
+const activeWorkspaceView = computed<WorkspaceView | null>(() => {
+  const value = Array.isArray(route.query.view) ? route.query.view[0] : route.query.view
+  return typeof value === 'string' && workspaceViews.has(value as WorkspaceView) ? value as WorkspaceView : null
+})
 
 // --- OFFLINE / CACHE SUPPORT ---
 const isOffline = ref(false)
@@ -82,60 +111,98 @@ const navGroups = [
   {
     label: 'Employee Management', icon: 'user', key: 'employees',
     children: [
-      { label: 'Employee List', to: '/employees', icon: 'user' },
-      { label: 'Deployment History', to: '/employees/deployment-history', icon: 'chart-bar' },
-      { label: 'Employee Documents', to: '/employees/documents', icon: 'file-text' }
+      { label: 'Employee List', to: '/employees', icon: 'user', view: 'employees-list' },
+      { label: 'Deployment History', to: '/employees/deployment-history', icon: 'chart-bar', view: 'employees-deployments' },
+      { label: 'Employee Documents', to: '/employees/documents', icon: 'file-text', view: 'employees-documents' }
     ]
   },
   {
     label: 'Organization', icon: 'building', key: 'organization',
     children: [
-      { label: 'Agency', to: '/organization/agency', icon: 'building' },
-      { label: 'Position', to: '/organization/position', icon: 'user' },
-      { label: 'Client', to: '/organization/client', icon: 'user' },
-      { label: 'Site', to: '/organization/site', icon: 'building' },
-      { label: 'Region', to: '/organization/region', icon: 'building' }
+      { label: 'Agency', to: '/organization/agency', icon: 'building', view: 'organization-agency' },
+      { label: 'Position', to: '/organization/position', icon: 'user', view: 'organization-position' },
+      { label: 'Client', to: '/organization/client', icon: 'user', view: 'organization-client' },
+      { label: 'Site', to: '/organization/site', icon: 'building', view: 'organization-site' },
+      { label: 'Region', to: '/organization/region', icon: 'building', view: 'organization-region' }
     ]
   },
-  { label: 'Attendance', to: '/attendance', icon: 'clock' },
+  { label: 'Attendance', to: '/attendance', icon: 'clock', view: 'attendance' },
   {
     label: 'Payroll', icon: 'peso', key: 'payroll',
     children: [
-      { label: 'Payroll Processing', to: '/payroll/processing', icon: 'peso' },
-      { label: 'Payslip', to: '/payroll/payslip', icon: 'file-text' },
-      { label: 'Payroll History', to: '/payroll/history', icon: 'chart-bar' }
+      { label: 'Payroll Processing', to: '/payroll/processing', icon: 'peso', view: 'payroll-processing' },
+      { label: 'Payslip', to: '/payroll/payslip', icon: 'file-text', view: 'payslip' },
+      { label: 'Payroll History', to: '/payroll/history', icon: 'chart-bar', view: 'payroll-history' }
     ]
   },
   {
     label: 'Billing', icon: 'peso', key: 'billing',
     children: [
-      { label: 'Generate Billing', to: '/billing/generate', icon: 'peso' },
-      { label: 'Billing History', to: '/billing/history', icon: 'file-text' }
+      { label: 'Generate Billing', to: '/billing/generate', icon: 'peso', view: 'billing-generate' },
+      { label: 'Billing History', to: '/billing/history', icon: 'file-text', view: 'billing-history' }
     ]
   },
   {
     label: 'Rates', icon: 'settings', key: 'rates',
     children: [
-      { label: 'Payroll Rate', to: '/rates/payroll', icon: 'peso' },
-      { label: 'Billing Rate', to: '/rates/billing', icon: 'peso' },
-      { label: 'Client Rate', to: '/rates/client', icon: 'building' }
+      { label: 'Payroll Rate', to: '/rates/payroll', icon: 'peso', view: 'rates-payroll' },
+      { label: 'Billing Rate', to: '/rates/billing', icon: 'peso', view: 'rates-billing' },
+      { label: 'Client Rate', to: '/rates/client', icon: 'building', view: 'rates-client' }
     ]
   },
   {
     label: 'Deductions & Loans', icon: 'file-text', key: 'deductions',
     children: [
-      { label: 'Employee Deduction', to: '/deductions-loans/deduction', icon: 'file-text' },
-      { label: 'Employee Loan', to: '/deductions-loans/loan', icon: 'peso' }
+      { label: 'Employee Deduction', to: '/deductions-loans/deduction', icon: 'file-text', view: 'deductions' },
+      { label: 'Employee Loan', to: '/deductions-loans/loan', icon: 'peso', view: 'loans' }
     ]
   },
-  { label: 'Reports', to: '/reports', icon: 'chart-bar' },
-  { label: 'Settings', to: '/settings', icon: 'settings' }
+  { label: 'Reports', to: '/reports', icon: 'chart-bar', view: 'reports' },
+  { label: 'Settings', to: '/settings', icon: 'settings', view: 'settings' }
 ]
 
 const openGroups = ref(new Set())
 
 const isActive = (to) => route.path === to || route.path.startsWith(to + '/')
-const groupHasActiveChild = (group) => group.children?.some((c) => isActive(c.to))
+const isNavActive = (item: any) => activeWorkspaceView.value === item.view || (!activeWorkspaceView.value && isActive(item.to))
+const groupHasActiveChild = (group: any) => group.children?.some((child: any) => isNavActive(child))
+
+function openWorkspaceView(view: WorkspaceView, updateUrl = true) {
+  isMobileNavOpen.value = false
+
+  // Keep the navigation in sync with the content: only the group that owns
+  // the selected page stays open, so another submenu is immediately usable.
+  const owner = navGroups.find((group: any) => group.children?.some((child: any) => child.view === view)) as any
+  openGroups.value = owner?.key ? new Set([owner.key]) : new Set()
+
+  if (updateUrl && route.query.view !== view) {
+    router.push({ path: '/dashboard', query: { view } })
+  }
+}
+
+function returnToDashboard(updateUrl = true) {
+  isMobileNavOpen.value = false
+  if (updateUrl && route.query.view) router.push('/dashboard')
+}
+
+const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
+  'employees-list': EmployeeListPage,
+  'employees-deployments': DeploymentHistoryPage,
+  'employees-documents': EmployeeDocumentsPage,
+  'organization-agency': AgencyPage,
+  'organization-position': PositionPage,
+  'organization-client': ClientPage,
+  'organization-site': SitePage,
+  'organization-region': RegionPage,
+  'rates-payroll': PayrollRatePage,
+  'rates-billing': BillingRatePage,
+  'rates-client': ClientRatePage
+}
+const activePageComponent = computed(() => activeWorkspaceView.value ? workspaceComponents[activeWorkspaceView.value] : null)
+
+watch(activeWorkspaceView, (view) => {
+  if (view) openWorkspaceView(view, false)
+}, { immediate: true })
 
 const toggleGroup = (key) => {
   const next = new Set(openGroups.value)
@@ -268,10 +335,10 @@ onBeforeUnmount(() => {
         @mouseleave="isHovering = false"
       >
         <div class="dash-brand-row">
-          <NuxtLink to="/dashboard" class="dash-brand">
+          <button type="button" class="dash-brand" @click="returnToDashboard">
             <span class="dash-brand__mark">PMS</span>
             <span class="dash-brand__text"><strong>Payroll Management</strong><small>System</small></span>
-          </NuxtLink>
+          </button>
           <button
             type="button"
             class="dash-pin-btn"
@@ -286,16 +353,17 @@ onBeforeUnmount(() => {
 
         <nav class="dash-nav">
           <template v-for="group in navGroups" :key="group.label">
-            <NuxtLink
+            <button
               v-if="!group.children"
-              :to="group.to"
+              type="button"
               class="dash-nav-link"
-              :class="{ 'is-active': isActive(group.to) }"
+              :class="{ 'is-active': !activeWorkspaceView && isActive(group.to) || activeWorkspaceView === group.view }"
               :title="!expanded ? group.label : null"
+              @click="group.view ? openWorkspaceView(group.view) : returnToDashboard()"
             >
               <span class="dash-nav-icon" v-html="iconSvg(group.icon)"></span>
               <span class="dash-nav-label">{{ group.label }}</span>
-            </NuxtLink>
+            </button>
 
             <div v-else class="dash-nav-group">
               <button
@@ -313,16 +381,17 @@ onBeforeUnmount(() => {
               </button>
 
               <div class="dash-nav-sub" v-show="expanded && openGroups.has(group.key)">
-                <NuxtLink
+                <button
                   v-for="child in group.children"
                   :key="child.to"
-                  :to="child.to"
+                  type="button"
                   class="dash-nav-sublink"
-                  :class="{ 'is-active': isActive(child.to) }"
+                  :class="{ 'is-active': isNavActive(child) }"
+                  @click="openWorkspaceView(child.view)"
                 >
                   <span class="dash-nav-icon dash-nav-icon--sm" v-html="iconSvg(child.icon)"></span>
                   {{ child.label }}
-                </NuxtLink>
+                </button>
               </div>
             </div>
           </template>
@@ -375,6 +444,17 @@ onBeforeUnmount(() => {
             <span>No internet connection. Showing the last saved data. It may not be up to date.</span>
           </div>
 
+          <KeepAlive>
+            <component v-if="activePageComponent" :key="activeWorkspaceView" :is="activePageComponent" @navigate="openWorkspaceView" />
+          </KeepAlive>
+
+          <section v-if="activeWorkspaceView && !activePageComponent" class="workspace-placeholder">
+            <p>{{ activeWorkspaceView.replace(/-/g, ' ') }}</p>
+            <h1>Module is being prepared</h1>
+            <span>This section now stays inside the dashboard workspace. Its full screen will appear here once it is added to the system.</span>
+          </section>
+
+          <template v-if="!activeWorkspaceView">
           <div class="dash-header-row">
             <div class="dash-header">
               <h1>Dashboard</h1>
@@ -429,6 +509,7 @@ onBeforeUnmount(() => {
               </ul>
             </div>
           </section>
+          </template>
         </main>
       </div>
 

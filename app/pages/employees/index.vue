@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
+const emit = defineEmits<{ (event: 'navigate', view: 'employees-documents'): void }>()
+
 const items = ref<any[]>([])
 const agencies = ref<any[]>([])
 const positions = ref<any[]>([])
@@ -111,7 +113,7 @@ onMounted(load)
         <h1>Employee List</h1>
       </div>
       <div class="actions-row">
-        <NuxtLink class="ghost" to="/employees/documents">Employee Documents</NuxtLink>
+        <button class="ghost" type="button" @click="emit('navigate', 'employees-documents')">Employee Documents</button>
         <button class="primary" @click="reset(); modalOpen = true">+ Add employee</button>
       </div>
     </header>
