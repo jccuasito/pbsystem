@@ -53,6 +53,10 @@ All organization CRUD routes are session-protected and accept only these whiteli
 | POST | `/api/organization/:resource` | Target resource table | Organization add modal/API consumers | Body contains the resource's non-ID columns. Returns `{ id }`. |
 | PUT | `/api/organization/:resource` | Target resource table | Organization edit modal/API consumers | Body is `{ id, ...resourceFields }`. Returns `{ success: true }`. |
 | DELETE | `/api/organization/:resource` | Target resource table | Organization table/API consumers | Body is `{ id }`; soft-deletes with `Status = 'Inactive'`. Returns `{ success: true }`. |
+| GET | `/api/organization/positions` | `agency_position`, `agency`, `position` | `app/pages/organization/position/index.vue` | Returns agency-position rows plus agency and position lookup arrays for filters. |
+| POST | `/api/organization/positions` | `position`, `agency_position` | `app/pages/organization/position/index.vue` | Creates a new position or links an existing `PositionID` to an agency in one transaction. |
+| PUT | `/api/organization/positions` | `position`, `agency_position` | `app/pages/organization/position/index.vue` | Updates a selected assignment and its position details in one transaction. |
+| DELETE | `/api/organization/positions` | `agency_position` | `app/pages/organization/position/index.vue` | Soft-deactivates the selected assignment. Body: `{ agencyPositionId }`. |
 
 Site and site-shift lists use `vw_effective_site_policy` for client/site policy resolution. `site-shift.EffectiveNDEnabled` applies its `NDPolicyOverride` only after the view's resolved client/site policy, preserving the documented precedence: site-shift override > site policy > client policy.
 
