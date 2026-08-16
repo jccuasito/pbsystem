@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
 const emit = defineEmits<{ (event: 'navigate', view: 'employees-documents'): void }>()
@@ -55,8 +56,8 @@ function reset(item: any = null) {
   formError.value = ''
 }
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const response: any = await $fetch('/api/employees', { query: { agencyId: filters.value.agencyId || undefined, positionId: filters.value.positionId || undefined } })
     items.value = response.items || []
@@ -66,7 +67,7 @@ async function load() {
   } catch (cause: any) {
     error.value = cause.data?.statusMessage || 'Unable to load employees.'
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -103,6 +104,7 @@ function format(value: any) {
 }
 
 onMounted(load)
+useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </script>
 
 <template>

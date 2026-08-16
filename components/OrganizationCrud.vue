@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 
 type Field = { key: string; label: string; type?: 'text' | 'email' | 'date' | 'select' | 'textarea'; required?: boolean; optionsKey?: string }
 type Column = { key: string; label: string }
@@ -23,8 +24,8 @@ function resetForm(item: any = null) {
   error.value = ''
 }
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const response: any = await $fetch(`/api/organization/${props.resource}`)
     items.value = response.items || []
@@ -32,7 +33,7 @@ async function load() {
   } catch (cause: any) {
     error.value = cause.data?.statusMessage || 'Unable to load records.'
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -67,6 +68,7 @@ function display(item: any, column: Column) {
 }
 
 onMounted(load)
+useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </script>
 
 <template>

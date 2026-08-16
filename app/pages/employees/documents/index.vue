@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
 type SectionKey = 'profile' | 'government' | 'education' | 'license' | 'training' | 'clearance' | 'bank' | 'insurance'
@@ -71,8 +72,8 @@ function recordCount(section: SectionKey) {
   return rowsFor(section).length
 }
 
-async function load(employeeId?: string) {
-  loading.value = true
+async function load(employeeId?: string, silent = false) {
+  if (!silent) loading.value = true
   try {
     const response: any = await $fetch('/api/employees/documents', { query: { employeeId: employeeId || activeEmployeeId.value || undefined } })
     employees.value = response.employees || []
@@ -84,7 +85,7 @@ async function load(employeeId?: string) {
   } catch (cause: any) {
     error.value = cause.data?.statusMessage || 'Unable to load employee documents.'
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -150,6 +151,7 @@ async function remove(section: SectionKey, item: any) {
 }
 
 onMounted(load)
+useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: () => !saving.value })
 </script>
 
 <template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
 const items = ref<any[]>([])
@@ -38,8 +39,8 @@ function onSiteChanged() {
   form.value.SiteShiftID = ''
 }
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const response: any = await $fetch('/api/employees/deployments')
     items.value = response.items || []
@@ -50,7 +51,7 @@ async function load() {
   } catch (cause: any) {
     error.value = cause.data?.statusMessage || 'Unable to load deployment history.'
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -74,6 +75,7 @@ function display(value: any) {
 }
 
 onMounted(load)
+useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </script>
 
 <template>
