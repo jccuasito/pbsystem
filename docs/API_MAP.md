@@ -78,3 +78,7 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 | Method | Path | Tables used | Caller | Request / response |
 | --- | --- | --- | --- | --- |
 | GET | `/api/attendance/dtr-lookups` | `agency`, `agency_position`, `payroll_rate`, `client_rate`, `client` | `app/pages/attendance/daily-time-records/index.vue` | Session required. Optional `agencyId` filters clients to active client-rate links under that agency. Returns `{ agencies, clients }`. |
+# Database recovery
+
+- `database/rebuild-employee-deployment.sql` — recovery-only migration for a corrupt or missing `employee_deployment` InnoDB tablespace. It recreates the deployment schema with an optional `SiteShiftID`; it intentionally does not recreate lost deployment rows.
+- `database/recover-known-deployments.sql` — one-time, idempotent recovery data that restores the two verified Jhoncharls deployments and re-links the surviving August 1–15 attendance records to DeploymentID 1.
