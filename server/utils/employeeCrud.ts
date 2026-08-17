@@ -1,4 +1,4 @@
-import { createError, getQuery, readBody } from 'h3'
+import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 
@@ -239,7 +239,7 @@ function employeeIdFromQuery(event: any) {
 async function activeClientRates() {
   const [rows] = await pool.execute<any[]>(
     [
-      'SELECT cr.ClientRateID, cr.ClientID, c.ClientName, pr.AgencyPositionID, a.AgencyName, p.PositionName, cr.Status, pr.RegionID, rg.RegionName',
+      'SELECT cr.ClientRateID, cr.ClientID, c.ClientName, ap.AgencyID, ap.PositionID, pr.AgencyPositionID, a.AgencyName, p.PositionName, cr.Status, pr.RegionID, rg.RegionName',
       'FROM client_rate cr',
       'INNER JOIN client c ON c.ClientID = cr.ClientID',
       'INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID',
@@ -290,8 +290,8 @@ function deploymentSql(filters: string[]) {
     'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
     positionJoin,
     'INNER JOIN site s ON s.SiteID = ed.SiteID',
-    'INNER JOIN site_shift ss ON ss.SiteShiftID = ed.SiteShiftID',
-    'INNER JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID',
+    'LEFT JOIN site_shift ss ON ss.SiteShiftID = ed.SiteShiftID',
+    'LEFT JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID',
     'INNER JOIN client c ON c.ClientID = cr.ClientID',
     filters.length ? `WHERE ${filters.join(' AND ')}` : '',
     'ORDER BY ed.StartDate DESC, ed.DeploymentID DESC'
@@ -447,6 +447,150 @@ export async function createDeployment(event: any) {
     return { success: true, id: result.insertId }
   } catch (error) {
     await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+export async function transferEmployee(event: any) {
+  const session = requireSession(event)
+  const employeeId = parseInteger(getRouterParam(event, 'id'), 'employeeId') as number
+  const body = await readBody<Record<string, unknown>>(event) || {}
+  const clientRateId = parseInteger(body.ClientRateID, 'ClientRateID') as number
+  const siteId = parseInteger(body.SiteID, 'SiteID') as number
+  const siteShiftId = parseInteger(body.SiteShiftID, 'SiteShiftID', true) as number | null
+  const startDate = parseDate(body.StartDate)
+  const remarks = parseText(body.Remarks)
+
+  if (!startDate) throw createError({ statusCode: 400, statusMessage: 'Transfer effective date is required.' })
+
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [[dateRow]] = await connection.execute<any[]>("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS CurrentDate")
+    const today = String(dateRow.CurrentDate)
+    if (startDate > today) throw createError({ statusCode: 400, statusMessage: 'Future-dated transfers are not supported yet.' })
+    const [[employee]] = await connection.execute<any[]>('SELECT EmployeeID FROM employee WHERE EmployeeID = ? AND Status = \'Active\' FOR UPDATE', [employeeId])
+    if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
+
+    const [[target]] = await connection.execute<any[]>(
+      `SELECT pr.AgencyPositionID, cr.ClientID
+       FROM client_rate cr
+       INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+       WHERE cr.ClientRateID = ? AND cr.Status = 'Active' AND pr.Status = 'Active'
+       LIMIT 1`,
+      [clientRateId]
+    )
+    if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active client rate.' })
+
+    const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1', [siteId, target.ClientID])
+    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site that belongs to the selected client rate.' })
+    if (siteShiftId) {
+      const [[shift]] = await connection.execute<any[]>('SELECT SiteShiftID FROM site_shift WHERE SiteShiftID = ? AND SiteID = ? AND Status = \'Active\' LIMIT 1', [siteShiftId, siteId])
+      if (!shift) throw createError({ statusCode: 400, statusMessage: 'Select an active shift for the selected site.' })
+    }
+
+    const [[current]] = await connection.execute<any[]>(
+      `SELECT DeploymentID, StartDate
+       FROM employee_deployment
+       WHERE EmployeeID = ? AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
+       ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`,
+      [employeeId, startDate, startDate]
+    )
+    if (!current) throw createError({ statusCode: 400, statusMessage: 'This employee has no active deployment to transfer. Create a deployment first.' })
+    if (current.StartDate >= startDate) throw createError({ statusCode: 400, statusMessage: 'Transfer date must be after the current deployment start date.' })
+
+    const [[attendanceAfterStart]] = await connection.execute<any[]>('SELECT AttendanceID FROM attendance WHERE DeploymentID = ? AND AttendanceDate >= ? LIMIT 1', [current.DeploymentID, startDate])
+    if (attendanceAfterStart) throw createError({ statusCode: 400, statusMessage: 'Cannot transfer: attendance already exists for the current deployment on or after the transfer date.' })
+    const [[payrollAfterStart]] = await connection.execute<any[]>('SELECT PayrollID FROM payroll WHERE DeploymentID = ? AND EndDate >= ? LIMIT 1', [current.DeploymentID, startDate])
+    if (payrollAfterStart) throw createError({ statusCode: 400, statusMessage: 'Cannot transfer: payroll already covers the current deployment on or after the transfer date.' })
+
+    await connection.execute('UPDATE employee_deployment SET EndDate = DATE_SUB(?, INTERVAL 1 DAY) WHERE DeploymentID = ?', [startDate, current.DeploymentID])
+    const [result] = await connection.execute<any>(
+      `INSERT INTO employee_deployment (EmployeeID, ClientRateID, SiteID, SiteShiftID, DeploymentType, StartDate, Remarks, CreatedBy)
+       VALUES (?, ?, ?, ?, 'Regular', ?, ?, ?)`,
+      [employeeId, clientRateId, siteId, siteShiftId, startDate, remarks, session.sub] as any[]
+    )
+    await connection.execute('UPDATE employee SET AgencyPositionID = ?, UpdatedBy = ? WHERE EmployeeID = ?', [target.AgencyPositionID, session.sub, employeeId])
+    await connection.commit()
+    return { success: true, id: result.insertId }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+function validTime(value: unknown, field: string) {
+  if (typeof value !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value)) throw createError({ statusCode: 400, statusMessage: `${field} must be a valid time.` })
+  return value
+}
+
+function validHours(value: unknown, field: string) {
+  const hours = Number(value)
+  if (!Number.isFinite(hours) || hours < 0 || hours > 24) throw createError({ statusCode: 400, statusMessage: `${field} must be between 0 and 24.` })
+  return hours
+}
+
+export async function createTransferSiteShift(event: any) {
+  const session = requireSession(event)
+  const body = await readBody<Record<string, any>>(event) || {}
+  const clientRateId = parseInteger(body.ClientRateID, 'ClientRateID') as number
+  const siteId = parseInteger(body.SiteID, 'SiteID') as number
+  const requestedShiftCodeId = parseInteger(body.ShiftCodeID, 'ShiftCodeID', true) as number | null
+  const newShift = body.newShift && typeof body.newShift === 'object' ? body.newShift as Record<string, unknown> : null
+  if (!requestedShiftCodeId && !newShift) throw createError({ statusCode: 400, statusMessage: 'Choose an existing shift code or enter a new one.' })
+
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [[target]] = await connection.execute<any[]>(
+      `SELECT ap.AgencyID, cr.ClientID
+       FROM client_rate cr
+       INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+       INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+       WHERE cr.ClientRateID = ? AND cr.Status = 'Active' AND pr.Status = 'Active'
+       LIMIT 1`,
+      [clientRateId]
+    )
+    if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active client rate.' })
+    const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1', [siteId, target.ClientID])
+    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site that belongs to the selected client rate.' })
+
+    let shiftCodeId = requestedShiftCodeId
+    if (shiftCodeId) {
+      const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' LIMIT 1', [shiftCodeId, target.AgencyID])
+      if (!shift) throw createError({ statusCode: 400, statusMessage: 'Select an active shift code from the selected agency.' })
+    } else {
+      const shiftCode = parseText(newShift?.ShiftCode)
+      const shiftName = parseText(newShift?.ShiftName)
+      const shiftType = newShift?.ShiftType
+      if (!shiftCode || !shiftName) throw createError({ statusCode: 400, statusMessage: 'Shift code and shift name are required.' })
+      if (!['Day', 'Night', 'Split', 'Flexible'].includes(String(shiftType))) throw createError({ statusCode: 400, statusMessage: 'Select a valid shift type.' })
+      const [result] = await connection.execute<any>(
+        `INSERT INTO shift_code (AgencyID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, Status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Active')`,
+        [target.AgencyID, shiftCode, shiftName, shiftType, validTime(newShift?.TimeIn, 'Time in'), validTime(newShift?.TimeOut, 'Time out'), validHours(newShift?.RegularHours, 'Regular hours'), validHours(newShift?.RegularOTCap, 'Regular OT cap')]
+      )
+      shiftCodeId = result.insertId
+    }
+
+    const [[existing]] = await connection.execute<any[]>('SELECT SiteShiftID, Status FROM site_shift WHERE SiteID = ? AND ShiftCodeID = ? LIMIT 1 FOR UPDATE', [siteId, shiftCodeId])
+    let siteShiftId: number
+    if (existing?.SiteShiftID) {
+      await connection.execute("UPDATE site_shift SET Status = 'Active', NDPolicyOverride = 'Inherit' WHERE SiteShiftID = ?", [existing.SiteShiftID])
+      siteShiftId = existing.SiteShiftID
+    } else {
+      const [result] = await connection.execute<any>('INSERT INTO site_shift (SiteID, ShiftCodeID, NDPolicyOverride, Status) VALUES (?, ?, \'Inherit\', \'Active\')', [siteId, shiftCodeId])
+      siteShiftId = result.insertId
+    }
+    await connection.commit()
+    return { id: siteShiftId, shiftCodeId }
+  } catch (error: any) {
+    await connection.rollback()
+    if (error?.code === 'ER_DUP_ENTRY') throw createError({ statusCode: 409, statusMessage: 'That shift code already exists for this agency.' })
     throw error
   } finally {
     connection.release()
