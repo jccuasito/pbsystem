@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
@@ -15,10 +15,12 @@ const sections: Array<{ key: SectionKey; label: string; idKey: string; fields: A
   { key: 'bank', label: 'Bank', idKey: 'BankID', fields: [{ key: 'BankName', label: 'Bank name' }, { key: 'AccountNumber', label: 'Account number' }, { key: 'AccountType', label: 'Account type' }, { key: 'Status', label: 'Status' }] },
   { key: 'insurance', label: 'Insurance', idKey: 'InsuranceID', fields: [{ key: 'Beneficiary', label: 'Beneficiary' }, { key: 'Relationship', label: 'Relationship' }, { key: 'ContactNumber', label: 'Contact number' }] }
 ]
+const emit = defineEmits<{ (event: 'navigate', view: 'employees-list'): void }>()
 
 const employees = ref<any[]>([])
 const agencies = ref<any[]>([])
 const positions = ref<any[]>([])
+const agencyPositions = ref<any[]>([])
 const employee = ref<any>(null)
 const bundle = ref<any>({})
 const activeEmployeeId = ref('')
@@ -43,6 +45,17 @@ const filteredEmployees = computed(() => {
     const matchesAgency = !filters.value.agencyId || String(item.AgencyID) === String(filters.value.agencyId)
     const matchesPosition = !filters.value.positionId || String(item.PositionID) === String(filters.value.positionId)
     return matchesSearch && matchesAgency && matchesPosition
+  })
+})
+const availablePositions = computed(() => {
+  const agencyId = String(filters.value.agencyId)
+  const source = agencyId ? agencyPositions.value.filter((item) => String(item.AgencyID) === agencyId) : agencyPositions.value
+  const seen = new Set<string>()
+  return source.filter((item) => {
+    const id = String(item.PositionID)
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
   })
 })
 
@@ -79,6 +92,7 @@ async function load(employeeId?: string, silent = false) {
     employees.value = response.employees || []
     agencies.value = response.agencies || []
     positions.value = response.positions || []
+    agencyPositions.value = response.agencyPositions || []
     employee.value = response.employee || null
     bundle.value = response
     if (!activeEmployeeId.value && employees.value.length) activeEmployeeId.value = String(employees.value[0].EmployeeID)
@@ -88,6 +102,8 @@ async function load(employeeId?: string, silent = false) {
     if (!silent) loading.value = false
   }
 }
+
+watch(() => filters.value.agencyId, () => { filters.value.positionId = '' })
 
 async function selectEmployee(item: any) {
   activeEmployeeId.value = String(item.EmployeeID)
@@ -162,6 +178,7 @@ useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: ()
         <h1>Employee Documents / Profile</h1>
         <small>Search an employee, then add or view sectioned documents.</small>
       </div>
+      <button type="button" class="primary" @click="emit('navigate', 'employees-list')">+ Add employee</button>
     </header>
 
     <section class="toolbar">
@@ -180,7 +197,7 @@ useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: ()
         <span>Position</span>
         <select v-model="filters.positionId">
           <option value="">All Positions</option>
-          <option v-for="position in positions" :key="position.PositionID" :value="position.PositionID">{{ position.PositionName }}</option>
+          <option v-for="position in availablePositions" :key="position.PositionID" :value="position.PositionID">{{ position.PositionName }}</option>
         </select>
       </label>
     </section>
@@ -302,5 +319,5 @@ useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: ()
 </template>
 
 <style scoped>
-.documents-page{padding:34px;max-width:1500px;margin:auto;color:#0b1f3f;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.1em;color:#5570a5}.page-head h1{margin:4px 0 0;font-size:2rem;line-height:1.15}.page-head small{display:block;margin-top:6px;color:#66758b}.toolbar{display:grid;grid-template-columns:minmax(260px,1fr) 220px 220px;gap:14px;margin-bottom:18px}.toolbar label{display:grid;gap:6px;font-size:.78rem;font-weight:800;color:#526174}.toolbar input,.toolbar select{height:42px;border:1px solid #ccd5e4;border-radius:8px;padding:0 12px;background:#fff;font:inherit}.employee-list{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.employee-id{font-weight:900;color:#1f3fcf}.row-actions{display:flex;gap:8px}.primary,.ghost{border:0;border-radius:8px;padding:9px 13px;font-weight:800;cursor:pointer;text-decoration:none}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:18px}.drawer,.modal{position:relative;width:min(100%,1160px);max-height:92vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;color:#162033}.modal{width:min(100%,780px);display:grid;gap:14px}.close{position:absolute;right:14px;top:12px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.profile-card{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:18px 20px;border:1px solid #dce3ee;border-radius:14px;background:linear-gradient(135deg,#fff 0%,#f7faff 100%);margin-bottom:16px}.profile-card p{margin:0 0 4px;color:#5271a5;font-size:.75rem;font-weight:800;letter-spacing:.08em}.profile-card h2{margin:0;font-size:1.35rem}.profile-card small{color:#637287}.profile-meta{display:grid;gap:6px;text-align:right;color:#415063}.tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}.tabs button{border:1px solid #d7dfeb;background:#fff;border-radius:999px;padding:9px 13px;font-weight:800;cursor:pointer}.tabs button.active{background:#2349e6;color:#fff;border-color:#2349e6}.tabs span{display:inline-grid;place-items:center;min-width:20px;height:20px;margin-left:6px;border-radius:999px;background:#eef3ff;color:#2043cc;font-size:.72rem}.tabs button.active span{background:#fff;color:#2349e6}.records-panel{border:1px solid #dce3ee;border-radius:14px;background:#fff;padding:18px}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.panel-head h3{margin:0}.section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.record-card{border:1px solid #e3e9f2;border-radius:12px;padding:14px;background:#fdfefe}.record-card__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.record-actions{display:flex;gap:8px}.record-actions button,.modal footer button:not(.primary){border:1px solid #cfd8e6;background:#fff;border-radius:8px;padding:7px 10px;cursor:pointer;font-weight:700}.record-card dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:14px 0 0}.record-card dt{font-size:.72rem;font-weight:900;color:#7a8695;text-transform:uppercase}.record-card dd{margin:0}.empty{margin:0;color:#66758b}.modal h2{margin:0}.modal-subtitle{margin:-8px 0 0;color:#637287}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:800;color:#475569}.modal input,.modal select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:850px){.documents-page{padding:20px}.toolbar{grid-template-columns:1fr}.profile-card,.panel-head{flex-direction:column;align-items:flex-start}.profile-meta{text-align:left}.form-grid{grid-template-columns:1fr}.row-actions{flex-direction:column}}
+.documents-page{padding:34px;max-width:1500px;margin:auto;color:#0b1f3f;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.1em;color:#5570a5}.page-head h1{margin:4px 0 0;font-size:2rem;line-height:1.15}.page-head small{display:block;margin-top:6px;color:#66758b}.toolbar{display:grid;grid-template-columns:minmax(300px,1fr) minmax(185px,220px) minmax(185px,220px);gap:16px;margin-bottom:18px}.toolbar label{display:grid;min-width:0;gap:6px;font-size:.78rem;font-weight:800;color:#526174}.toolbar input,.toolbar select{box-sizing:border-box;width:100%;height:42px;border:1px solid #ccd5e4;border-radius:8px;padding:0 12px;background:#fff;font:inherit}.employee-list{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.employee-id{font-weight:900;color:#1f3fcf}.row-actions{display:flex;gap:8px}.primary,.ghost{border:0;border-radius:8px;padding:9px 13px;font-weight:800;cursor:pointer;text-decoration:none}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:18px}.drawer,.modal{position:relative;width:min(100%,1160px);max-height:92vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;color:#162033}.modal{width:min(100%,780px);display:grid;gap:14px}.close{position:absolute;right:14px;top:12px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.profile-card{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:18px 20px;border:1px solid #dce3ee;border-radius:14px;background:linear-gradient(135deg,#fff 0%,#f7faff 100%);margin-bottom:16px}.profile-card p{margin:0 0 4px;color:#5271a5;font-size:.75rem;font-weight:800;letter-spacing:.08em}.profile-card h2{margin:0;font-size:1.35rem}.profile-card small{color:#637287}.profile-meta{display:grid;gap:6px;text-align:right;color:#415063}.tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}.tabs button{border:1px solid #d7dfeb;background:#fff;border-radius:999px;padding:9px 13px;font-weight:800;cursor:pointer}.tabs button.active{background:#2349e6;color:#fff;border-color:#2349e6}.tabs span{display:inline-grid;place-items:center;min-width:20px;height:20px;margin-left:6px;border-radius:999px;background:#eef3ff;color:#2043cc;font-size:.72rem}.tabs button.active span{background:#fff;color:#2349e6}.records-panel{border:1px solid #dce3ee;border-radius:14px;background:#fff;padding:18px}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.panel-head h3{margin:0}.section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.record-card{border:1px solid #e3e9f2;border-radius:12px;padding:14px;background:#fdfefe}.record-card__head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.record-actions{display:flex;gap:8px}.record-actions button,.modal footer button:not(.primary){border:1px solid #cfd8e6;background:#fff;border-radius:8px;padding:7px 10px;cursor:pointer;font-weight:700}.record-card dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:14px 0 0}.record-card dt{font-size:.72rem;font-weight:900;color:#7a8695;text-transform:uppercase}.record-card dd{margin:0}.empty{margin:0;color:#66758b}.modal h2{margin:0}.modal-subtitle{margin:-8px 0 0;color:#637287}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:800;color:#475569}.modal input,.modal select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:850px){.documents-page{padding:20px}.toolbar{grid-template-columns:1fr}.profile-card,.panel-head{flex-direction:column;align-items:flex-start}.profile-meta{text-align:left}.form-grid{grid-template-columns:1fr}.row-actions{flex-direction:column}}
 </style>

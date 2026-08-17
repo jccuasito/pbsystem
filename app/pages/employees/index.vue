@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
@@ -16,6 +16,7 @@ const formError = ref('')
 const modalOpen = ref(false)
 const editing = ref<any>(null)
 const filters = ref({ agencyId: '', positionId: '' })
+const search = ref('')
 
 const form = ref({
   AgencyPositionID: '',
@@ -103,6 +104,30 @@ function format(value: any) {
   return value === null || value === undefined || value === '' ? '\u2014' : value
 }
 
+const availablePositions = computed(() => {
+  const agencyId = String(filters.value.agencyId)
+  const source = agencyId ? agencyPositions.value.filter((item) => String(item.AgencyID) === agencyId) : agencyPositions.value
+  const seen = new Set<string>()
+  return source.filter((item) => {
+    const id = String(item.PositionID)
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+})
+
+const filteredItems = computed(() => {
+  const query = search.value.trim().toLowerCase()
+  if (!query) return items.value
+  return items.value.filter((item) => [formatEmployeeId(item.EmployeeID), item.EmployeeNumber, formatEmployeeName(item), item.AgencyName, item.PositionName, item.SiteName]
+    .some((value) => String(value || '').toLowerCase().includes(query)))
+})
+
+watch(() => filters.value.agencyId, () => {
+  filters.value.positionId = ''
+  void load()
+})
+
 onMounted(load)
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </script>
@@ -121,9 +146,13 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
     </header>
 
     <section class="filters">
+      <label class="search-field">
+        <span>Search employee</span>
+        <input v-model.trim="search" placeholder="Search employee ID, name, agency, position, or site" />
+      </label>
       <label>
         <span>Agency</span>
-        <select v-model="filters.agencyId" @change="load">
+        <select v-model="filters.agencyId">
           <option value="">All Agencies</option>
           <option v-for="agency in agencies" :key="agency.AgencyID" :value="agency.AgencyID">{{ agency.AgencyName }}</option>
         </select>
@@ -132,7 +161,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
         <span>Position</span>
         <select v-model="filters.positionId" @change="load">
           <option value="">All Positions</option>
-          <option v-for="position in positions" :key="position.PositionID" :value="position.PositionID">{{ position.PositionName }}</option>
+          <option v-for="position in availablePositions" :key="position.PositionID" :value="position.PositionID">{{ position.PositionName }}</option>
         </select>
       </label>
     </section>
@@ -156,8 +185,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
         </thead>
         <tbody>
           <tr v-if="loading"><td colspan="9">Loading...</td></tr>
-          <tr v-else-if="!items.length"><td colspan="9">No employees found.</td></tr>
-          <tr v-for="item in items" :key="item.EmployeeID">
+          <tr v-else-if="!filteredItems.length"><td colspan="9">No employees found.</td></tr>
+          <tr v-for="item in filteredItems" :key="item.EmployeeID">
             <td class="employee-id">{{ formatEmployeeId(item.EmployeeID) }}</td>
             <td>{{ formatEmployeeNumber(item.EmployeeNumber) }}</td>
             <td>{{ formatEmployeeName(item) }}</td>
@@ -212,5 +241,5 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </template>
 
 <style scoped>
-.employees-page{padding:32px;max-width:1400px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.filters{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 16px}.filters label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters select{min-height:40px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:760px){.employees-page{padding:20px}.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
+.employees-page{padding:32px;max-width:1400px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.filters{display:grid;grid-template-columns:minmax(280px,1fr) minmax(180px,220px) minmax(180px,220px);gap:14px;margin:0 0 16px}.filters label{display:grid;min-width:0;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters input,.filters select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff;font:inherit}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:760px){.employees-page{padding:20px}.filters,.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
 </style>
