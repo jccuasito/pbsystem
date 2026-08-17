@@ -270,11 +270,6 @@ async function confirmLogout() {
   try { await logout() } finally { loggingOut.value = false; showLogoutAlert.value = false }
 }
 
-function handleBeforeUnload(event: BeforeUnloadEvent) {
-  event.preventDefault()
-  event.returnValue = ''
-}
-
 onMounted(async () => {
   // 1. Agad i-load yung cached user para instant may laman kahit walang net pa
   const cachedUser = loadCache(CACHE_KEYS.user)
@@ -321,11 +316,9 @@ onMounted(async () => {
 
   await dashboardRefresh
 
-  window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('online', updateOnlineStatus)
   window.removeEventListener('offline', updateOnlineStatus)
 })
