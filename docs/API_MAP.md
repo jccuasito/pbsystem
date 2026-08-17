@@ -70,3 +70,9 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 | POST | `/api/rates/:resource` | Target rate table; client rate can also create `payroll_rate` and/or `billing_rate` in one transaction | Rate add/link forms | Rate body contains `AgencyPositionID`, optional `RegionID`, monetary fields, effective date, and status. Client-rate body links `ClientID`, matching rate IDs, or `inlinePayrollRate` / `inlineBillingRate`. Returns `{ id }`. |
 | PUT | `/api/rates/:resource` | Target rate table | Rate edit forms | Body is `{ id, ...fields }`; client-rate validates its payroll/billing pair belongs to the selected agency position. Returns `{ success: true }`. |
 | DELETE | `/api/rates/:resource` | Target rate table | Rate tables | Body `{ id }`; soft-deletes through `Status = 'Inactive'`. Returns `{ success: true }`. |
+
+## Attendance
+
+| Method | Path | Tables used | Caller | Request / response |
+| --- | --- | --- | --- | --- |
+| GET | `/api/attendance/dtr-lookups` | `agency`, `agency_position`, `payroll_rate`, `client_rate`, `client` | `app/pages/attendance/daily-time-records/index.vue` | Session required. Optional `agencyId` filters clients to active client-rate links under that agency. Returns `{ agencies, clients }`. |

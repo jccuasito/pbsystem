@@ -13,6 +13,7 @@ import RegionPage from '../organization/region/index.vue'
 import PayrollRatePage from '../rates/payroll/index.vue'
 import BillingRatePage from '../rates/billing/index.vue'
 import ClientRatePage from '../rates/client/index.vue'
+import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,13 +28,13 @@ const loggingOut = ref(false)
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
-  | 'attendance' | 'payroll-processing' | 'payslip' | 'payroll-history'
+  | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-client'
   | 'deductions' | 'loans' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
-  'attendance', 'payroll-processing', 'payslip', 'payroll-history',
+  'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-client',
   'deductions', 'loans', 'reports', 'settings'
 ])
@@ -126,7 +127,14 @@ const navGroups = [
       { label: 'Region', to: '/organization/region', icon: 'building', view: 'organization-region' }
     ]
   },
-  { label: 'Attendance', to: '/attendance', icon: 'clock', view: 'attendance' },
+  {
+    label: 'Attendance', icon: 'clock', key: 'attendance',
+    children: [
+      { label: 'Daily Time Records', to: '/attendance/daily-time-records', icon: 'clock', view: 'attendance-dtr' },
+      { label: 'Shift Code', to: '/attendance/shift-code', icon: 'clock', view: 'attendance-shift-code' },
+      { label: 'Holiday Manager', to: '/attendance/holiday-manager', icon: 'file-text', view: 'attendance-holiday-manager' }
+    ]
+  },
   {
     label: 'Payroll', icon: 'peso', key: 'payroll',
     children: [
@@ -196,7 +204,8 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'organization-region': RegionPage,
   'rates-payroll': PayrollRatePage,
   'rates-billing': BillingRatePage,
-  'rates-client': ClientRatePage
+  'rates-client': ClientRatePage,
+  'attendance-dtr': DailyTimeRecordsPage
 }
 const activePageComponent = computed(() => activeWorkspaceView.value ? workspaceComponents[activeWorkspaceView.value] : null)
 
