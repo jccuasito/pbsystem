@@ -255,7 +255,8 @@ async function activeClientRates() {
 }
 
 async function deploymentLookups() {
-  const [clientRates, employees, sites, shiftCodes] = await Promise.all([
+  const [agencies, clientRates, employees, sites, shiftCodes] = await Promise.all([
+    activeAgencies(),
     activeClientRates(),
     activeEmployees(),
     pool.execute<any[]>('SELECT s.SiteID, s.ClientID, c.ClientName, s.SiteName FROM site s INNER JOIN client c ON c.ClientID = s.ClientID WHERE s.Status = \'Active\' AND c.Status = \'Active\' ORDER BY c.ClientName, s.SiteName').then(([rows]) => rows),
@@ -268,7 +269,7 @@ async function deploymentLookups() {
        ORDER BY s.SiteName, sc.ShiftCode, sc.ShiftName`
     ).then(([rows]) => rows)
   ])
-  return { clientRates, employees, sites, shiftCodes }
+  return { agencies, clientRates, employees, sites, shiftCodes }
 }
 
 function deploymentSql(filters: string[]) {
@@ -422,6 +423,9 @@ export async function createDeployment(event: any) {
   const siteID = parseInteger(body.SiteID, 'SiteID')
   const siteShiftID = parseInteger(body.SiteShiftID, 'SiteShiftID')
   const deploymentType = parseText(body.DeploymentType) || 'Regular'
+  if (deploymentType !== 'Regular' && deploymentType !== 'Reliever') {
+    throw createError({ statusCode: 400, statusMessage: 'Deployment type must be Regular or Reliever.' })
+  }
   const startDate = parseDate(body.StartDate)
   if (!startDate) throw createError({ statusCode: 400, statusMessage: 'StartDate is required.' })
   const endDate = parseDate(body.EndDate)
@@ -430,6 +434,41 @@ export async function createDeployment(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
+    const [[employee]] = await connection.execute<any[]>(
+      `SELECT ap.AgencyID
+       FROM employee e
+       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+       WHERE e.EmployeeID = ? AND e.Status = 'Active'
+       FOR UPDATE`,
+      [employeeId]
+    )
+    if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
+
+    const [[clientRate]] = await connection.execute<any[]>(
+      `SELECT cr.ClientID, ap.AgencyID
+       FROM client_rate cr
+       INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+       INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+       WHERE cr.ClientRateID = ? AND cr.Status = 'Active' AND pr.Status = 'Active'
+       LIMIT 1`,
+      [clientRateID]
+    )
+    if (!clientRate || Number(clientRate.AgencyID) !== Number(employee.AgencyID)) {
+      throw createError({ statusCode: 400, statusMessage: 'Select a client rate registered under the employee\'s current agency.' })
+    }
+
+    const [[site]] = await connection.execute<any[]>(
+      'SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1',
+      [siteID, clientRate.ClientID]
+    )
+    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site that belongs to the selected client rate.' })
+
+    const [[shift]] = await connection.execute<any[]>(
+      'SELECT SiteShiftID FROM site_shift WHERE SiteShiftID = ? AND SiteID = ? AND Status = \'Active\' LIMIT 1',
+      [siteShiftID, siteID]
+    )
+    if (!shift) throw createError({ statusCode: 400, statusMessage: 'Select an active shift for the selected site.' })
+
     const [[activeRow]] = await connection.execute<any[]>(
       `SELECT DeploymentID, StartDate FROM employee_deployment WHERE EmployeeID = ? AND (EndDate IS NULL OR EndDate >= CURDATE()) ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`,
       [employeeId]

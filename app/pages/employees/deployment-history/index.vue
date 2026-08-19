@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
 const items = ref<any[]>([])
+const agencies = ref<any[]>([])
 const employees = ref<any[]>([])
 const clientRates = ref<any[]>([])
 const sites = ref<any[]>([])
@@ -17,11 +18,6 @@ const selectedEmployee = ref<any | null>(null)
 const employeeSearch = ref('')
 const agencyFilter = ref('')
 const form = ref({ EmployeeID: '', ClientRateID: '', SiteID: '', SiteShiftID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' })
-
-const agencies = computed(() => Array.from(new Map(items.value
-  .filter((item) => item.AgencyID && item.AgencyName)
-  .map((item) => [String(item.AgencyID), { id: String(item.AgencyID), name: item.AgencyName }])).values())
-  .sort((left, right) => String(left.name).localeCompare(String(right.name))))
 
 const employeeGroups = computed(() => {
   const groups = new Map<string, any>()
@@ -43,13 +39,31 @@ const filteredEmployees = computed(() => {
   return employeeGroups.value.filter((group) => {
     const matchesSearch = !query || [group.EmployeeName, group.EmployeeNumber, formatEmployeeId(group.EmployeeID)]
       .some((value) => String(value || '').toLowerCase().includes(query))
-    const matchesAgency = !agencyFilter.value || group.history.some((item: any) => String(item.AgencyID) === agencyFilter.value)
+    const matchesAgency = !agencyFilter.value || String(group.current.AgencyID) === agencyFilter.value
     return matchesSearch && matchesAgency
   })
 })
 
+watch(agencies, (currentAgencies) => {
+  if (agencyFilter.value && !currentAgencies.some((agency) => String(agency.AgencyID) === agencyFilter.value)) agencyFilter.value = ''
+})
+
+const selectedFormEmployee = computed(() => employees.value.find((employee) => String(employee.EmployeeID) === String(form.value.EmployeeID)) || null)
+
+const availableClientRates = computed(() => {
+  if (!selectedFormEmployee.value) return []
+  return clientRates.value.filter((rate) => String(rate.AgencyID) === String(selectedFormEmployee.value.AgencyID))
+})
+
+const selectedClientRate = computed(() => availableClientRates.value.find((rate) => String(rate.ClientRateID) === String(form.value.ClientRateID)) || null)
+
+const availableSites = computed(() => {
+  if (!selectedClientRate.value) return []
+  return sites.value.filter((site) => String(site.ClientID) === String(selectedClientRate.value.ClientID))
+})
+
 const availableShifts = computed(() => {
-  if (!form.value.SiteID) return shiftCodes.value
+  if (!form.value.SiteID) return []
   return shiftCodes.value.filter((shift) => String(shift.SiteID) === String(form.value.SiteID))
 })
 
@@ -62,11 +76,23 @@ function onSiteChanged() {
   form.value.SiteShiftID = ''
 }
 
+function onEmployeeChanged() {
+  form.value.ClientRateID = ''
+  form.value.SiteID = ''
+  form.value.SiteShiftID = ''
+}
+
+function onClientRateChanged() {
+  form.value.SiteID = ''
+  form.value.SiteShiftID = ''
+}
+
 async function load(silent = false) {
   if (!silent) loading.value = true
   try {
     const response: any = await $fetch('/api/employees/deployments')
     items.value = response.items || []
+    agencies.value = response.agencies || []
     employees.value = response.employees || []
     clientRates.value = response.clientRates || []
     sites.value = response.sites || []
@@ -131,7 +157,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
         <span>Agency</span>
         <select v-model="agencyFilter">
           <option value="">All agencies</option>
-          <option v-for="agency in agencies" :key="agency.id" :value="agency.id">{{ agency.name }}</option>
+          <option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option>
         </select>
       </label>
       <button class="ghost" type="submit">Search</button>
@@ -181,29 +207,29 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           <h2>New deployment</h2>
 
           <label>Employee
-            <select v-model.number="form.EmployeeID" required>
+            <select v-model.number="form.EmployeeID" required @change="onEmployeeChanged">
               <option value="">Select employee</option>
               <option v-for="employee in employees" :key="employee.EmployeeID" :value="Number(employee.EmployeeID)">{{ formatEmployeeLabel(employee) }}</option>
             </select>
           </label>
 
           <label>Client rate
-            <select v-model="form.ClientRateID" required>
-              <option value="">Select client rate</option>
-              <option v-for="rate in clientRates" :key="rate.ClientRateID" :value="rate.ClientRateID">{{ rate.ClientName }} - {{ rate.AgencyName }} - {{ rate.PositionName }}</option>
+            <select v-model="form.ClientRateID" required :disabled="!selectedFormEmployee" @change="onClientRateChanged">
+              <option value="">{{ selectedFormEmployee ? 'Select client rate' : 'Select an employee first' }}</option>
+              <option v-for="rate in availableClientRates" :key="rate.ClientRateID" :value="rate.ClientRateID">{{ rate.ClientName }} - {{ rate.AgencyName }} - {{ rate.PositionName }}</option>
             </select>
           </label>
 
           <div class="grid">
             <label>Site
-              <select v-model="form.SiteID" required @change="onSiteChanged">
-                <option value="">Select site</option>
-                <option v-for="site in sites" :key="site.SiteID" :value="site.SiteID">{{ site.ClientName }} - {{ site.SiteName }}</option>
+              <select v-model="form.SiteID" required :disabled="!selectedClientRate" @change="onSiteChanged">
+                <option value="">{{ selectedClientRate ? 'Select site' : 'Select a client rate first' }}</option>
+                <option v-for="site in availableSites" :key="site.SiteID" :value="site.SiteID">{{ site.ClientName }} - {{ site.SiteName }}</option>
               </select>
             </label>
             <label>Shift
-              <select v-model="form.SiteShiftID" required>
-                <option value="">Select shift</option>
+              <select v-model="form.SiteShiftID" required :disabled="!form.SiteID">
+                <option value="">{{ form.SiteID ? 'Select shift' : 'Select a site first' }}</option>
                 <option v-for="shift in availableShifts" :key="shift.SiteShiftID" :value="shift.SiteShiftID">{{ shift.ShiftCode }} - {{ shift.ShiftName }}</option>
               </select>
             </label>
