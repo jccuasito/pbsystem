@@ -153,3 +153,138 @@ export async function dtrSummary(event: any) {
   if (!summary) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
   return { summary }
 }
+
+const hourColumns = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours', 'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours', 'LateHours', 'UndertimeHours', 'BreakHours'] as const
+type HourColumn = typeof hourColumns[number]
+
+function hours(value: unknown, label: string) {
+  if (value === '' || value === undefined || value === null) return 0
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 24) throw createError({ statusCode: 400, statusMessage: `${label} must be between 0 and 24.` })
+  return parsed
+}
+function mysqlDateTime(value: unknown, label: string) {
+  if (value === '' || value === undefined || value === null) return null
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) throw createError({ statusCode: 400, statusMessage: `${label} is invalid.` })
+  return `${value.slice(0, 16).replace('T', ' ')}:00`
+}
+async function batchDetail(connection: any, id: number) {
+  const [[batch]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, ClientID, SiteID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ?', [id])
+  if (!batch) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
+  return batch
+}
+function assertEditableBatch(batch: any) {
+  if (String(batch.Status).startsWith('Computed') || batch.Status === 'Locked' || batch.Status === 'Approved') throw createError({ statusCode: 409, statusMessage: 'This DTR is already computed or locked and cannot be changed.' })
+}
+
+export async function listDtrRecords(event: any) {
+  const session = requireSession(event); void session.sub
+  const id = batchId(event)
+  const connection = await pool.getConnection()
+  try {
+    const batch = await batchDetail(connection, id)
+    const [[records], [shifts]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
+      CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, ed.DeploymentID, ed.DeploymentType,
+      COUNT(at.AttendanceID) AS Days, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
+      FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
+      INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+      LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
+      WHERE de.BatchID = ? GROUP BY de.EmployeeID, ed.DeploymentID, ed.DeploymentType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
+      ORDER BY e.LastName, e.FirstName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, TimeIn, TimeOut, RegularHours, RegularOTCap
+        FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID])])
+    return { batch, records, shifts }
+  } finally { connection.release() }
+}
+
+export async function listDtrEmployees(event: any) {
+  const session = requireSession(event); void session.sub
+  const id = batchId(event), query = getQuery(event) as Record<string, string | undefined>
+  const connection = await pool.getConnection()
+  try {
+    const batch = await batchDetail(connection, id)
+    const values: any[] = [batch.AgencyID]
+    let searchSql = ''
+    if (query.search?.trim()) {
+      const value = `%${query.search.trim()}%`; values.push(value, value, value, value)
+      searchSql = ' AND (CAST(e.EmployeeID AS CHAR) LIKE ? OR e.EmployeeNumber LIKE ? OR e.FirstName LIKE ? OR e.LastName LIKE ?)' 
+    }
+    const [employees] = await connection.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, p.PositionName
+      FROM employee e INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+      INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
+      WHERE e.Status = 'Active' AND ap.AgencyID = ?${searchSql} ORDER BY e.LastName, e.FirstName`, values)
+    return { employees }
+  } finally { connection.release() }
+}
+
+export async function addDtrEmployee(event: any) {
+  const session = requireSession(event)
+  const id = batchId(event), body = await readBody<{ EmployeeID?: unknown, DeploymentType?: unknown }>(event) || {}
+  const employeeId = positiveId(body.EmployeeID, 'Employee')
+  const deploymentType = body.DeploymentType === 'Reliever' ? 'Reliever' : body.DeploymentType === 'Regular' ? 'Regular' : null
+  if (!deploymentType) throw createError({ statusCode: 400, statusMessage: 'Deployment type must be Regular or Reliever.' })
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const [[rate]] = await connection.execute<any[]>(`SELECT cr.ClientRateID
+      FROM employee e INNER JOIN payroll_rate employeeRate ON employeeRate.AgencyPositionID = e.AgencyPositionID
+      INNER JOIN client_rate cr ON cr.PayrollRateID = employeeRate.PayrollRateID
+      WHERE e.EmployeeID = ? AND cr.ClientID = ? AND cr.Status = 'Active' AND employeeRate.Status = 'Active' LIMIT 1`, [employeeId, batch.ClientID])
+    if (!rate) throw createError({ statusCode: 400, statusMessage: 'This employee has no active matching client rate for the DTR site.' })
+    const [[existing]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
+      WHERE EmployeeID = ? AND ClientRateID = ? AND SiteID = ? AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
+      ORDER BY StartDate DESC LIMIT 1`, [employeeId, rate.ClientRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+    let deploymentId = existing?.DeploymentID
+    if (!deploymentId) {
+      const [result] = await connection.execute<any>(`INSERT INTO employee_deployment
+        (EmployeeID, ClientRateID, SiteID, DeploymentType, StartDate, EndDate, Remarks, CreatedBy)
+        VALUES (?, ?, ?, ?, ?, ?, 'Created from DTR attendance assignment', ?)`, [employeeId, rate.ClientRateID, batch.SiteID, deploymentType, batch.PeriodStart, batch.PeriodEnd, session.sub])
+      deploymentId = result.insertId
+    }
+    await connection.execute('INSERT INTO attendance_dtr_employee (BatchID, EmployeeID, DeploymentID, CreatedBy) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID)', [id, employeeId, deploymentId, session.sub])
+    await connection.commit(); return { success: true, deploymentId }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
+export async function updateDtrEmployeeType(event: any) {
+  const session = requireSession(event); void session.sub
+  const id = batchId(event), body = await readBody<{ EmployeeID?: unknown, DeploymentType?: unknown }>(event) || {}
+  const employeeId = positiveId(body.EmployeeID, 'Employee')
+  const deploymentType = body.DeploymentType === 'Reliever' ? 'Reliever' : body.DeploymentType === 'Regular' ? 'Regular' : null
+  if (!deploymentType) throw createError({ statusCode: 400, statusMessage: 'Deployment type must be Regular or Reliever.' })
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const [[enrollment]] = await connection.execute<any[]>('SELECT DeploymentID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
+    if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
+    await connection.execute('UPDATE employee_deployment SET DeploymentType = ? WHERE DeploymentID = ?', [deploymentType, enrollment.DeploymentID])
+    await connection.commit(); return { success: true }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
+export async function createDtrAttendance(event: any) {
+  const session = requireSession(event)
+  const id = batchId(event), body = await readBody<Record<string, unknown>>(event) || {}
+  const employeeId = positiveId(body.EmployeeID, 'Employee'), attendanceDate = date(body.AttendanceDate, 'Attendance date')
+  const shiftCodeId = body.ShiftCodeID === '' || body.ShiftCodeID === null || body.ShiftCodeID === undefined ? null : positiveId(body.ShiftCodeID, 'Shift code')
+  const attendanceStatus = ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Holiday', 'Rest Day'].includes(String(body.AttendanceStatus)) ? String(body.AttendanceStatus) : 'Present'
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    if (attendanceDate < batch.PeriodStart || attendanceDate > batch.PeriodEnd) throw createError({ statusCode: 400, statusMessage: 'Attendance date must be inside the DTR cutoff.' })
+    const [[deployment]] = await connection.execute<any[]>('SELECT DeploymentID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
+    if (!deployment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before entering attendance.' })
+    if (shiftCodeId) {
+      const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
+      if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
+    }
+    const values = hourColumns.map(column => hours(body[column], column))
+    const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
+    const [result] = await connection.execute<any>(`INSERT INTO attendance
+      (EmployeeID, DeploymentID, ShiftCodeID, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, AttendanceStatus, IsManualEdit, Remarks, CreatedBy)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ${placeholders}, ?, 1, ?, ?)`, [employeeId, deployment.DeploymentID, shiftCodeId, id, attendanceDate, mysqlDateTime(body.TimeIn, 'Time in'), mysqlDateTime(body.TimeOut, 'Time out'), ...values, attendanceStatus, typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null, session.sub])
+    await connection.commit(); return { id: result.insertId }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
