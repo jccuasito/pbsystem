@@ -14,6 +14,8 @@ import PayrollRatePage from '../rates/payroll/index.vue'
 import BillingRatePage from '../rates/billing/index.vue'
 import ClientRatePage from '../rates/client/index.vue'
 import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
+import ShiftCodePage from '../attendance/shift-code/index.vue'
+import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -205,7 +207,9 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'rates-payroll': PayrollRatePage,
   'rates-billing': BillingRatePage,
   'rates-client': ClientRatePage,
-  'attendance-dtr': DailyTimeRecordsPage
+  'attendance-dtr': DailyTimeRecordsPage,
+  'attendance-shift-code': ShiftCodePage,
+  'attendance-holiday-manager': HolidayManagerPage
 }
 const activePageComponent = computed(() => activeWorkspaceView.value ? workspaceComponents[activeWorkspaceView.value] : null)
 

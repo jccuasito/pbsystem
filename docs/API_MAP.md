@@ -47,20 +47,22 @@
 
 ## Organization
 
-All organization CRUD routes are session-protected and accept only these whitelisted `:resource` values: `agency`, `position`, `agency-position`, `client`, `client-policy`, `site`, `site-policy`, and `site-shift`.
+All organization CRUD routes are session-protected and accept only these whitelisted `:resource` values: `agency`, `position`, `agency-position`, `client`, `client-policy`, `site`, `site-policy`, `site-shift`, `shift-code`, and `region`.
 
 | Method | Path | Tables used | Caller | Request / response |
 | --- | --- | --- | --- | --- |
-| GET | `/api/organization/:resource` | Resource table; joined tables: `agency`/`position`, `region`, `client`, `site`, `shift_code`; `vw_effective_site_policy` for site-related effective policy | `app/pages/organization/{agency,position,client,site}/index.vue` | Returns `{ items }` plus required active lookup arrays (`regions`, `clients`, `sites`, `agencies`, `positions`, or `shiftCodes`). |
+| GET | `/api/organization/:resource` | Resource table; joined tables: `agency`/`position`, `region`, `client`, `site`, `shift_code`; `vw_effective_site_policy` for site-related effective policy | `app/pages/organization/{agency,position,client,site}/index.vue`, `app/pages/attendance/shift-code/index.vue` | Returns `{ items }` plus required active lookup arrays (`regions`, `clients`, `sites`, `agencies`, `positions`, or `shiftCodes`). `shift-code` returns all agency-owned codes, active agency categories, and the optional per-shift ND window (`NDEnabled`, `NDStartTime`, `NDEndTime`). |
 | POST | `/api/organization/:resource` | Target resource table | Organization add modal/API consumers | Body contains the resource's non-ID columns. Returns `{ id }`. |
 | PUT | `/api/organization/:resource` | Target resource table | Organization edit modal/API consumers | Body is `{ id, ...resourceFields }`. Returns `{ success: true }`. |
-| DELETE | `/api/organization/:resource` | Target resource table | Organization table/API consumers | Body is `{ id }`; soft-deletes with `Status = 'Inactive'`. Returns `{ success: true }`. |
+| DELETE | `/api/organization/:resource` | Target resource table; `shift-code` checks `site_shift` references | Organization table/API consumers | Body is `{ id }`; soft-deletes with `Status = 'Inactive'`. For `shift-code`, body `{ id, permanent: true }` permanently deletes only an unused code; codes linked to a site shift are blocked and must be deactivated. Returns `{ success: true }`. |
 | GET | `/api/organization/positions` | `agency_position`, `agency`, `position` | `app/pages/organization/position/index.vue` | Returns agency-position rows plus agency and position lookup arrays for filters. |
 | POST | `/api/organization/positions` | `position`, `agency_position` | `app/pages/organization/position/index.vue` | Creates a new position or links an existing `PositionID` to an agency in one transaction. |
 | PUT | `/api/organization/positions` | `position`, `agency_position` | `app/pages/organization/position/index.vue` | Updates a selected assignment and its position details in one transaction. |
 | DELETE | `/api/organization/positions` | `agency_position` | `app/pages/organization/position/index.vue` | Soft-deactivates the selected assignment. Body: `{ agencyPositionId }`. |
 
 Site and site-shift lists use `vw_effective_site_policy` for client/site policy resolution. `site-shift.EffectiveNDEnabled` applies its `NDPolicyOverride` only after the view's resolved client/site policy, preserving the documented precedence: site-shift override > site policy > client policy.
+
+`database/shift-code-nd-window.sql` adds an optional Night Differential window to each shift code. The shift code form does not prefill a window; enabled codes must receive an admin-entered start and end time.
 
 ## Rates
 
@@ -78,6 +80,10 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 | Method | Path | Tables used | Caller | Request / response |
 | --- | --- | --- | --- | --- |
 | GET | `/api/attendance/dtr-lookups` | `agency`, `agency_position`, `payroll_rate`, `client_rate`, `client` | `app/pages/attendance/daily-time-records/index.vue` | Session required. Optional `agencyId` filters clients to active client-rate links under that agency. Returns `{ agencies, clients }`. |
+| GET | `/api/attendance/holidays` | `holiday` | `app/pages/attendance/holiday-manager/index.vue` | Session required. Returns `{ items }` with active and inactive holiday rows. |
+| POST | `/api/attendance/holidays` | `holiday` | `app/pages/attendance/holiday-manager/index.vue` | Session required. Creates a Legal or Special holiday with date, recurring flag, and status. Rejects duplicate name/date pairs. Returns `{ id }`. |
+| PUT | `/api/attendance/holidays` | `holiday` | `app/pages/attendance/holiday-manager/index.vue` | Session required. Body `{ id, HolidayName, HolidayDate, HolidayType, Recurring, Status }`. Updates a holiday after date/type validation. |
+| DELETE | `/api/attendance/holidays` | `holiday` | `app/pages/attendance/holiday-manager/index.vue` | Session required. Body `{ id }`; soft-deactivates the holiday and returns `{ success: true }`. |
 # Database recovery
 
 - `database/rebuild-employee-deployment.sql` — recovery-only migration for a corrupt or missing `employee_deployment` InnoDB tablespace. It recreates the deployment schema with an optional `SiteShiftID`; it intentionally does not recreate lost deployment rows.
