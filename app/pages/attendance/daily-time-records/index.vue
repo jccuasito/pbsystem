@@ -1,146 +1,36 @@
 <script setup lang="ts">
-type Option = { id: string | number, label: string }
-
-const now = new Date()
-const selectedYear = ref(String(now.getFullYear()))
-const search = ref('')
-const agencyId = ref('')
-const clientId = ref('')
-const selectedCutoff = ref('')
-const searched = ref(false)
-const loadingFilters = ref(false)
-const agencies = ref<Option[]>([])
-const clients = ref<Option[]>([])
-
-function cutoffOptions(year: number) {
-  return Array.from({ length: 12 }, (_, monthIndex) => {
-    const month = new Date(year, monthIndex).toLocaleString('en-PH', { month: 'long' })
-    const lastDay = new Date(year, monthIndex + 1, 0).getDate()
-    return [
-      { value: `${year}-${String(monthIndex + 1).padStart(2, '0')}-01:${year}-${String(monthIndex + 1).padStart(2, '0')}-15`, label: `${month} 1–15, ${year}` },
-      { value: `${year}-${String(monthIndex + 1).padStart(2, '0')}-16:${year}-${String(monthIndex + 1).padStart(2, '0')}-${lastDay}`, label: `${month} 16–${lastDay}, ${year}` }
-    ]
-  }).flat()
-}
-
-const yearOptions = computed(() => {
-  const currentYear = now.getFullYear()
-  return Array.from({ length: 5 }, (_, index) => String(currentYear - 2 + index))
-})
-const cutoffs = computed(() => cutoffOptions(Number(selectedYear.value)))
-const currentCutoff = () => {
-  const year = now.getFullYear()
-  const month = now.getMonth() + 1
-  const start = now.getDate() <= 15 ? 1 : 16
-  const end = start === 1 ? 15 : new Date(year, month, 0).getDate()
-  return `${year}-${String(month).padStart(2, '0')}-${String(start).padStart(2, '0')}:${year}-${String(month).padStart(2, '0')}-${end}`
-}
-
-watch(selectedYear, () => {
-  selectedCutoff.value = selectedYear.value === String(now.getFullYear()) ? currentCutoff() : cutoffs.value[0]?.value || ''
-})
-
-async function loadFilters() {
-  loadingFilters.value = true
-  try {
-    const response = await $fetch<any>('/api/attendance/dtr-lookups', { query: agencyId.value ? { agencyId: agencyId.value } : undefined })
-    agencies.value = (response.agencies || []).map((item: any) => ({ id: item.AgencyID, label: item.AgencyName }))
-    clients.value = (response.clients || []).map((item: any) => ({ id: item.ClientID, label: item.ClientName }))
-  } catch {
-    // The DTR screen remains usable while master-data lookups are unavailable.
-  } finally {
-    loadingFilters.value = false
-  }
-}
-
-watch(agencyId, async () => {
-  clientId.value = ''
-  await loadFilters()
-})
-
-function runSearch() {
-  searched.value = true
-}
-
-function createDtr() {
-  searched.value = true
-}
-
-selectedCutoff.value = currentCutoff()
-onMounted(loadFilters)
+import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
+type Agency={AgencyID:number,AgencyName:string}; type Client={AgencyID:number,ClientID:number,ClientName:string}; type Site={SiteID:number,ClientID:number,SiteName:string}; type Dtr={BatchID:number,AgencyID:number,AgencyName:string,ClientID:number,ClientName:string,SiteID:number,SiteName:string,PeriodStart:string,PeriodEnd:string,Status:string,CreatedAt:string,PeopleCount:number}
+const now=new Date(), selectedYear=ref(String(now.getFullYear())), selectedCutoff=ref(''), search=ref(''), agencyId=ref(''), clientId=ref(''), siteId=ref(''), items=ref<Dtr[]>([]), agencies=ref<Agency[]>([]), clients=ref<Client[]>([]), sites=ref<Site[]>([]), loading=ref(false), saving=ref(false), error=ref(''), formOpen=ref(false), editing=ref<Dtr|null>(null), summaryOpen=ref(false), summary=ref<any>(null)
+const form=reactive({AgencyID:'',ClientID:'',SiteID:'',PeriodStart:'',PeriodEnd:''})
+function cutoffOptions(year:number){return Array.from({length:12},(_,m)=>{const name=new Date(year,m).toLocaleString('en-PH',{month:'long'}), last=new Date(year,m+1,0).getDate(),p=`${year}-${String(m+1).padStart(2,'0')}`;return[{value:`${p}-01:${p}-15`,label:`${name} 1–15, ${year}`},{value:`${p}-16:${p}-${last}`,label:`${name} 16–${last}, ${year}`}]}).flat()}
+const yearOptions=computed(()=>Array.from({length:5},(_,i)=>String(now.getFullYear()-2+i))), cutoffs=computed(()=>cutoffOptions(Number(selectedYear.value))), cutoffLabel=computed(()=>cutoffs.value.find(c=>c.value===selectedCutoff.value)?.label||'Choose a cutoff'), period=computed(()=>selectedCutoff.value.split(':'))
+const availableClients=computed(()=>clients.value.filter(c=>!agencyId.value||String(c.AgencyID)===agencyId.value)), availableSites=computed(()=>sites.value.filter(s=>!clientId.value||String(s.ClientID)===clientId.value)), formClients=computed(()=>clients.value.filter(c=>String(c.AgencyID)===form.AgencyID)), formSites=computed(()=>sites.value.filter(s=>String(s.ClientID)===form.ClientID))
+function currentCutoff(){const y=now.getFullYear(),m=now.getMonth()+1,start=now.getDate()<=15?1:16,end=start===1?15:new Date(y,m,0).getDate(),p=`${y}-${String(m).padStart(2,'0')}`;return `${p}-${String(start).padStart(2,'0')}:${p}-${end}`}
+async function load(){loading.value=true;error.value='';try{const query:Record<string,string>={};if(search.value)query.search=search.value;if(agencyId.value)query.agencyId=agencyId.value;if(clientId.value)query.clientId=clientId.value;if(siteId.value)query.siteId=siteId.value;if(period.value[0])query.periodStart=period.value[0];if(period.value[1])query.periodEnd=period.value[1];const r=await $fetch<any>('/api/attendance/dtr',{query});items.value=r.items||[];agencies.value=r.agencies||[];clients.value=r.clients||[];sites.value=r.sites||[]}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load Daily Time Records.'}finally{loading.value=false}}
+function openCreate(){editing.value=null;Object.assign(form,{AgencyID:agencyId.value,ClientID:clientId.value,SiteID:siteId.value,PeriodStart:period.value[0]||'',PeriodEnd:period.value[1]||''});error.value='';formOpen.value=true}function openEdit(i:Dtr){editing.value=i;Object.assign(form,{AgencyID:String(i.AgencyID),ClientID:String(i.ClientID),SiteID:String(i.SiteID),PeriodStart:i.PeriodStart.slice(0,10),PeriodEnd:i.PeriodEnd.slice(0,10)});error.value='';formOpen.value=true}
+async function save(){saving.value=true;error.value='';try{const body={AgencyID:Number(form.AgencyID),ClientID:Number(form.ClientID),SiteID:Number(form.SiteID),PeriodStart:form.PeriodStart,PeriodEnd:form.PeriodEnd};if(editing.value)await $fetch(`/api/attendance/dtr/${editing.value.BatchID}`,{method:'PUT',body});else await $fetch('/api/attendance/dtr',{method:'POST',body});formOpen.value=false;await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to save DTR.'}finally{saving.value=false}}
+async function remove(i:Dtr){if(!confirm(`Delete DTR-${i.BatchID}? This cannot be undone.`))return;try{await $fetch(`/api/attendance/dtr/${i.BatchID}`,{method:'DELETE'});await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to delete DTR.'}}
+async function compute(i:Dtr,target:'payroll'|'billing'){try{await $fetch(`/api/attendance/dtr/${i.BatchID}/compute`,{method:'POST',body:{target}});await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to compute DTR.'}}
+async function viewSummary(i:Dtr){try{summary.value={item:i,...(await $fetch<any>(`/api/attendance/dtr/${i.BatchID}/summary`))};summaryOpen.value=true}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load DTR summary.'}}
+function formatDate(v:string){return new Date(v).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}function canEdit(i:Dtr){return !['Approved','Locked'].includes(i.Status)&&!i.Status.startsWith('Computed')}
+watch(selectedYear,()=>{selectedCutoff.value=selectedYear.value===String(now.getFullYear())?currentCutoff():cutoffs.value[0]?.value||''});watch(agencyId,()=>{clientId.value='';siteId.value=''});watch(clientId,()=>siteId.value='');selectedCutoff.value=currentCutoff();onMounted(load);useRealtimeRefresh(load)
 </script>
-
-<template>
-  <section class="dtr-page">
-    <div class="dtr-heading">
-      <div>
-        <p class="dtr-eyebrow">ATTENDANCE</p>
-        <h1>Daily Time Records</h1>
-        <p>Review and prepare employee attendance per payroll cutoff.</p>
-      </div>
-      <button type="button" class="dtr-create" @click="createDtr">Create DTR</button>
-    </div>
-
-    <form class="dtr-filters" @submit.prevent="runSearch">
-      <label class="dtr-search">
-        <span class="sr-only">Search client, site, or DTR ID</span>
-        <input v-model.trim="search" type="search" placeholder="Search client, site, or DTR ID" />
-      </label>
-      <select v-model="agencyId" :disabled="loadingFilters" aria-label="Agency">
-        <option value="">All agencies</option>
-        <option v-for="agency in agencies" :key="agency.id" :value="agency.id">{{ agency.label }}</option>
-      </select>
-      <select v-model="clientId" :disabled="loadingFilters" aria-label="Client">
-        <option value="">All clients</option>
-        <option v-for="client in clients" :key="client.id" :value="client.id">{{ client.label }}</option>
-      </select>
-      <select v-model="selectedYear" aria-label="Year">
-        <option v-for="year in yearOptions" :key="year" :value="year">{{ year }}</option>
-      </select>
-      <select v-model="selectedCutoff" aria-label="Payroll cutoff">
-        <option v-for="cutoff in cutoffs" :key="cutoff.value" :value="cutoff.value">{{ cutoff.label }}</option>
-      </select>
-      <button type="submit" class="dtr-search-button">Search</button>
-    </form>
-
-    <div class="dtr-period">Selected cutoff: <strong>{{ cutoffs.find(cutoff => cutoff.value === selectedCutoff)?.label }}</strong></div>
-
-    <div class="dtr-table-wrap">
-      <table class="dtr-table">
-        <thead>
-          <tr><th>DTR ID</th><th>Agency</th><th>Client</th><th>Site</th><th>Period</th><th>People</th><th>Created date</th><th>Actions</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td colspan="8" class="dtr-empty">
-              {{ searched ? 'No Daily Time Records matched your search.' : 'No Daily Time Records yet for the selected cutoff.' }}
-              <small>Create a DTR once the attendance backend is connected.</small>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-</template>
-
-<style scoped>
+<template><section class="dtr-page"><div class="dtr-heading"><div><p class="eyebrow">ATTENDANCE</p><h1>Daily Time Records</h1><p>Review and prepare employee attendance per payroll cutoff.</p></div><button class="primary" @click="openCreate">+ Create DTR</button></div><form class="filters" @submit.prevent="load"><input v-model.trim="search" type="search" placeholder="Search client, site, or DTR ID"><select v-model="agencyId"><option value="">All agencies</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select><select v-model="clientId"><option value="">All clients</option><option v-for="c in availableClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select><select v-model="selectedYear"><option v-for="y in yearOptions" :key="y">{{y}}</option></select><select v-model="selectedCutoff"><option v-for="c in cutoffs" :key="c.value" :value="c.value">{{c.label}}</option></select><button class="primary">Search</button></form><p class="period">Selected cutoff: <strong>{{cutoffLabel}}</strong></p><p v-if="error" class="error">{{error}}</p><div class="table-wrap"><table><thead><tr><th>DTR ID</th><th>Agency</th><th>Client</th><th>Site</th><th>Period</th><th>People</th><th>Status</th><th>Created date</th><th>Actions</th></tr></thead><tbody><tr v-for="i in items" :key="i.BatchID"><td>DTR-{{String(i.BatchID).padStart(4,'0')}}</td><td>{{i.AgencyName}}</td><td>{{i.ClientName}}</td><td>{{i.SiteName}}</td><td>{{formatDate(i.PeriodStart)}}–{{formatDate(i.PeriodEnd)}}</td><td>{{i.PeopleCount}}</td><td><span class="status">{{i.Status}}</span></td><td>{{formatDate(i.CreatedAt)}}</td><td class="actions"><button class="secondary" :disabled="!canEdit(i)" @click="openEdit(i)">Edit</button><button class="danger" :disabled="!canEdit(i)" @click="remove(i)">Delete</button><div class="more"><button class="secondary">More ▾</button><div class="more-list"><button @click="compute(i,'payroll')">Compute to payroll</button><button @click="compute(i,'billing')">Compute to billing</button><button @click="viewSummary(i)">View Summary DTR</button></div></div></td></tr><tr v-if="!loading&&!items.length"><td colspan="9" class="empty">No Daily Time Records for this search and cutoff.</td></tr><tr v-if="loading"><td colspan="9" class="empty">Loading Daily Time Records…</td></tr></tbody></table></div><div v-if="formOpen" class="overlay" @click.self="formOpen=false"><form class="modal" @submit.prevent="save"><button class="close" type="button" @click="formOpen=false">×</button><h2>{{editing?'Edit DTR':'Create DTR'}}</h2><p>Create one DTR batch per agency, site, and payroll cutoff.</p><div class="grid"><label>Agency<select v-model="form.AgencyID" required @change="form.ClientID='';form.SiteID=''"><option disabled value="">Select agency</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select></label><label>Client<select v-model="form.ClientID" required :disabled="!form.AgencyID" @change="form.SiteID=''"><option disabled value="">Select client</option><option v-for="c in formClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select></label><label>Site<select v-model="form.SiteID" required :disabled="!form.ClientID"><option disabled value="">Select site</option><option v-for="s in formSites" :key="s.SiteID" :value="String(s.SiteID)">{{s.SiteName}}</option></select></label><label>Period start<input v-model="form.PeriodStart" type="date" required></label><label>Period end<input v-model="form.PeriodEnd" type="date" required></label></div><p v-if="error" class="error">{{error}}</p><div class="modal-actions"><button class="secondary" type="button" @click="formOpen=false">Cancel</button><button class="primary" :disabled="saving">{{saving?'Saving…':'Save DTR'}}</button></div></form></div><div v-if="summaryOpen&&summary" class="overlay" @click.self="summaryOpen=false"><section class="modal"><button class="close" @click="summaryOpen=false">×</button><h2>DTR Summary</h2><p><strong>{{summary.item.ClientName}}</strong> · {{summary.item.SiteName}}<br>{{formatDate(summary.item.PeriodStart)}}–{{formatDate(summary.item.PeriodEnd)}}</p><dl><div><dt>Employees</dt><dd>{{summary.summary.PeopleCount}}</dd></div><div><dt>Attendance entries</dt><dd>{{summary.summary.AttendanceCount}}</dd></div><div><dt>Regular hours</dt><dd>{{summary.summary.RegularHours}}</dd></div><div><dt>OT hours</dt><dd>{{summary.summary.OTHours}}</dd></div><div><dt>Night diff hours</dt><dd>{{summary.summary.NightDiffHours}}</dd></div></dl><div class="modal-actions"><button class="secondary" @click="summaryOpen=false">Close</button></div></section></div></section></template>
+<style>
 .dtr-page { max-width: 1420px; margin: 0 auto; }
-.dtr-heading { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-bottom:24px; }
-.dtr-eyebrow { margin:0 0 7px; color:#4f79bd; font-size:12px; font-weight:800; letter-spacing:.09em; }
-h1 { margin:0; color:#122c57; font-size:30px; line-height:1.15; }
-.dtr-heading p:not(.dtr-eyebrow) { margin:7px 0 0; color:#60718f; }
-.dtr-create, .dtr-search-button { border:0; border-radius:8px; background:#2867d8; color:#fff; font:inherit; font-weight:700; cursor:pointer; padding:11px 17px; white-space:nowrap; }
-.dtr-filters { display:grid; grid-template-columns:minmax(230px, 1.6fr) repeat(4, minmax(120px, .7fr)) auto; gap:10px; align-items:center; }
-.dtr-filters input, .dtr-filters select { box-sizing:border-box; width:100%; min-height:43px; border:1px solid #cfd9e9; border-radius:8px; background:#fff; color:#223a60; font:inherit; padding:0 12px; }
-.dtr-filters input:focus, .dtr-filters select:focus { outline:2px solid rgba(40,103,216,.22); border-color:#2867d8; }
-.dtr-period { margin:15px 0; color:#5d6d88; font-size:14px; }
-.dtr-period strong { color:#233c62; }
-.dtr-table-wrap { overflow-x:auto; border:1px solid #dce5f1; border-radius:12px; background:#fff; }
-.dtr-table { width:100%; min-width:920px; border-collapse:collapse; }
-.dtr-table th { padding:15px 16px; text-align:left; color:#28446e; font-size:13px; background:#f7f9fd; border-bottom:1px solid #dce5f1; white-space:nowrap; }
-.dtr-empty { padding:48px 16px; text-align:center; color:#64738d; }
-.dtr-empty small { display:block; margin-top:7px; color:#90a0b7; }
-.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-@media (max-width:1050px) { .dtr-filters { grid-template-columns:repeat(3, minmax(0, 1fr)); } .dtr-search { grid-column:span 3; } }
-@media (max-width:650px) { .dtr-heading { display:block; } .dtr-create { margin-top:16px; } .dtr-filters { grid-template-columns:1fr; } .dtr-search { grid-column:auto; } }
+.dtr-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 24px; }
+.dtr-page .eyebrow { margin: 0 0 7px; color: #4f79bd; font-weight: 800; font-size: 12px; letter-spacing: .09em; }
+.dtr-page h1, .dtr-page h2 { margin: 0; color: #122c57; }.dtr-page h1 { font-size: 30px; }
+.dtr-heading p:not(.eyebrow), .dtr-page .modal > p { margin: 7px 0 0; color: #60718f; }
+.dtr-page .primary, .dtr-page .secondary, .dtr-page .danger { border: 1px solid #d2ddef; border-radius: 8px; padding: 10px 14px; font: inherit; font-weight: 700; cursor: pointer; background: #fff; color: #1947cd; }
+.dtr-page .primary { background: #2867d8; color: #fff; border-color: #2867d8; }.dtr-page .danger { color: #b42318; }
+.dtr-page .primary:disabled, .dtr-page .secondary:disabled, .dtr-page .danger:disabled { opacity: .45; cursor: not-allowed; }
+.dtr-page .filters { display: grid; grid-template-columns: minmax(230px,1.6fr) repeat(4,minmax(120px,.7fr)) auto; gap: 10px; }
+.dtr-page .filters input, .dtr-page .filters select, .dtr-page .modal input, .dtr-page .modal select { box-sizing: border-box; width: 100%; min-height: 43px; border: 1px solid #cfd9e9; border-radius: 8px; background: #fff; color: #223a60; font: inherit; padding: 0 12px; }
+.dtr-page .period { margin: 15px 0; color: #5d6d88; }.dtr-page .error { color: #b42318; }.dtr-page .table-wrap { overflow-x: auto; border: 1px solid #dce5f1; border-radius: 12px; background: #fff; }
+.dtr-page table { width: 100%; min-width: 1160px; border-collapse: collapse; }.dtr-page th, .dtr-page td { padding: 14px 16px; text-align: left; border-bottom: 1px solid #e6edf7; white-space: nowrap; }.dtr-page th { color: #28446e; font-size: 13px; background: #f7f9fd; }.dtr-page .empty { text-align: center; color: #64738d; padding: 46px !important; }
+.dtr-page .status { padding: 4px 9px; border-radius: 999px; background: #e8efff; color: #2548c8; font-size: 12px; font-weight: 800; }.dtr-page .actions { display: flex; gap: 7px; align-items: center; }.dtr-page .more { position: relative; }.dtr-page .more-list { display: none; position: absolute; z-index: 4; right: 0; top: 100%; min-width: 185px; padding: 5px; background: #fff; border: 1px solid #cfd9e9; border-radius: 8px; box-shadow: 0 9px 20px rgba(22,42,75,.16); }.dtr-page .more-list button { display: block; width: 100%; border: 0; background: #fff; text-align: left; padding: 9px; color: #24416b; font: inherit; cursor: pointer; }.dtr-page .more-list button:hover { background: #f1f5ff; }.dtr-page .more:hover .more-list, .dtr-page .more:focus-within .more-list { display: block; }
+.dtr-page .overlay { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(15,27,52,.52); }.dtr-page .modal { position: relative; width: min(650px,100%); box-sizing: border-box; padding: 28px; border-radius: 15px; background: #fff; }.dtr-page .close { position: absolute; right: 18px; top: 12px; border: 0; background: none; font-size: 25px; cursor: pointer; }.dtr-page .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }.dtr-page .grid label { color: #3f5271; font-size: 13px; font-weight: 700; }.dtr-page .grid input, .dtr-page .grid select { margin-top: 6px; }.dtr-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }.dtr-page dl { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; margin: 22px 0; }.dtr-page dl div { padding: 12px; border: 1px solid #dae4f3; border-radius: 8px; }.dtr-page dt { color: #667793; font-size: 12px; }.dtr-page dd { margin: 6px 0 0; color: #183965; font-weight: 800; }
+@media (max-width:1050px) { .dtr-page .filters { grid-template-columns: repeat(3,1fr); }.dtr-page .filters input { grid-column: span 3; } } @media (max-width:650px) { .dtr-page .dtr-heading { display: block; }.dtr-page .dtr-heading .primary { margin-top:16px; }.dtr-page .filters,.dtr-page .grid { grid-template-columns:1fr; }.dtr-page .filters input { grid-column:auto; } }
 </style>
