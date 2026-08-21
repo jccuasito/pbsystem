@@ -168,6 +168,25 @@ function mysqlDateTime(value: unknown, label: string) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(value)) throw createError({ statusCode: 400, statusMessage: `${label} must use YYYY-MM-DD HH:mm.` })
   return `${value.slice(0, 16).replace('T', ' ')}:00`
 }
+function nightDifferentialHours(timeIn: string | null, timeOut: string | null, enabled: unknown, startTime: unknown, endTime: unknown) {
+  if (!enabled || !timeIn || !timeOut || !startTime || !endTime) return 0
+  const workStart = new Date(timeIn.replace(' ', 'T')), workEnd = new Date(timeOut.replace(' ', 'T'))
+  if (!Number.isFinite(workStart.getTime()) || !Number.isFinite(workEnd.getTime()) || workEnd <= workStart) return 0
+  const startClock = String(startTime).slice(0, 5), endClock = String(endTime).slice(0, 5)
+  const cursor = new Date(workStart); cursor.setHours(0, 0, 0, 0); cursor.setDate(cursor.getDate() - 1)
+  let totalMilliseconds = 0
+  while (cursor <= workEnd) {
+    const dateValue = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0')
+    const windowStart = new Date(dateValue + 'T' + startClock)
+    const windowEnd = new Date(dateValue + 'T' + endClock)
+    if (endClock <= startClock) windowEnd.setDate(windowEnd.getDate() + 1)
+    const overlapStart = Math.max(workStart.getTime(), windowStart.getTime())
+    const overlapEnd = Math.min(workEnd.getTime(), windowEnd.getTime())
+    if (overlapEnd > overlapStart) totalMilliseconds += overlapEnd - overlapStart
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return Math.round((totalMilliseconds / 3600000) * 100) / 100
+}
 async function batchDetail(connection: any, id: number) {
   const [[batch]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, ClientID, SiteID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ?', [id])
   if (!batch) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
@@ -192,7 +211,7 @@ export async function listDtrRecords(event: any) {
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
       LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
       WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
-      ORDER BY e.LastName, e.FirstName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap
+      ORDER BY e.LastName, e.FirstName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType,
         at.TimeIn, at.TimeOut, at.Remarks, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType
         FROM attendance at LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
@@ -297,14 +316,16 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
     const [[enrollment]] = await connection.execute<any[]>('SELECT de.DeploymentID, de.AttendanceType FROM attendance_dtr_employee de WHERE de.BatchID = ? AND de.EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before applying a shift.' })
-    const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, TimeIn, TimeOut, RegularHours, RegularOTCap FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
+    const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, TimeIn, TimeOut, RegularHours, RegularOTCap, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
     if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, batch.PeriodStart, batch.PeriodEnd])
     const currentByDate = new Map(currentRows.map(row => [String(row.AttendanceDate).slice(0, 10), row]))
-    const hourValues = hourColumns.map(column => column === 'RegularHours' ? Number(shift.RegularHours || 0) : column === 'OTHours' ? Number(shift.RegularOTCap || 0) : 0)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     let changed = 0
     for (const attendanceDate of cutoffDates(batch.PeriodStart, batch.PeriodEnd)) {
+      const shiftTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
+      const shiftTimeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
+      const hourValues = hourColumns.map(column => column === 'RegularHours' ? Number(shift.RegularHours || 0) : column === 'OTHours' ? Number(shift.RegularOTCap || 0) : column === 'NightDiffHours' ? nightDifferentialHours(shiftTimeIn, shiftTimeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime) : 0)
       const current = currentByDate.get(attendanceDate)
       if (current && current.BatchID !== null && Number(current.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR on ' + attendanceDate + '.' })
       if (current) {
@@ -312,9 +333,9 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
         // Only entries already belonging to this DTR are preserved by the blank-days option.
         if (current.BatchID !== null && onlyEmpty) continue
         const updateColumns = hourColumns.map(column => column + ' = ?').join(', ')
-        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = \'Present\', AttendanceType = ?, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [enrollment.DeploymentID, id, shiftCodeId, dateTimeForShift(attendanceDate, shift.TimeIn), dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5)), ...hourValues, enrollment.AttendanceType, session.sub, current.AttendanceID])
+        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = \'Present\', AttendanceType = ?, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [enrollment.DeploymentID, id, shiftCodeId, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, session.sub, current.AttendanceID])
       } else {
-        await connection.execute<any>('INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, BatchID, AttendanceDate, TimeIn, TimeOut, ' + columns + ', AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ' + placeholders + ', \'Present\', ?, 1, ?)', [employeeId, enrollment.DeploymentID, shiftCodeId, id, attendanceDate, dateTimeForShift(attendanceDate, shift.TimeIn), dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5)), ...hourValues, enrollment.AttendanceType, session.sub])
+        await connection.execute<any>('INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, BatchID, AttendanceDate, TimeIn, TimeOut, ' + columns + ', AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ' + placeholders + ', \'Present\', ?, 1, ?)', [employeeId, enrollment.DeploymentID, shiftCodeId, id, attendanceDate, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, session.sub])
       }
       changed++
     }
@@ -346,13 +367,15 @@ export async function createDtrAttendance(event: any) {
     const [[deployment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     if (!deployment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before entering attendance.' })
     const attendanceType = deployment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular'
+    let shift: any = null
     if (shiftCodeId) {
-      const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
+      const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
+      shift = activeShift
       if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     }
-    const values = hourColumns.map(column => hours(body[column], column))
-    const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const timeIn = mysqlDateTime(body.TimeIn, 'Time in'), timeOut = mysqlDateTime(body.TimeOut, 'Time out')
+    const values = hourColumns.map(column => column === 'NightDiffHours' && shift ? nightDifferentialHours(timeIn, timeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime) : hours(body[column], column))
+    const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
     const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
     if (existing && Number(existing.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR for this date.' })
