@@ -17,6 +17,8 @@ const detailsOpen = ref(false)
 const selectedEmployee = ref<any | null>(null)
 const employeeSearch = ref('')
 const agencyFilter = ref('')
+const clientFilter = ref('')
+const siteFilter = ref('')
 const form = ref({ EmployeeID: '', ClientRateID: '', SiteID: '', SiteShiftID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' })
 
 const employeeGroups = computed(() => {
@@ -40,8 +42,22 @@ const filteredEmployees = computed(() => {
     const matchesSearch = !query || [group.EmployeeName, group.EmployeeNumber, formatEmployeeId(group.EmployeeID)]
       .some((value) => String(value || '').toLowerCase().includes(query))
     const matchesAgency = !agencyFilter.value || String(group.current.AgencyID) === agencyFilter.value
-    return matchesSearch && matchesAgency
+    const matchesClient = !clientFilter.value || String(group.current.ClientRateID) === clientFilter.value
+    const matchesSite = !siteFilter.value || String(group.current.SiteID) === siteFilter.value
+    return matchesSearch && matchesAgency && matchesClient && matchesSite
   })
+})
+
+const deploymentClients = computed(() => {
+  const seen = new Map<string, any>()
+  for (const item of items.value) if (!seen.has(String(item.ClientRateID))) seen.set(String(item.ClientRateID), { ClientRateID: item.ClientRateID, ClientName: item.ClientName })
+  return Array.from(seen.values()).sort((a, b) => String(a.ClientName).localeCompare(String(b.ClientName)))
+})
+
+const deploymentSites = computed(() => {
+  const seen = new Map<string, any>()
+  for (const item of items.value) if ((!clientFilter.value || String(item.ClientRateID) === clientFilter.value) && !seen.has(String(item.SiteID))) seen.set(String(item.SiteID), { SiteID: item.SiteID, SiteName: item.SiteName })
+  return Array.from(seen.values()).sort((a, b) => String(a.SiteName).localeCompare(String(b.SiteName)))
 })
 
 watch(agencies, (currentAgencies) => {
@@ -158,6 +174,20 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
         <select v-model="agencyFilter">
           <option value="">All agencies</option>
           <option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option>
+        </select>
+      </label>
+      <label>
+        <span>Client</span>
+        <select v-model="clientFilter" @change="siteFilter = ''">
+          <option value="">All clients</option>
+          <option v-for="client in deploymentClients" :key="client.ClientRateID" :value="String(client.ClientRateID)">{{ client.ClientName }}</option>
+        </select>
+      </label>
+      <label>
+        <span>Site</span>
+        <select v-model="siteFilter">
+          <option value="">All sites</option>
+          <option v-for="site in deploymentSites" :key="site.SiteID" :value="String(site.SiteID)">{{ site.SiteName }}</option>
         </select>
       </label>
       <button class="ghost" type="submit">Search</button>
