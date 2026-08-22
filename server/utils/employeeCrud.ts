@@ -408,11 +408,33 @@ export async function saveEmployeeSection(event: any, mode: 'create' | 'update' 
   return { success: true, id: result.insertId }
 }
 
+async function dtrDeploymentAssignments() {
+  const [rows] = await pool.execute<any[]>(
+    `SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName, d.SiteID, s.SiteName,
+      d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
+      de.EmployeeID, e.EmployeeNumber, CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
+      de.AttendanceType, ed.DeploymentID, p.PositionName
+    FROM attendance_dtr d
+    INNER JOIN attendance_dtr_employee de ON de.BatchID = d.BatchID
+    INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
+    INNER JOIN agency a ON a.AgencyID = d.AgencyID
+    INNER JOIN client c ON c.ClientID = d.ClientID
+    INNER JOIN site s ON s.SiteID = d.SiteID
+    LEFT JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+    LEFT JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
+    LEFT JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+    LEFT JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+    LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
+    ORDER BY d.PeriodStart DESC, d.PeriodEnd DESC, c.ClientName, s.SiteName, e.LastName, e.FirstName`
+  )
+  return rows
+}
+
 export async function listDeployments(event: any) {
   const session = requireSession(event)
   void session.sub
-  const [items, lookups] = await Promise.all([pool.execute<any[]>(deploymentSql([])), deploymentLookups()])
-  return { items: items[0], ...lookups }
+  const [items, lookups, dtrAssignments] = await Promise.all([pool.execute<any[]>(deploymentSql([])), deploymentLookups(), dtrDeploymentAssignments()])
+  return { items: items[0], dtrAssignments, ...lookups }
 }
 
 export async function createDeployment(event: any) {
