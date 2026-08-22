@@ -64,6 +64,8 @@ Site and site-shift lists use `vw_effective_site_policy` for client/site policy 
 
 `database/shift-code-nd-window.sql` adds an optional Night Differential window to each shift code. The shift code form does not prefill a window; enabled codes must receive an admin-entered start and end time.
 
+`database/shift-code-types.sql` migrates shift types from the former generic labels to the operational values `DS`, `NS`, `MS`, `SS`, and `Flexible`. Run it once before creating or editing shift codes with the new type choices.
+
 ## Rates
 
 All rate routes are session-protected. `:resource` is whitelisted to `payroll-rate`, `billing-rate`, or `client-rate`.

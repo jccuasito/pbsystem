@@ -31,7 +31,7 @@ function resetForm(item: any = null) {
     AgencyID: item?.AgencyID ? String(item.AgencyID) : '',
     ShiftCode: item?.ShiftCode || '',
     ShiftName: item?.ShiftName || '',
-    ShiftType: item?.ShiftType || 'Day',
+    ShiftType: item?.ShiftType || 'DS',
     TimeIn: String(item?.TimeIn || '08:00').slice(0, 5),
     TimeOut: String(item?.TimeOut || '17:00').slice(0, 5),
     RegularHours: item?.RegularHours ?? '8',
@@ -121,7 +121,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 
     <form class="filters" @submit.prevent="appliedSearch = searchText">
       <label>Search shift code or name
-        <input v-model="searchText" placeholder="e.g. DS0700 or Day shift" />
+        <input v-model="searchText" placeholder="e.g. DS0700 or day shift" />
       </label>
       <label>Agency
         <select v-model="agencyFilter">
@@ -130,7 +130,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
         </select>
       </label>
       <label>Shift type
-        <select v-model="shiftTypeFilter"><option value="">All types</option><option>Day</option><option>Night</option><option>Split</option><option>Flexible</option></select>
+        <select v-model="shiftTypeFilter"><option value="">All types</option><option value="DS">DS — Day Shift</option><option value="NS">NS — Night Shift</option><option value="MS">MS — Mid Shift</option><option value="SS">SS — Straight Shift</option><option>Flexible</option></select>
       </label>
       <button class="secondary" type="submit">Search</button>
     </form>
@@ -159,7 +159,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
           <h2>{{ editing ? 'Edit shift code' : 'Add shift code' }}</h2>
           <label>Agency<select v-model="form.AgencyID" required><option value="">Select agency</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
           <div class="grid"><label>Shift code<input v-model.trim="form.ShiftCode" maxlength="20" placeholder="e.g. DS0700-1900" required /></label><label>Shift name<input v-model.trim="form.ShiftName" maxlength="100" placeholder="e.g. Day duty 7 AM–7 PM" required /></label></div>
-          <div class="grid"><label>Shift type<select v-model="form.ShiftType" required><option>Day</option><option>Night</option><option>Split</option><option>Flexible</option></select></label><label>Status<select v-model="form.Status" required><option>Active</option><option>Inactive</option></select></label></div>
+          <div class="grid"><label>Shift type<select v-model="form.ShiftType" required><option value="DS">DS — Day Shift</option><option value="NS">NS — Night Shift</option><option value="MS">MS — Mid Shift</option><option value="SS">SS — Straight Shift</option><option>Flexible</option></select></label><label>Status<select v-model="form.Status" required><option>Active</option><option>Inactive</option></select></label></div>
           <div class="grid"><label>Time in<input v-model="form.TimeIn" type="time" required /></label><label>Time out<input v-model="form.TimeOut" type="time" required /></label></div>
           <div class="grid"><label>Regular hours<input v-model="form.RegularHours" type="number" min="0" max="24" step="0.25" required /></label><label>Regular OT cap<input v-model="form.RegularOTCap" type="number" min="0" max="24" step="0.25" required /></label></div>
           <label>Night Differential<select v-model="form.NDEnabled"><option value="0">Disabled</option><option value="1">Enabled for this shift code</option></select></label>

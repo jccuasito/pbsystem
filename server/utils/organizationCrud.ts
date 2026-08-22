@@ -64,7 +64,7 @@ function validateShiftCodeValues(values: unknown[]) {
   const [, shiftCode, shiftName, shiftType, timeIn, timeOut, regularHours, regularOTCap, ndEnabled, ndStartTime, ndEndTime] = values
   if (typeof shiftCode !== 'string' || !shiftCode) throw createError({ statusCode: 400, statusMessage: 'Shift code is required.' })
   if (typeof shiftName !== 'string' || !shiftName) throw createError({ statusCode: 400, statusMessage: 'Shift name is required.' })
-  if (!['Day', 'Night', 'Split', 'Flexible'].includes(String(shiftType))) throw createError({ statusCode: 400, statusMessage: 'Select a valid shift type.' })
+  if (!['DS', 'NS', 'MS', 'SS', 'Flexible'].includes(String(shiftType))) throw createError({ statusCode: 400, statusMessage: 'Select a valid shift type.' })
   if (!validTime(timeIn) || !validTime(timeOut)) {
     throw createError({ statusCode: 400, statusMessage: 'Time in and time out must be valid times.' })
   }
