@@ -168,6 +168,14 @@ function mysqlDateTime(value: unknown, label: string) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(value)) throw createError({ statusCode: 400, statusMessage: `${label} must use YYYY-MM-DD HH:mm.` })
   return `${value.slice(0, 16).replace('T', ' ')}:00`
 }
+function normalizedOvernightTimeOut(timeIn: string | null, timeOut: string | null, shift: any) {
+  if (!timeIn || !timeOut || !shift || String(shift.TimeOut).slice(0, 5) > String(shift.TimeIn).slice(0, 5)) return timeOut
+  const start = new Date(timeIn.replace(' ', 'T')), end = new Date(timeOut.replace(' ', 'T'))
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end > start) return timeOut
+  if (timeIn.slice(0, 10) !== timeOut.slice(0, 10)) return timeOut
+  end.setDate(end.getDate() + 1)
+  return end.getFullYear() + '-' + String(end.getMonth() + 1).padStart(2, '0') + '-' + String(end.getDate()).padStart(2, '0') + ' ' + String(end.getHours()).padStart(2, '0') + ':' + String(end.getMinutes()).padStart(2, '0') + ':00'
+}
 function nightDifferentialHours(timeIn: string | null, timeOut: string | null, enabled: unknown, startTime: unknown, endTime: unknown) {
   if (!enabled || !timeIn || !timeOut || !startTime || !endTime) return 0
   const workStart = new Date(timeIn.replace(' ', 'T')), workEnd = new Date(timeOut.replace(' ', 'T'))
@@ -373,11 +381,13 @@ export async function createDtrAttendance(event: any) {
     const attendanceType = deployment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular'
     let shift: any = null
     if (shiftCodeId) {
-      const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
+      const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, TimeIn, TimeOut, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
       shift = activeShift
       if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     }
-    const timeIn = mysqlDateTime(body.TimeIn, 'Time in'), timeOut = mysqlDateTime(body.TimeOut, 'Time out')
+    const timeIn = mysqlDateTime(body.TimeIn, 'Time in')
+    const timeOut = normalizedOvernightTimeOut(timeIn, mysqlDateTime(body.TimeOut, 'Time out'), shift)
+    if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) throw createError({ statusCode: 400, statusMessage: 'Time out must be after time in. For an overnight shift, use the next calendar date.' })
     const values = hourColumns.map(column => column === 'NightDiffHours' && shift ? nightDifferentialHours(timeIn, timeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime) : hours(body[column], column))
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
