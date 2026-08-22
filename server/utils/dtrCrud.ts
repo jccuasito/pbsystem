@@ -274,7 +274,7 @@ export async function addDtrEmployee(event: any) {
 }
 
 export async function updateDtrEmployeeType(event: any) {
-  const session = requireSession(event); void session.sub
+  const session = requireSession(event)
   const id = batchId(event), body = await readBody<{ EmployeeID?: unknown, DeploymentType?: unknown }>(event) || {}
   const employeeId = positiveId(body.EmployeeID, 'Employee')
   const deploymentType = body.DeploymentType === 'Reliever' ? 'Reliever' : body.DeploymentType === 'Regular' ? 'Regular' : null
@@ -286,7 +286,11 @@ export async function updateDtrEmployeeType(event: any) {
     const [[enrollment]] = await connection.execute<any[]>('SELECT DeploymentID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
     await connection.execute('UPDATE attendance_dtr_employee SET AttendanceType = ? WHERE BatchID = ? AND EmployeeID = ?', [deploymentType, id, employeeId])
-    await connection.commit(); return { success: true }
+    const [attendanceResult] = await connection.execute<any>(
+      'UPDATE attendance SET AttendanceType = ?, UpdatedBy = ? WHERE BatchID = ? AND EmployeeID = ?',
+      [deploymentType, session.sub, id, employeeId],
+    )
+    await connection.commit(); return { success: true, syncedAttendanceRows: attendanceResult.affectedRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
