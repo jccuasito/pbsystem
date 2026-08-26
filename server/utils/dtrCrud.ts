@@ -15,6 +15,16 @@ function date(value: unknown, label: string) {
   return value
 }
 
+// MySQL may return DATE/DATETIME values either as a Date instance or an ISO
+// string.  Batch filling must always iterate the calendar dates, never the
+// serialized timestamp text (which would otherwise produce an empty range).
+function databaseDate(value: unknown) {
+  if (value instanceof Date) return value.getFullYear() + '-' + String(value.getMonth() + 1).padStart(2, '0') + '-' + String(value.getDate()).padStart(2, '0')
+  const match = String(value || '').match(/^\d{4}-\d{2}-\d{2}/)
+  if (!match) throw createError({ statusCode: 500, statusMessage: 'Invalid DTR cutoff date.' })
+  return match[0]
+}
+
 function batchId(event: any) { return positiveId(getRouterParam(event, 'id'), 'DTR ID') }
 
 async function validateAssignment(connection: any, agencyId: number, clientId: number, siteId: number) {
@@ -309,9 +319,10 @@ function dateTimeForShift(value: string, time: unknown, nextDay = false) {
   return dateValue.getFullYear() + '-' + String(dateValue.getMonth() + 1).padStart(2, '0') + '-' + String(dateValue.getDate()).padStart(2, '0') + ' ' + timeValue + ':00'
 }
 
-function cutoffDates(start: string, end: string) {
+function cutoffDates(start: unknown, end: unknown) {
   const dates: string[] = []
-  for (const value = new Date(start + 'T00:00:00'); value <= new Date(end + 'T00:00:00'); value.setDate(value.getDate() + 1)) {
+  const periodStart = databaseDate(start), periodEnd = databaseDate(end)
+  for (const value = new Date(periodStart + 'T00:00:00'); value <= new Date(periodEnd + 'T00:00:00'); value.setDate(value.getDate() + 1)) {
     dates.push(value.getFullYear() + '-' + String(value.getMonth() + 1).padStart(2, '0') + '-' + String(value.getDate()).padStart(2, '0'))
   }
   return dates
@@ -326,15 +337,16 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
     const [[enrollment]] = await connection.execute<any[]>('SELECT de.DeploymentID, de.AttendanceType FROM attendance_dtr_employee de WHERE de.BatchID = ? AND de.EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before applying a shift.' })
     const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, TimeIn, TimeOut, RegularHours, RegularOTCap, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
     if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
-    const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, batch.PeriodStart, batch.PeriodEnd])
-    const currentByDate = new Map(currentRows.map(row => [String(row.AttendanceDate).slice(0, 10), row]))
+    const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, periodStart, periodEnd])
+    const currentByDate = new Map(currentRows.map(row => [databaseDate(row.AttendanceDate), row]))
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     let changed = 0
-    for (const attendanceDate of cutoffDates(batch.PeriodStart, batch.PeriodEnd)) {
+    for (const attendanceDate of cutoffDates(periodStart, periodEnd)) {
       const shiftTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
       const shiftTimeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
       const hourValues = hourColumns.map(column => column === 'RegularHours' ? Number(shift.RegularHours || 0) : column === 'OTHours' ? Number(shift.RegularOTCap || 0) : column === 'NightDiffHours' ? nightDifferentialHours(shiftTimeIn, shiftTimeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime) : 0)
