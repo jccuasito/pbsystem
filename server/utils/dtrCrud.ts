@@ -214,6 +214,27 @@ function assertEditableBatch(batch: any) {
   if (String(batch.Status).startsWith('Computed') || batch.Status === 'Locked' || batch.Status === 'Approved') throw createError({ statusCode: 409, statusMessage: 'This DTR is already computed or locked and cannot be changed.' })
 }
 
+// WDO is a persisted payroll marker, not a display-only total. A semi-monthly
+// cutoff gets one WDO once 14 days were worked and two once 15+ were worked.
+// The latest qualifying worked day(s) are marked so a status correction moves
+// the marker deterministically within the same transaction.
+async function syncAutoWdo(connection: any, batch: any, employeeId: number) {
+  const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
+  const [workedRows] = await connection.execute<any[]>(`SELECT AttendanceID
+    FROM attendance
+    WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate BETWEEN ? AND ?
+      AND AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever')
+    ORDER BY AttendanceDate DESC, AttendanceID DESC
+    FOR UPDATE`, [batch.BatchID, employeeId, periodStart, periodEnd])
+  const wdoCount = workedRows.length >= 15 ? 2 : workedRows.length >= 14 ? 1 : 0
+  await connection.execute('UPDATE attendance SET IsWDO = 0 WHERE BatchID = ? AND EmployeeID = ?', [batch.BatchID, employeeId])
+  if (wdoCount) {
+    const markerIds = workedRows.slice(0, wdoCount).map(row => Number(row.AttendanceID))
+    await connection.execute(`UPDATE attendance SET IsWDO = 1 WHERE AttendanceID IN (${markerIds.map(() => '?').join(', ')})`, markerIds)
+  }
+  return wdoCount
+}
+
 export async function listDtrRecords(event: any) {
   const session = requireSession(event); void session.sub
   const id = batchId(event)
@@ -222,7 +243,7 @@ export async function listDtrRecords(event: any) {
     const batch = await batchDetail(connection, id)
     const [[records], [shifts], [attendanceRows]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, p.PositionName, ed.DeploymentID, de.AttendanceType AS DeploymentType,
-      COUNT(at.AttendanceID) AS Days, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
+      COUNT(at.AttendanceID) AS Days, COALESCE(SUM(at.IsWDO), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
@@ -230,7 +251,7 @@ export async function listDtrRecords(event: any) {
       LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
       WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
       ORDER BY e.LastName, e.FirstName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, NDEnabled, NDStartTime, NDEndTime
-        FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType,
+        FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO,
         at.TimeIn, at.TimeOut, at.Remarks, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType
         FROM attendance at LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
         WHERE at.BatchID = ? ORDER BY at.EmployeeID, at.AttendanceDate`, [id])])
@@ -363,8 +384,9 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
       }
       changed++
     }
+    const wdoCount = await syncAutoWdo(connection, batch, employeeId)
     await connection.commit()
-    return { success: true, changed, onlyEmpty }
+    return { success: true, changed, onlyEmpty, wdoCount }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -382,7 +404,7 @@ export async function createDtrAttendance(event: any) {
   if (body.ApplyBatch === true) return applyDtrShiftBatchBody(event, body, session)
   const employeeId = positiveId(body.EmployeeID, 'Employee'), attendanceDate = date(body.AttendanceDate, 'Attendance date')
   const shiftCodeId = body.ShiftCodeID === '' || body.ShiftCodeID === null || body.ShiftCodeID === undefined ? null : positiveId(body.ShiftCodeID, 'Shift code')
-  const attendanceStatus = ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Holiday', 'Rest Day'].includes(String(body.AttendanceStatus)) ? String(body.AttendanceStatus) : 'Present'
+  const attendanceStatus = ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Holiday', 'Rest Day', 'Reliever'].includes(String(body.AttendanceStatus)) ? String(body.AttendanceStatus) : 'Present'
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
@@ -407,11 +429,13 @@ export async function createDtrAttendance(event: any) {
     if (existing && Number(existing.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR for this date.' })
     if (existing) {
       await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, shiftCodeId, timeIn, timeOut, ...values, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
-      await connection.commit(); return { id: existing.AttendanceID, updated: true }
+      const wdoCount = await syncAutoWdo(connection, batch, employeeId)
+      await connection.commit(); return { id: existing.AttendanceID, updated: true, wdoCount }
     }
     const [result] = await connection.execute<any>(`INSERT INTO attendance
       (EmployeeID, DeploymentID, ShiftCodeID, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, AttendanceStatus, AttendanceType, IsManualEdit, Remarks, CreatedBy)
       VALUES (?, ?, ?, ?, ?, ?, ?, ${placeholders}, ?, ?, 1, ?, ?)`, [employeeId, deployment.DeploymentID, shiftCodeId, id, attendanceDate, timeIn, timeOut, ...values, attendanceStatus, attendanceType, remarks, session.sub])
-    await connection.commit(); return { id: result.insertId, updated: false }
+    const wdoCount = await syncAutoWdo(connection, batch, employeeId)
+    await connection.commit(); return { id: result.insertId, updated: false, wdoCount }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
