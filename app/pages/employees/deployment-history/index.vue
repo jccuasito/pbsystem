@@ -56,7 +56,13 @@ function cutoffLabel(start: any, end: any) {
 }
 function historyStatus(item: any, history: any[]) { if (item.Status === 'Active') return 'Active'; const newer = history.find((candidate: any) => String(candidate.StartDate) > String(item.StartDate)); return newer && (newer.AgencyID !== item.AgencyID || newer.ClientRateID !== item.ClientRateID) ? 'Transferred' : 'Ended' }
 function openDetails(group: any) { selectedEmployee.value = group; detailsOpen.value = true }
-function openEmployeeDetails(person: any) { const group = employeeGroups.value.find(candidate => String(candidate.EmployeeID) === String(person.EmployeeID)); if (group) openDetails(group) }
+function openEmployeeDetails(person: any) {
+  const group = employeeGroups.value.find(candidate => String(candidate.EmployeeID) === String(person.EmployeeID))
+  // A reliever can exist only in a cutoff DTR roster and have no permanent
+  // deployment yet. Keep the permanent timeline empty in that case, but still
+  // open the shared employee-history modal so their DTR assignment is visible.
+  openDetails(group || { ...person, history: [] })
+}
 function openRoster(roster: any) { selectedRoster.value = roster; rosterOpen.value = true }
 async function load(silent = false) { if (!silent) loading.value = true; try { const response: any = await $fetch('/api/employees/deployments'); items.value = response.items || []; dtrAssignments.value = response.dtrAssignments || []; agencies.value = response.agencies || []; employees.value = response.employees || []; clientRates.value = response.clientRates || []; sites.value = response.sites || []; shiftCodes.value = response.shiftCodes || []; if (!cutoffFilter.value && cutoffOptions.value[0]) cutoffFilter.value = cutoffOptions.value[0].key } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to load deployment history.' } finally { if (!silent) loading.value = false } }
 async function save() { busy.value = true; error.value = ''; try { await $fetch('/api/employees/deployments', { method: 'POST', body: form.value }); modalOpen.value = false; reset(); await load() } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to save deployment.' } finally { busy.value = false } }
