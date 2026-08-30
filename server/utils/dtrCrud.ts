@@ -262,7 +262,7 @@ export async function listDtrRecords(event: any) {
   try {
     const batch = await batchDetail(connection, id)
     const [[records], [shifts], [attendanceRows]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
-      CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, p.PositionName, ed.DeploymentID, de.AttendanceType AS DeploymentType,
+      CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, p.PositionName, ed.DeploymentID, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
@@ -429,6 +429,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
       }
       changed++
     }
+    await connection.execute('UPDATE attendance_dtr_employee SET DefaultShiftCodeID = ? WHERE BatchID = ? AND EmployeeID = ?', [shiftCodeId, id, employeeId])
     const wdoCount = await syncAutoWdo(connection, batch, employeeId)
     await connection.commit()
     return { success: true, changed, onlyEmpty, wdoCount }
@@ -452,6 +453,7 @@ async function resetDtrAttendanceBatchBody(event: any, body: { EmployeeID?: unkn
       'DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?',
       [id, employeeId],
     )
+    await connection.execute('UPDATE attendance_dtr_employee SET DefaultShiftCodeID = NULL WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     await connection.commit()
     return { success: true, deletedAttendanceRows: attendanceResult.affectedRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
