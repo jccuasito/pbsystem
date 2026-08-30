@@ -125,11 +125,12 @@ export async function deleteDtr(event: any) {
   const id = batchId(event); const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[usage]] = await connection.execute<any[]>('SELECT COUNT(*) AS Count FROM attendance WHERE BatchID = ?', [id])
-    if (Number(usage.Count) > 0) throw createError({ statusCode: 409, statusMessage: 'This DTR has attendance records and cannot be deleted.' })
-    const [result] = await connection.execute<any>('DELETE FROM attendance_dtr WHERE BatchID = ?', [id])
-    if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
-    await connection.commit(); return { success: true, deleted: true }
+    const [[current]] = await connection.execute<any[]>('SELECT Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
+    if (!current) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
+    if (current.Status !== 'Draft') throw createError({ statusCode: 409, statusMessage: 'Only Draft DTRs can be deleted.' })
+    const [attendanceResult] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ?', [id])
+    await connection.execute<any>('DELETE FROM attendance_dtr WHERE BatchID = ?', [id])
+    await connection.commit(); return { success: true, deleted: true, deletedAttendanceRows: attendanceResult.affectedRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -395,16 +396,10 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
         // Legacy/unbatched attendance belongs to no DTR yet, so adopt it into this cutoff.
         // Only entries already belonging to this DTR are preserved by the blank-days option.
         if (current.BatchID !== null && onlyEmpty) continue
-        const attendanceStatus = normalizeAttendanceStatus(current.AttendanceStatus)
-        // Status-only rows mark work outside this site (or a non-payable day).  A batch shift
-        // must never convert them into paid Present attendance.
-        if (noWorkAttendanceStatuses.has(attendanceStatus)) {
-          await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, AttendanceType = ?, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [enrollment.DeploymentID, id, enrollment.AttendanceType, session.sub, current.AttendanceID])
-          changed++
-          continue
-        }
         const updateColumns = hourColumns.map(column => column + ' = ?').join(', ')
-        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [enrollment.DeploymentID, id, shiftCodeId, shiftTimeIn, shiftTimeOut, ...hourValues, attendanceStatus, enrollment.AttendanceType, session.sub, current.AttendanceID])
+        // A cutoff apply is an intentional reset: replace every per-day status, manual
+        // time/hours, holiday marker, and remark with the selected shift's clean values.
+        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = \'Present\', AttendanceType = ?, HolidayID = NULL, Remarks = NULL, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [enrollment.DeploymentID, id, shiftCodeId, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, session.sub, current.AttendanceID])
       } else {
         await connection.execute<any>('INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, BatchID, AttendanceDate, TimeIn, TimeOut, ' + columns + ', AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ' + placeholders + ', \'Present\', ?, 1, ?)', [employeeId, enrollment.DeploymentID, shiftCodeId, id, attendanceDate, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, session.sub])
       }
