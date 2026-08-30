@@ -27,7 +27,7 @@ const configs: Record<Resource, Config> = {
   site: { table: 'site', id: 'SiteID', fields: ['ClientID', 'SiteName', 'SiteAddress', 'Status'], listSql: `SELECT s.SiteID, s.ClientID, c.ClientName, s.SiteName, s.SiteAddress, s.Status, v.PolicySource, v.NDEnabled, v.NDStartTime, v.NDEndTime FROM site s INNER JOIN client c ON c.ClientID = s.ClientID LEFT JOIN vw_effective_site_policy v ON v.SiteID = s.SiteID ORDER BY c.ClientName, s.SiteName`, lookups: activeClients },
   'site-policy': { table: 'site_policy', id: 'SitePolicyID', fields: ['SiteID', ...policyFields], listSql: 'SELECT sp.*, s.SiteName, c.ClientName FROM site_policy sp INNER JOIN site s ON s.SiteID = sp.SiteID INNER JOIN client c ON c.ClientID = s.ClientID ORDER BY c.ClientName, s.SiteName', lookups: activeSites },
   'site-shift': { table: 'site_shift', id: 'SiteShiftID', fields: ['SiteID', 'ShiftCodeID', 'NDPolicyOverride', 'Status'], listSql: `SELECT ss.SiteShiftID, ss.SiteID, s.SiteName, ss.ShiftCodeID, sc.ShiftCode, sc.ShiftName, ss.NDPolicyOverride, ss.Status, CASE ss.NDPolicyOverride WHEN 'Enabled' THEN 1 WHEN 'Disabled' THEN 0 ELSE COALESCE(v.NDEnabled, 0) END AS EffectiveNDEnabled, v.PolicySource FROM site_shift ss INNER JOIN site s ON s.SiteID = ss.SiteID INNER JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID LEFT JOIN vw_effective_site_policy v ON v.SiteID = ss.SiteID ORDER BY s.SiteName, sc.ShiftCode`, lookups: async () => ({ ...(await activeSites()), ...(await activeShiftCodes()) }) },
-  'shift-code': { table: 'shift_code', id: 'ShiftCodeID', fields: ['AgencyID', 'ShiftCode', 'ShiftName', 'ShiftType', 'TimeIn', 'TimeOut', 'RegularHours', 'RegularOTCap', 'NDEnabled', 'NDStartTime', 'NDEndTime', 'Status'], listSql: 'SELECT sc.ShiftCodeID, sc.AgencyID, a.AgencyName, sc.ShiftCode, sc.ShiftName, sc.ShiftType, sc.TimeIn, sc.TimeOut, sc.RegularHours, sc.RegularOTCap, sc.NDEnabled, sc.NDStartTime, sc.NDEndTime, sc.Status, sc.CreatedAt FROM shift_code sc INNER JOIN agency a ON a.AgencyID = sc.AgencyID ORDER BY a.AgencyName, sc.ShiftCode, sc.ShiftName', lookups: activeAgencies }
+  'shift-code': { table: 'shift_code', id: 'ShiftCodeID', fields: ['AgencyID', 'ShiftCode', 'ShiftName', 'ShiftType', 'TimeIn', 'TimeOut', 'RegularHours', 'RegularOTCap', 'WorkdayCount', 'NDEnabled', 'NDStartTime', 'NDEndTime', 'Status'], listSql: 'SELECT sc.ShiftCodeID, sc.AgencyID, a.AgencyName, sc.ShiftCode, sc.ShiftName, sc.ShiftType, sc.TimeIn, sc.TimeOut, sc.RegularHours, sc.RegularOTCap, sc.WorkdayCount, sc.NDEnabled, sc.NDStartTime, sc.NDEndTime, sc.Status, sc.CreatedAt FROM shift_code sc INNER JOIN agency a ON a.AgencyID = sc.AgencyID ORDER BY a.AgencyName, sc.ShiftCode, sc.ShiftName', lookups: activeAgencies }
 }
 
 function resource(event: any): Resource {
@@ -43,6 +43,11 @@ function normalizeValue(field: string, value: unknown) {
     throw createError({ statusCode: 400, statusMessage: 'Status must be Active or Inactive.' })
   }
   if (booleanFields.has(field)) return value === true || value === 1 || value === '1' ? 1 : 0
+  if (field === 'WorkdayCount') {
+    const count = Number(value === '' || value === undefined || value === null ? 1 : value)
+    if (!Number.isInteger(count) || count < 1 || count > 31) throw createError({ statusCode: 400, statusMessage: 'Workday count must be a whole number from 1 to 31.' })
+    return count
+  }
   if (numberFields.has(field)) {
     const number = Number(value)
     if (!Number.isInteger(number) || number <= 0) throw createError({ statusCode: 400, statusMessage: `${field} must be a valid ID.` })
@@ -61,7 +66,7 @@ function validTime(value: unknown) {
 }
 
 function validateShiftCodeValues(values: unknown[]) {
-  const [, shiftCode, shiftName, shiftType, timeIn, timeOut, regularHours, regularOTCap, ndEnabled, ndStartTime, ndEndTime] = values
+  const [, shiftCode, shiftName, shiftType, timeIn, timeOut, regularHours, regularOTCap, workdayCount, ndEnabled, ndStartTime, ndEndTime] = values
   if (typeof shiftCode !== 'string' || !shiftCode) throw createError({ statusCode: 400, statusMessage: 'Shift code is required.' })
   if (typeof shiftName !== 'string' || !shiftName) throw createError({ statusCode: 400, statusMessage: 'Shift name is required.' })
   if (!['DS', 'NS', 'MS', 'SS', 'Flexible'].includes(String(shiftType))) throw createError({ statusCode: 400, statusMessage: 'Select a valid shift type.' })
@@ -72,12 +77,13 @@ function validateShiftCodeValues(values: unknown[]) {
     const hours = Number(value)
     if (!Number.isFinite(hours) || hours < 0 || hours > 24) throw createError({ statusCode: 400, statusMessage: `${label} must be between 0 and 24.` })
   }
+  if (!Number.isInteger(Number(workdayCount)) || Number(workdayCount) < 1 || Number(workdayCount) > 31) throw createError({ statusCode: 400, statusMessage: 'Workday count must be a whole number from 1 to 31.' })
   if (Number(ndEnabled) && (!validTime(ndStartTime) || !validTime(ndEndTime))) {
     throw createError({ statusCode: 400, statusMessage: 'Set Night Differential start and end times when ND is enabled.' })
   }
   if (!Number(ndEnabled)) {
-    values[9] = null
     values[10] = null
+    values[11] = null
   }
 }
 

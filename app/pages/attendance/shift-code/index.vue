@@ -36,6 +36,7 @@ function resetForm(item: any = null) {
     TimeOut: String(item?.TimeOut || '17:00').slice(0, 5),
     RegularHours: item?.RegularHours ?? '8',
     RegularOTCap: item?.RegularOTCap ?? '4',
+    WorkdayCount: item?.WorkdayCount ?? (item?.ShiftType === 'SS' ? '2' : '1'),
     NDEnabled: Number(item?.NDEnabled) ? '1' : '0',
     NDStartTime: item?.NDStartTime ? String(item.NDStartTime).slice(0, 5) : '',
     NDEndTime: item?.NDEndTime ? String(item.NDEndTime).slice(0, 5) : '',
@@ -162,6 +163,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
           <div class="grid"><label>Shift type<select v-model="form.ShiftType" required><option value="DS">DS — Day Shift</option><option value="NS">NS — Night Shift</option><option value="MS">MS — Mid Shift</option><option value="SS">SS — Straight Shift</option><option>Flexible</option></select></label><label>Status<select v-model="form.Status" required><option>Active</option><option>Inactive</option></select></label></div>
           <div class="grid"><label>Time in<input v-model="form.TimeIn" type="time" required /></label><label>Time out<input v-model="form.TimeOut" type="time" required /></label></div>
           <div class="grid"><label>Regular hours<input v-model="form.RegularHours" type="number" min="0" max="24" step="0.25" required /></label><label>Regular OT cap<input v-model="form.RegularOTCap" type="number" min="0" max="24" step="0.25" required /></label></div>
+          <label>Payable DTR days<input v-model="form.WorkdayCount" type="number" min="1" max="31" step="1" required /></label>
           <label>Night Differential<select v-model="form.NDEnabled"><option value="0">Disabled</option><option value="1">Enabled for this shift code</option></select></label>
           <div v-if="form.NDEnabled === '1'" class="grid"><label>ND start time<input v-model="form.NDStartTime" type="time" required /></label><label>ND end time<input v-model="form.NDEndTime" type="time" required /></label></div>
           <p class="hint">ND hours will later be calculated from actual Time In/Out and this shift code's own ND window, including qualifying overtime. No ND time is pre-filled.</p>

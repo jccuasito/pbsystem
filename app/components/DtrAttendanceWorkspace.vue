@@ -1,7 +1,7 @@
 <script setup lang="ts">
 type Dtr={BatchID:number,AgencyID?:number,AgencyName:string,ClientName:string,SiteName:string,PeriodStart:string,PeriodEnd:string}
 type Row={EmployeeID:number,EmployeeNumber:string|null,EmployeeName:string,DeploymentType:'Regular'|'Reliever',Days:number,PositionName?:string,[key:string]:any}
-type Shift={ShiftCodeID:number,ShiftCode:string,ShiftName:string,ShiftType:'DS'|'NS'|'MS'|'SS'|'Flexible',TimeIn:string,TimeOut:string,RegularHours:number,RegularOTCap:number,NDEnabled?:number|boolean,NDStartTime?:string|null,NDEndTime?:string|null}
+type Shift={ShiftCodeID:number,ShiftCode:string,ShiftName:string,ShiftType:'DS'|'NS'|'MS'|'SS'|'Flexible',TimeIn:string,TimeOut:string,RegularHours:number,RegularOTCap:number,WorkdayCount?:number,NDEnabled?:number|boolean,NDStartTime?:string|null,NDEndTime?:string|null}
 const props=defineProps<{dtr:Dtr}>()
 const emit=defineEmits<{close:[],changed:[]}>()
 const hourFields=[['RegularHours','Regular hours'],['OTHours','Regular OT'],['OTExtHours','OT extension'],['NightDiffHours','Night differential'],['RestDayHours','Rest day hours'],['RestDayOTHours','Rest day OT'],['LegalHolidayHours','Legal holiday hours'],['LegalHolidayOTHours','Legal holiday OT'],['RestDayLegalHolidayHours','Rest day legal holiday'],['RestDayLegalHolidayOTHours','Rest day legal holiday OT'],['SpecialHolidayHours','Special holiday hours'],['SpecialHolidayOTHours','Special holiday OT'],['RestDaySpecialHolidayHours','Rest day special holiday'],['RestDaySpecialHolidayOTHours','Rest day special holiday OT'],['BreakHours','Break hours']] as const
@@ -46,7 +46,7 @@ function entry(row:Row,date:string){return attendanceMap.value.get(String(row.Em
 function formatNumber(value:any){return Number(value||0).toFixed(2)}
 function summaryStickyStyle(key:string){if(!pinnedSummaryKeys.has(key))return {};let right=150;for(const [field,width] of Object.entries(pinnedSummaryWidths)){if(field===key)break;right+=width}return {right:right+'px',minWidth:pinnedSummaryWidths[key]+'px',width:pinnedSummaryWidths[key]+'px'}}
 function isWorkedDay(record:any){if(!record||noWorkAttendanceStatuses.has(normalizeAttendanceStatus(record.AttendanceStatus)))return false;const hasPaidTime=hourFields.filter(([key])=>!['LateHours','UndertimeHours','BreakHours'].includes(key)).some(([key])=>Number(record[key]||0)>0);return hasPaidTime||Boolean(record.TimeIn||record.TimeOut)}
-function totalDays(row:Row){return attendanceRows.value.filter(item=>sameEmployee(item.EmployeeID,row.EmployeeID)&&isWorkedDay(item)).length}
+function totalDays(row:Row){return attendanceRows.value.filter(item=>sameEmployee(item.EmployeeID,row.EmployeeID)&&isWorkedDay(item)).reduce((total,item)=>total+Math.max(1,Number(item.WorkdayCount||1)),0)}
 // WDO is saved per attendance day by the backend, so the matrix always shows
 // the same payroll marker that downstream payroll and billing will consume.
 function wdoDays(row:Row){return attendanceRows.value.filter(item=>sameEmployee(item.EmployeeID,row.EmployeeID)&&isWorkedDay(item)&&Number(item.IsWDO||0)===1).length}
