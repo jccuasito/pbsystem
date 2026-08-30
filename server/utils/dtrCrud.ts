@@ -331,6 +331,29 @@ export async function addDtrEmployee(event: any) {
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
+export async function removeDtrEmployee(event: any) {
+  const session = requireSession(event); void session.sub
+  const id = batchId(event), body = await readBody<{ EmployeeID?: unknown }>(event) || {}
+  const employeeId = positiveId(body.EmployeeID, 'Employee')
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const [[enrollment]] = await connection.execute<any[]>(
+      'SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE',
+      [id, employeeId],
+    )
+    if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
+    const [attendanceResult] = await connection.execute<any>(
+      'DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?',
+      [id, employeeId],
+    )
+    await connection.execute('DELETE FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
+    await connection.commit()
+    return { success: true, deletedAttendanceRows: attendanceResult.affectedRows }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
 export async function updateDtrEmployeeType(event: any) {
   const session = requireSession(event)
   const id = batchId(event), body = await readBody<{ EmployeeID?: unknown, DeploymentType?: unknown }>(event) || {}
