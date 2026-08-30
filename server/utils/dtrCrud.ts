@@ -434,6 +434,28 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
+async function resetDtrAttendanceBatchBody(event: any, body: { EmployeeID?: unknown }, session: any) {
+  const id = batchId(event)
+  const employeeId = positiveId(body.EmployeeID, 'Employee')
+  void session.sub
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const [[enrollment]] = await connection.execute<any[]>(
+      'SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE',
+      [id, employeeId],
+    )
+    if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
+    const [attendanceResult] = await connection.execute<any>(
+      'DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?',
+      [id, employeeId],
+    )
+    await connection.commit()
+    return { success: true, deletedAttendanceRows: attendanceResult.affectedRows }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
 export async function applyDtrShiftBatch(event: any) {
   const session = requireSession(event)
   const body = await readBody<{ EmployeeID?: unknown, ShiftCodeID?: unknown, OnlyEmpty?: unknown }>(event) || {}
@@ -446,6 +468,7 @@ export async function createDtrAttendance(event: any) {
   // Kept on the established /records endpoint too so an already-running Nitro dev
   // server can process batch fills without needing to discover a newly added route.
   if (body.ApplyBatch === true) return applyDtrShiftBatchBody(event, body, session)
+  if (body.ResetBatch === true) return resetDtrAttendanceBatchBody(event, body, session)
   const employeeId = positiveId(body.EmployeeID, 'Employee'), attendanceDate = date(body.AttendanceDate, 'Attendance date')
   const requestedShiftCodeId = body.ShiftCodeID === '' || body.ShiftCodeID === null || body.ShiftCodeID === undefined ? null : positiveId(body.ShiftCodeID, 'Shift code')
   const attendanceStatus = normalizeAttendanceStatus(body.AttendanceStatus)
