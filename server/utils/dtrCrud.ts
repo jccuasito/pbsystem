@@ -274,7 +274,7 @@ export async function listDtrRecords(event: any) {
     const batch = await batchDetail(connection, id)
     await syncBatchHolidays(connection, batch, session.sub)
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
-    const [[records], [shifts], [attendanceRows]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
+    const [[records], [shifts], [attendanceRows], [dutyRows]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, p.PositionName, ed.DeploymentID, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
@@ -296,8 +296,19 @@ export async function listDtrRecords(event: any) {
           WHERE scheduled_duty.AttendanceID = at.AttendanceID AND scheduled_shift.ShiftType <> 'Flexible'
         ) THEN 1 ELSE 0 END AS IsStraightDuty
         FROM attendance at LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID LEFT JOIN holiday h ON h.HolidayID = at.HolidayID
-        WHERE at.BatchID = ? ORDER BY at.EmployeeID, at.AttendanceDate`, [id])])
-    return { batch, records, shifts, attendanceRows, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
+        WHERE at.BatchID = ? ORDER BY at.EmployeeID, at.AttendanceDate`, [id]), connection.execute<any[]>(`SELECT at.EmployeeID, e.EmployeeNumber,
+          CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, at.AttendanceDate, at.AttendanceStatus,
+          COALESCE(duty_shift.ShiftCode, saved_shift.ShiftCode) AS ShiftCode,
+          COALESCE(duty.TimeIn, at.TimeIn) AS TimeIn, COALESCE(duty.TimeOut, at.TimeOut) AS TimeOut,
+          COALESCE(duty.SourceRowNumber, 0) AS SourceRowNumber
+          FROM attendance at
+          INNER JOIN employee e ON e.EmployeeID = at.EmployeeID
+          LEFT JOIN attendance_duty duty ON duty.AttendanceID = at.AttendanceID
+          LEFT JOIN shift_code duty_shift ON duty_shift.ShiftCodeID = duty.ShiftCodeID
+          LEFT JOIN shift_code saved_shift ON saved_shift.ShiftCodeID = at.ShiftCodeID
+          WHERE at.BatchID = ? AND (duty.AttendanceDutyID IS NOT NULL OR at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL)
+          ORDER BY at.EmployeeID, at.AttendanceDate, duty.SourceRowNumber, at.AttendanceID`, [id])])
+    return { batch, records, shifts, attendanceRows, dutyRows, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
   } finally { connection.release() }
 }
 
@@ -603,9 +614,13 @@ async function importDtrAttendanceRows(event: any, body: { Rows?: unknown }, ses
       let enrollment = null as any
       const employeeId = importedEmployeeId(employeeValue)
       if (employeeId) enrollment = enrollmentById.get(employeeId) || null
+      // Employee No. is the preferred value when that column is used.  An
+      // exported EMP-0004 fallback in that same column still resolves by ID.
+      if (!enrollment && employeeNumber) enrollment = enrollmentByNumber.get(importKey(employeeNumber)) || null
+      if (!enrollment) { const fallbackEmployeeId = importedEmployeeId(employeeNumber); if (fallbackEmployeeId) enrollment = enrollmentById.get(fallbackEmployeeId) || null }
       // Some source files put the external employee number in the "Employee ID"
-      // column (for example DJA-5157).  Keep that supported as the fallback.
-      if (!enrollment) enrollment = enrollmentByNumber.get(importKey(employeeNumber || employeeValue)) || null
+      // column (for example DJA-5157). Keep that supported as the final fallback.
+      if (!enrollment) enrollment = enrollmentByNumber.get(importKey(employeeValue)) || null
       if (!enrollment) { skip('Employee ID / Employee No. is not in this DTR.'); continue }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
       if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
@@ -744,7 +759,9 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       let enrollment = null as any
       const employeeId = importedEmployeeId(employeeValue)
       if (employeeId) enrollment = enrollmentById.get(employeeId) || null
-      if (!enrollment) enrollment = enrollmentByNumber.get(importKey(employeeNumber || employeeValue)) || null
+      if (!enrollment && employeeNumber) enrollment = enrollmentByNumber.get(importKey(employeeNumber)) || null
+      if (!enrollment) { const fallbackEmployeeId = importedEmployeeId(employeeNumber); if (fallbackEmployeeId) enrollment = enrollmentById.get(fallbackEmployeeId) || null }
+      if (!enrollment) enrollment = enrollmentByNumber.get(importKey(employeeValue)) || null
       if (!enrollment) { skip('Employee ID / Employee No. is not in this DTR.'); continue }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
       if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
