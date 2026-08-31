@@ -527,6 +527,109 @@ async function resetDtrAttendanceBatchBody(event: any, body: { EmployeeID?: unkn
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
+type ImportedDtrRow = {
+  RowNumber?: unknown
+  EmployeeID?: unknown
+  EmployeeNumber?: unknown
+  AttendanceDate?: unknown
+  ShiftCode?: unknown
+  DateIn?: unknown
+  TimeIn?: unknown
+  DateOut?: unknown
+  TimeOut?: unknown
+  AttendanceStatus?: unknown
+}
+
+function importText(value: unknown) { return String(value ?? '').trim() }
+function importKey(value: unknown) { return importText(value).toUpperCase() }
+function importedEmployeeId(value: unknown) {
+  const match = importText(value).match(/^(?:EMP[- ]?)?0*(\d+)$/i)
+  return match ? Number(match[1]) : null
+}
+
+async function importDtrAttendanceRows(event: any, body: { Rows?: unknown }, session: any) {
+  const id = batchId(event)
+  if (!Array.isArray(body.Rows) || !body.Rows.length) throw createError({ statusCode: 400, statusMessage: 'Choose an Excel file with at least one attendance row.' })
+  if (body.Rows.length > 1000) throw createError({ statusCode: 400, statusMessage: 'Import a maximum of 1,000 rows at a time.' })
+  const sourceRows = body.Rows as ImportedDtrRow[]
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
+    const [[enrollments], [shiftRows]] = await Promise.all([
+      connection.execute<any[]>(`SELECT de.EmployeeID, de.DeploymentID, de.AttendanceType, e.EmployeeNumber
+        FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
+        WHERE de.BatchID = ? FOR UPDATE`, [id]),
+      connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount,
+          NDEnabled, NDStartTime, NDEndTime FROM shift_code
+        WHERE AgencyID = ? AND Status = 'Active' FOR UPDATE`, [batch.AgencyID]),
+    ])
+    const enrollmentById = new Map(enrollments.map((row: any) => [Number(row.EmployeeID), row]))
+    const enrollmentByNumber = new Map(enrollments.filter((row: any) => importKey(row.EmployeeNumber)).map((row: any) => [importKey(row.EmployeeNumber), row]))
+    const shiftByCode = new Map(shiftRows.map((row: any) => [importKey(row.ShiftCode), row]))
+    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd))
+    const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
+    const affectedEmployeeIds = new Set<number>()
+    const issues: { row: number; reason: string }[] = []
+    let imported = 0, updated = 0, skipped = 0
+    for (let index = 0; index < sourceRows.length; index++) {
+      const source = sourceRows[index] || {}
+      const rowNumber = Number(source.RowNumber) || index + 2
+      const employeeValue = importText(source.EmployeeID)
+      const employeeNumber = importText(source.EmployeeNumber)
+      const attendanceDate = importText(source.AttendanceDate)
+      const shiftCode = importText(source.ShiftCode)
+      const skip = (reason: string) => { skipped++; if (issues.length < 12) issues.push({ row: rowNumber, reason }) }
+      let enrollment = null as any
+      const employeeId = importedEmployeeId(employeeValue)
+      if (employeeId) enrollment = enrollmentById.get(employeeId) || null
+      // Some source files put the external employee number in the "Employee ID"
+      // column (for example DJA-5157).  Keep that supported as the fallback.
+      if (!enrollment) enrollment = enrollmentByNumber.get(importKey(employeeNumber || employeeValue)) || null
+      if (!enrollment) { skip('Employee ID / Employee No. is not in this DTR.'); continue }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
+      if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
+      const attendanceStatus = normalizeAttendanceStatus(source.AttendanceStatus)
+      const noWorkStatus = noWorkAttendanceStatuses.has(attendanceStatus)
+      const shift = noWorkStatus ? null : shiftByCode.get(importKey(shiftCode))
+      if (!noWorkStatus && !shift) {
+        skip(shiftCode ? `Shift code "${shiftCode}" does not exist or is inactive for this DTR agency.` : 'Shift code is blank.')
+        continue
+      }
+      let timeIn: string | null = null, timeOut: string | null = null
+      try {
+        const importedTimeIn = importText(source.TimeIn), importedTimeOut = importText(source.TimeOut)
+        timeIn = noWorkStatus || !importedTimeIn ? null : mysqlDateTime(importText(source.DateIn || attendanceDate) + ' ' + importedTimeIn, 'Time in')
+        timeOut = noWorkStatus || !importedTimeOut ? null : mysqlDateTime(importText(source.DateOut || attendanceDate) + ' ' + importedTimeOut, 'Time out')
+        if (!noWorkStatus && !timeIn) timeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
+        if (!noWorkStatus && !timeOut) timeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
+        timeOut = normalizedOvernightTimeOut(timeIn, timeOut, shift)
+      } catch { skip('Date in/time in or date out/time out is invalid.'); continue }
+      if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) { skip('Time out must be after time in.'); continue }
+      const baseValues = noWorkStatus ? hourColumns.map(() => 0) : hourColumns.map(column =>
+        column === 'RegularHours' ? Number(shift.RegularHours || 0) :
+        column === 'OTHours' ? Number(shift.RegularOTCap || 0) :
+        column === 'NightDiffHours' ? nightDifferentialHours(timeIn, timeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime) : 0,
+      )
+      const holiday = holidayHours(baseValues, attendanceStatus, timeIn, timeOut, holidays.get(attendanceDate))
+      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
+      if (existing && Number(existing.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
+      if (existing) {
+        await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = NULL, UpdatedBy = ? WHERE AttendanceID = ?`, [enrollment.DeploymentID, shift?.ShiftCodeID || null, Number(shift?.WorkdayCount || 1), timeIn, timeOut, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub, existing.AttendanceID])
+        updated++
+      } else {
+        await connection.execute(`INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${placeholders}, ?, ?, ?, 1, ?)`, [enrollment.EmployeeID, enrollment.DeploymentID, shift?.ShiftCodeID || null, Number(shift?.WorkdayCount || 1), id, attendanceDate, timeIn, timeOut, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub])
+        imported++
+      }
+      affectedEmployeeIds.add(Number(enrollment.EmployeeID))
+    }
+    for (const employeeId of affectedEmployeeIds) await syncAutoWdo(connection, batch, employeeId)
+    await connection.commit()
+    return { success: true, imported, updated, skipped, issues }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
 export async function applyDtrShiftBatch(event: any) {
   const session = requireSession(event)
   const body = await readBody<{ EmployeeID?: unknown, ShiftCodeID?: unknown, OnlyEmpty?: unknown }>(event) || {}
@@ -540,6 +643,7 @@ export async function createDtrAttendance(event: any) {
   // server can process batch fills without needing to discover a newly added route.
   if (body.ApplyBatch === true) return applyDtrShiftBatchBody(event, body, session)
   if (body.ResetBatch === true) return resetDtrAttendanceBatchBody(event, body, session)
+  if (body.ImportRows === true) return importDtrAttendanceRows(event, body, session)
   const employeeId = positiveId(body.EmployeeID, 'Employee'), attendanceDate = date(body.AttendanceDate, 'Attendance date')
   const requestedShiftCodeId = body.ShiftCodeID === '' || body.ShiftCodeID === null || body.ShiftCodeID === undefined ? null : positiveId(body.ShiftCodeID, 'Shift code')
   const attendanceStatus = normalizeAttendanceStatus(body.AttendanceStatus)
