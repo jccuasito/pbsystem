@@ -91,8 +91,12 @@ function validateShiftCodeValues(values: unknown[]) {
   if (typeof shiftCode !== 'string' || !shiftCode) throw createError({ statusCode: 400, statusMessage: 'Shift code is required.' })
   if (typeof shiftName !== 'string' || !shiftName) throw createError({ statusCode: 400, statusMessage: 'Shift name is required.' })
   if (!['DS', 'NS', 'MS', 'SS', 'Flexible'].includes(String(shiftType))) throw createError({ statusCode: 400, statusMessage: 'Select a valid shift type.' })
-  if (!validTime(timeIn) || !validTime(timeOut)) {
+  const flexible = String(shiftType) === 'Flexible'
+  if (!flexible && (!validTime(timeIn) || !validTime(timeOut))) {
     throw createError({ statusCode: 400, statusMessage: 'Time in and time out must be valid times.' })
+  }
+  if (flexible && ((timeIn && !validTime(timeIn)) || (timeOut && !validTime(timeOut)) || Boolean(timeIn) !== Boolean(timeOut))) {
+    throw createError({ statusCode: 400, statusMessage: 'For a Flexible shift, leave both default times blank or enter both valid times.' })
   }
   for (const [label, value] of [['Regular hours', regularHours], ['Regular OT cap', regularOTCap]] as const) {
     const hours = Number(value)

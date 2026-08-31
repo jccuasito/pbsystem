@@ -226,6 +226,15 @@ function nightDifferentialHours(timeIn: string | null, timeOut: string | null, e
   }
   return Math.round((totalMilliseconds / 3600000) * 100) / 100
 }
+function nightDifferentialWindowHours(startTime: unknown, endTime: unknown) {
+  if (!startTime || !endTime) return 0
+  const [startHour, startMinute] = String(startTime).slice(0, 5).split(':').map(Number)
+  const [endHour, endMinute] = String(endTime).slice(0, 5).split(':').map(Number)
+  const start = startHour * 60 + startMinute, end = endHour * 60 + endMinute
+  if (![start, end].every(Number.isFinite)) return 0
+  const minutes = (end - start + 1440) % 1440
+  return (minutes || 1440) / 60
+}
 async function batchDetail(connection: any, id: number) {
   const [[batch]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, ClientID, SiteID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ?', [id])
   if (!batch) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
@@ -276,7 +285,16 @@ export async function listDtrRecords(event: any) {
       WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
       ORDER BY e.LastName, e.FirstName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
-        at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType
+        at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM attendance_duty flexible_duty
+          INNER JOIN shift_code flexible_shift ON flexible_shift.ShiftCodeID = flexible_duty.ShiftCodeID
+          WHERE flexible_duty.AttendanceID = at.AttendanceID AND flexible_shift.ShiftType = 'Flexible'
+        ) AND EXISTS (
+          SELECT 1 FROM attendance_duty scheduled_duty
+          INNER JOIN shift_code scheduled_shift ON scheduled_shift.ShiftCodeID = scheduled_duty.ShiftCodeID
+          WHERE scheduled_duty.AttendanceID = at.AttendanceID AND scheduled_shift.ShiftType <> 'Flexible'
+        ) THEN 1 ELSE 0 END AS IsStraightDuty
         FROM attendance at LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID LEFT JOIN holiday h ON h.HolidayID = at.HolidayID
         WHERE at.BatchID = ? ORDER BY at.EmployeeID, at.AttendanceDate`, [id])])
     return { batch, records, shifts, attendanceRows, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
@@ -471,6 +489,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     if (!enrollment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before applying a shift.' })
     const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
     if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
+    if (!shift.TimeIn || !shift.TimeOut) throw createError({ statusCode: 400, statusMessage: 'A Flexible shift without default times cannot be applied to every cutoff day. Import or enter its biometric times per duty instead.' })
     const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, periodStart, periodEnd])
     const currentByDate = new Map(currentRows.map(row => [databaseDate(row.AttendanceDate), row]))
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
@@ -630,6 +649,173 @@ async function importDtrAttendanceRows(event: any, body: { Rows?: unknown }, ses
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
+function importedDutyDuration(timeIn: string | null, timeOut: string | null) {
+  if (!timeIn || !timeOut) return 0
+  const start = new Date(timeIn.replace(' ', 'T')).getTime(), end = new Date(timeOut.replace(' ', 'T')).getTime()
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0
+  return Math.round(((end - start) / 3600000) * 100) / 100
+}
+
+function importedDutyHours(shift: any, attendanceDate: string, timeIn: string, timeOut: string, referenceShift?: any) {
+  const values = hourColumns.map(() => 0)
+  if (String(shift.ShiftType) === 'Flexible') {
+    const duration = importedDutyDuration(timeIn, timeOut)
+    const regularLimit = Number(shift.RegularHours || 0), otLimit = Number(shift.RegularOTCap || 0)
+    // An augmentation shorter than the regular block is extra work only. Once
+    // it reaches that block, the first block is regular and the remainder is OT.
+    const regularHours = duration >= regularLimit && regularLimit > 0 ? regularLimit : 0
+    const overtime = Math.max(0, duration - regularHours)
+    values[hourColumns.indexOf('RegularHours')] = regularHours
+    values[hourColumns.indexOf('OTHours')] = Math.min(overtime, otLimit)
+    values[hourColumns.indexOf('OTExtHours')] = Math.max(0, overtime - otLimit)
+    // A Flexible augmentation has no default time of its own. If it follows a
+    // scheduled duty on the same DTR date, use that duty's scheduled end as its
+    // import-only reference start to calculate late and undertime minutes.
+    if (referenceShift?.TimeIn && referenceShift?.TimeOut) {
+      const referenceStart = dateTimeForShift(attendanceDate, referenceShift.TimeOut, String(referenceShift.TimeOut).slice(0, 5) <= String(referenceShift.TimeIn).slice(0, 5))
+      const referenceStartDate = new Date(referenceStart.replace(' ', 'T'))
+      const referenceRegularEndDate = new Date(referenceStartDate.getTime() + regularLimit * 3600000)
+      const referenceEndDate = new Date(referenceStartDate.getTime() + (regularLimit + otLimit) * 3600000)
+      const actualIn = new Date(timeIn.replace(' ', 'T')), actualOut = new Date(timeOut.replace(' ', 'T'))
+      const rounded = (value: number) => Math.round(Math.max(0, value) * 100) / 100
+      // Late does not consume the employee's earned extension. The actual
+      // time out is compared directly with the reference shift end.
+      values[hourColumns.indexOf('RegularHours')] = Math.min(regularLimit, rounded((actualOut.getTime() - referenceStartDate.getTime()) / 3600000))
+      values[hourColumns.indexOf('OTHours')] = Math.min(otLimit, rounded((actualOut.getTime() - referenceRegularEndDate.getTime()) / 3600000))
+      values[hourColumns.indexOf('OTExtHours')] = rounded((actualOut.getTime() - referenceEndDate.getTime()) / 3600000)
+      values[hourColumns.indexOf('LateHours')] = rounded((actualIn.getTime() - referenceStartDate.getTime()) / 3600000)
+      values[hourColumns.indexOf('UndertimeHours')] = rounded((referenceEndDate.getTime() - actualOut.getTime()) / 3600000)
+    }
+  } else {
+    const regularLimit = Number(shift.RegularHours || 0), otLimit = Number(shift.RegularOTCap || 0)
+    const scheduledIn = dateTimeForShift(attendanceDate, shift.TimeIn)
+    const scheduledOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
+    const actualIn = new Date(timeIn.replace(' ', 'T')), actualOut = new Date(timeOut.replace(' ', 'T'))
+    const scheduledStart = new Date(scheduledIn.replace(' ', 'T')), scheduledEnd = new Date(scheduledOut.replace(' ', 'T'))
+    const regularEnd = new Date(scheduledStart.getTime() + regularLimit * 3600000)
+    const rounded = (value: number) => Math.round(Math.max(0, value) * 100) / 100
+    const workedThroughRegular = rounded((actualOut.getTime() - scheduledStart.getTime()) / 3600000)
+    const overtimeAfterRegular = rounded((actualOut.getTime() - regularEnd.getTime()) / 3600000)
+    values[hourColumns.indexOf('RegularHours')] = Math.min(regularLimit, workedThroughRegular)
+    values[hourColumns.indexOf('OTHours')] = Math.min(otLimit, overtimeAfterRegular)
+    // Time after the schedule's configured time out is extension, including minutes.
+    values[hourColumns.indexOf('OTExtHours')] = rounded((actualOut.getTime() - scheduledEnd.getTime()) / 3600000)
+    values[hourColumns.indexOf('LateHours')] = rounded((actualIn.getTime() - scheduledStart.getTime()) / 3600000)
+    values[hourColumns.indexOf('UndertimeHours')] = rounded((regularEnd.getTime() - actualOut.getTime()) / 3600000)
+  }
+  const nightHours = nightDifferentialHours(timeIn, timeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime)
+  // One flexible augmentation represents one extra duty, even when the raw
+  // biometric range crosses more than one calendar night.
+  values[hourColumns.indexOf('NightDiffHours')] = String(shift.ShiftType) === 'Flexible'
+    ? Math.min(nightHours, nightDifferentialWindowHours(shift.NDStartTime, shift.NDEndTime))
+    : nightHours
+  return values
+}
+
+async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown }, session: any) {
+  const id = batchId(event)
+  if (!Array.isArray(body.Rows) || !body.Rows.length) throw createError({ statusCode: 400, statusMessage: 'Choose an Excel file with at least one attendance row.' })
+  if (body.Rows.length > 1000) throw createError({ statusCode: 400, statusMessage: 'Import a maximum of 1,000 rows at a time.' })
+  const sourceRows = body.Rows as ImportedDtrRow[]
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
+    const [[enrollments], [shiftRows]] = await Promise.all([
+      connection.execute<any[]>(`SELECT de.EmployeeID, de.DeploymentID, de.AttendanceType, e.EmployeeNumber
+        FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
+        WHERE de.BatchID = ? FOR UPDATE`, [id]),
+      connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount,
+          NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE AgencyID = ? AND Status = 'Active' FOR UPDATE`, [batch.AgencyID]),
+    ])
+    const enrollmentById = new Map(enrollments.map((row: any) => [Number(row.EmployeeID), row]))
+    const enrollmentByNumber = new Map(enrollments.filter((row: any) => importKey(row.EmployeeNumber)).map((row: any) => [importKey(row.EmployeeNumber), row]))
+    const shiftByCode = new Map(shiftRows.map((row: any) => [importKey(row.ShiftCode), row]))
+    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd))
+    const clearedDutyAttendanceIds = new Set<number>(), affectedEmployeeIds = new Set<number>()
+    const issues: { row: number; reason: string }[] = []
+    let imported = 0, updated = 0, skipped = 0, blank = 0, cleared = 0
+    for (let index = 0; index < sourceRows.length; index++) {
+      const source = sourceRows[index] || {}, rowNumber = Number(source.RowNumber) || index + 2
+      const employeeValue = importText(source.EmployeeID), employeeNumber = importText(source.EmployeeNumber)
+      const attendanceDate = importText(source.AttendanceDate), shiftCode = importText(source.ShiftCode)
+      const skip = (reason: string) => { skipped++; if (issues.length < 12) issues.push({ row: rowNumber, reason }) }
+      let enrollment = null as any
+      const employeeId = importedEmployeeId(employeeValue)
+      if (employeeId) enrollment = enrollmentById.get(employeeId) || null
+      if (!enrollment) enrollment = enrollmentByNumber.get(importKey(employeeNumber || employeeValue)) || null
+      if (!enrollment) { skip('Employee ID / Employee No. is not in this DTR.'); continue }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
+      if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
+      const attendanceStatus = normalizeAttendanceStatus(source.AttendanceStatus), noWorkStatus = noWorkAttendanceStatuses.has(attendanceStatus)
+      const importedTimeIn = importText(source.TimeIn), importedTimeOut = importText(source.TimeOut)
+      // A shift code in the source is only a label.  Without both biometric
+      // timestamps, this employee did not work that row and the DTR stays blank.
+      if (!importedTimeIn || !importedTimeOut) {
+        blank++
+        const [[existingBlank]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
+        if (existingBlank && existingBlank.BatchID !== null && Number(existingBlank.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
+        const existingAttendanceId = Number(existingBlank?.AttendanceID || 0)
+        // Do not remove a valid earlier duty for the same employee/date when a
+        // second spreadsheet row is merely blank (for example, empty augmentation).
+        if (existingAttendanceId && Number(existingBlank.BatchID) === id && !clearedDutyAttendanceIds.has(existingAttendanceId)) {
+          await connection.execute('DELETE FROM attendance WHERE AttendanceID = ?', [existingAttendanceId])
+          affectedEmployeeIds.add(Number(enrollment.EmployeeID)); cleared++
+        }
+        continue
+      }
+      const shift = noWorkStatus ? null : shiftByCode.get(importKey(shiftCode))
+      if (!noWorkStatus && !shift) { skip(shiftCode ? `Shift code "${shiftCode}" does not exist or is inactive for this DTR agency.` : 'Shift code is blank.'); continue }
+      let timeIn: string | null = null, timeOut: string | null = null
+      try {
+        timeIn = noWorkStatus ? null : mysqlDateTime(importText(source.DateIn || attendanceDate) + ' ' + importedTimeIn, 'Time in')
+        timeOut = noWorkStatus ? null : mysqlDateTime(importText(source.DateOut || attendanceDate) + ' ' + importedTimeOut, 'Time out')
+        timeOut = normalizedOvernightTimeOut(timeIn, timeOut, shift)
+      } catch { skip('Date in/time in or date out/time out is invalid.'); continue }
+      if (!noWorkStatus && (!timeIn || !timeOut)) { skip('Time in and time out are required for this shift.'); continue }
+      if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) { skip('Time out must be after time in.'); continue }
+      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
+      if (existing && existing.BatchID !== null && Number(existing.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
+      let attendanceId = Number(existing?.AttendanceID || 0)
+      if (!attendanceId) {
+        const [result] = await connection.execute<any>(`INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${hourColumns.join(', ')}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, 1, ?, ?, NULL, NULL, ${hourColumns.map(() => '?').join(', ')}, NULL, ?, ?, 1, ?)`, [enrollment.EmployeeID, enrollment.DeploymentID, null, id, attendanceDate, ...hourColumns.map(() => 0), attendanceStatus, enrollment.AttendanceType, session.sub])
+        attendanceId = Number(result.insertId); imported++
+      } else updated++
+      if (!clearedDutyAttendanceIds.has(attendanceId)) {
+        await connection.execute('DELETE FROM attendance_duty WHERE AttendanceID = ?', [attendanceId])
+        clearedDutyAttendanceIds.add(attendanceId)
+      }
+      if (!noWorkStatus) {
+        let referenceShift: any = null
+        if (String(shift.ShiftType) === 'Flexible') {
+          const [[reference]] = await connection.execute<any[]>(`SELECT sc.TimeIn, sc.TimeOut
+            FROM attendance_duty ad INNER JOIN shift_code sc ON sc.ShiftCodeID = ad.ShiftCodeID
+            WHERE ad.AttendanceID = ? AND sc.ShiftType <> 'Flexible'
+            ORDER BY ad.TimeOut DESC LIMIT 1`, [attendanceId])
+          referenceShift = reference || null
+        }
+        const dutyValues = importedDutyHours(shift, attendanceDate, timeIn!, timeOut!, referenceShift)
+        await connection.execute(`INSERT INTO attendance_duty (AttendanceID, ShiftCodeID, SourceRowNumber, TimeIn, TimeOut, RegularHours, OTHours, OTExtHours, NightDiffHours, LateHours, UndertimeHours, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE ShiftCodeID = VALUES(ShiftCodeID), TimeIn = VALUES(TimeIn), TimeOut = VALUES(TimeOut), RegularHours = VALUES(RegularHours), OTHours = VALUES(OTHours), OTExtHours = VALUES(OTExtHours), NightDiffHours = VALUES(NightDiffHours), LateHours = VALUES(LateHours), UndertimeHours = VALUES(UndertimeHours), UpdatedBy = VALUES(CreatedBy)`, [attendanceId, shift.ShiftCodeID, rowNumber, timeIn, timeOut, dutyValues[hourColumns.indexOf('RegularHours')], dutyValues[hourColumns.indexOf('OTHours')], dutyValues[hourColumns.indexOf('OTExtHours')], dutyValues[hourColumns.indexOf('NightDiffHours')], dutyValues[hourColumns.indexOf('LateHours')], dutyValues[hourColumns.indexOf('UndertimeHours')], session.sub])
+      }
+      const [[summary]] = await connection.execute<any[]>(`SELECT COUNT(*) AS DutyCount, MIN(TimeIn) AS TimeIn, MAX(TimeOut) AS TimeOut,
+        MIN(ShiftCodeID) AS OnlyShiftCodeID, COALESCE(SUM(RegularHours), 0) AS RegularHours, COALESCE(SUM(OTHours), 0) AS OTHours,
+        COALESCE(SUM(OTExtHours), 0) AS OTExtHours, COALESCE(SUM(NightDiffHours), 0) AS NightDiffHours,
+        COALESCE(SUM(LateHours), 0) AS LateHours, COALESCE(SUM(UndertimeHours), 0) AS UndertimeHours
+        FROM attendance_duty WHERE AttendanceID = ? FOR UPDATE`, [attendanceId])
+      const baseValues = hourColumns.map(column => Number(summary[column] || 0))
+      const holiday = holidayHours(baseValues, attendanceStatus, summary.TimeIn, summary.TimeOut, holidays.get(attendanceDate))
+      const payableDays = noWorkStatus ? 1 : Math.max(1, Math.floor(Number(summary.RegularHours || 0) / 8))
+      const summaryShiftCodeId = Number(summary.DutyCount || 0) === 1 ? Number(summary.OnlyShiftCodeID) : null
+      await connection.execute(`UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = NULL, UpdatedBy = ? WHERE AttendanceID = ?`, [enrollment.DeploymentID, id, summaryShiftCodeId, payableDays, summary.TimeIn || null, summary.TimeOut || null, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub, attendanceId])
+      affectedEmployeeIds.add(Number(enrollment.EmployeeID))
+    }
+    for (const employeeId of affectedEmployeeIds) await syncAutoWdo(connection, batch, employeeId)
+    await connection.commit()
+    return { success: true, imported, updated, skipped, blank, cleared, issues }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
 export async function applyDtrShiftBatch(event: any) {
   const session = requireSession(event)
   const body = await readBody<{ EmployeeID?: unknown, ShiftCodeID?: unknown, OnlyEmpty?: unknown }>(event) || {}
@@ -643,7 +829,7 @@ export async function createDtrAttendance(event: any) {
   // server can process batch fills without needing to discover a newly added route.
   if (body.ApplyBatch === true) return applyDtrShiftBatchBody(event, body, session)
   if (body.ResetBatch === true) return resetDtrAttendanceBatchBody(event, body, session)
-  if (body.ImportRows === true) return importDtrAttendanceRows(event, body, session)
+  if (body.ImportRows === true) return importDtrAttendanceDutyRows(event, body, session)
   const employeeId = positiveId(body.EmployeeID, 'Employee'), attendanceDate = date(body.AttendanceDate, 'Attendance date')
   const requestedShiftCodeId = body.ShiftCodeID === '' || body.ShiftCodeID === null || body.ShiftCodeID === undefined ? null : positiveId(body.ShiftCodeID, 'Shift code')
   const attendanceStatus = normalizeAttendanceStatus(body.AttendanceStatus)

@@ -32,8 +32,8 @@ function resetForm(item: any = null) {
     ShiftCode: item?.ShiftCode || '',
     ShiftName: item?.ShiftName || '',
     ShiftType: item?.ShiftType || 'DS',
-    TimeIn: String(item?.TimeIn || '08:00').slice(0, 5),
-    TimeOut: String(item?.TimeOut || '17:00').slice(0, 5),
+    TimeIn: item?.TimeIn ? String(item.TimeIn).slice(0, 5) : (item?.ShiftType === 'Flexible' ? '' : '08:00'),
+    TimeOut: item?.TimeOut ? String(item.TimeOut).slice(0, 5) : (item?.ShiftType === 'Flexible' ? '' : '17:00'),
     RegularHours: item?.RegularHours ?? '8',
     RegularOTCap: item?.RegularOTCap ?? '4',
     WorkdayCount: item?.WorkdayCount ?? (item?.ShiftType === 'SS' ? '2' : '1'),
@@ -53,6 +53,10 @@ function add() {
 function edit(item: any) {
   resetForm(item)
   modalOpen.value = true
+}
+
+function onShiftTypeChange() {
+  if (form.value.ShiftType === 'Flexible') { form.value.TimeIn = ''; form.value.TimeOut = '' }
 }
 
 async function load(silent = false) {
@@ -160,13 +164,13 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
           <h2>{{ editing ? 'Edit shift code' : 'Add shift code' }}</h2>
           <label>Agency<select v-model="form.AgencyID" required><option value="">Select agency</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
           <div class="grid"><label>Shift code<input v-model.trim="form.ShiftCode" maxlength="20" placeholder="e.g. DS0700-1900" required /></label><label>Shift name<input v-model.trim="form.ShiftName" maxlength="100" placeholder="e.g. Day duty 7 AM–7 PM" required /></label></div>
-          <div class="grid"><label>Shift type<select v-model="form.ShiftType" required><option value="DS">DS — Day Shift</option><option value="NS">NS — Night Shift</option><option value="MS">MS — Mid Shift</option><option value="SS">SS — Straight Shift</option><option>Flexible</option></select></label><label>Status<select v-model="form.Status" required><option>Active</option><option>Inactive</option></select></label></div>
-          <div class="grid"><label>Time in<input v-model="form.TimeIn" type="time" required /></label><label>Time out<input v-model="form.TimeOut" type="time" required /></label></div>
+          <div class="grid"><label>Shift type<select v-model="form.ShiftType" required @change="onShiftTypeChange"><option value="DS">DS — Day Shift</option><option value="NS">NS — Night Shift</option><option value="MS">MS — Mid Shift</option><option value="SS">SS — Straight Shift</option><option>Flexible</option></select></label><label>Status<select v-model="form.Status" required><option>Active</option><option>Inactive</option></select></label></div>
+          <div class="grid"><label>{{form.ShiftType==='Flexible'?'Default time in (optional)':'Time in'}}<input v-model="form.TimeIn" type="time" :required="form.ShiftType!=='Flexible'" /></label><label>{{form.ShiftType==='Flexible'?'Default time out (optional)':'Time out'}}<input v-model="form.TimeOut" type="time" :required="form.ShiftType!=='Flexible'" /></label></div>
           <div class="grid"><label>Regular hours<input v-model="form.RegularHours" type="number" min="0" max="24" step="0.25" required /></label><label>Regular OT cap<input v-model="form.RegularOTCap" type="number" min="0" max="24" step="0.25" required /></label></div>
           <label>Payable DTR days<input v-model="form.WorkdayCount" type="number" min="1" max="31" step="1" required /></label>
           <label>Night Differential<select v-model="form.NDEnabled"><option value="0">Disabled</option><option value="1">Enabled for this shift code</option></select></label>
           <div v-if="form.NDEnabled === '1'" class="grid"><label>ND start time<input v-model="form.NDStartTime" type="time" required /></label><label>ND end time<input v-model="form.NDEndTime" type="time" required /></label></div>
-          <p class="hint">ND hours will later be calculated from actual Time In/Out and this shift code's own ND window, including qualifying overtime. No ND time is pre-filled.</p>
+          <p class="hint">Flexible shifts may leave default times blank; their hours come from imported biometric Time In/Out. A Flexible duty below its configured Regular Hours is treated as OT only. ND hours use actual Time In/Out and this shift code's own ND window.</p>
           <p v-if="error" class="error">{{ error }}</p>
           <footer><button type="button" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving…' : 'Save shift code' }}</button></footer>
         </form>
