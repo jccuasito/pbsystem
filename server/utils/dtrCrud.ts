@@ -275,7 +275,7 @@ export async function listDtrRecords(event: any) {
     await syncBatchHolidays(connection, batch, session.sub)
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
     const [[records], [shifts], [attendanceRows], [dutyRows]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
-      CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, p.PositionName, ed.DeploymentID, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
+      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
@@ -283,7 +283,7 @@ export async function listDtrRecords(event: any) {
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
       LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
       WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
-      ORDER BY e.LastName, e.FirstName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
+      ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
         at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
         CASE WHEN EXISTS (
@@ -297,7 +297,7 @@ export async function listDtrRecords(event: any) {
         ) THEN 1 ELSE 0 END AS IsStraightDuty
         FROM attendance at LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID LEFT JOIN holiday h ON h.HolidayID = at.HolidayID
         WHERE at.BatchID = ? ORDER BY at.EmployeeID, at.AttendanceDate`, [id]), connection.execute<any[]>(`SELECT at.EmployeeID, e.EmployeeNumber,
-          CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, at.AttendanceDate, at.AttendanceStatus,
+          CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, at.AttendanceDate, at.AttendanceStatus,
           COALESCE(duty_shift.ShiftCode, saved_shift.ShiftCode) AS ShiftCode,
           COALESCE(duty.TimeIn, at.TimeIn) AS TimeIn, COALESCE(duty.TimeOut, at.TimeOut) AS TimeOut,
           COALESCE(duty.SourceRowNumber, 0) AS SourceRowNumber
@@ -307,7 +307,7 @@ export async function listDtrRecords(event: any) {
           LEFT JOIN shift_code duty_shift ON duty_shift.ShiftCodeID = duty.ShiftCodeID
           LEFT JOIN shift_code saved_shift ON saved_shift.ShiftCodeID = at.ShiftCodeID
           WHERE at.BatchID = ? AND (duty.AttendanceDutyID IS NOT NULL OR at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL)
-          ORDER BY at.EmployeeID, at.AttendanceDate, duty.SourceRowNumber, at.AttendanceID`, [id])])
+          ORDER BY e.LastName, e.FirstName, e.MiddleName, at.AttendanceDate, duty.SourceRowNumber, at.AttendanceID`, [id])])
     return { batch, records, shifts, attendanceRows, dutyRows, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
   } finally { connection.release() }
 }
@@ -324,13 +324,13 @@ export async function listDtrEmployees(event: any) {
       const value = `%${query.search.trim()}%`; values.push(value, value, value, value)
       searchSql = ' AND (CAST(e.EmployeeID AS CHAR) LIKE ? OR e.EmployeeNumber LIKE ? OR e.FirstName LIKE ? OR e.LastName LIKE ?)' 
     }
-    const [employees] = await connection.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName, p.PositionName
+    const [employees] = await connection.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName
       FROM employee e INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN payroll_rate pr ON pr.AgencyPositionID = e.AgencyPositionID
       INNER JOIN client_rate cr ON cr.PayrollRateID = pr.PayrollRateID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
       WHERE e.Status = 'Active' AND ap.AgencyID = ? AND cr.ClientID = ? AND pr.Status = 'Active' AND cr.Status = 'Active'${searchSql}
-      GROUP BY e.EmployeeID, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName, p.PositionName ORDER BY e.LastName, e.FirstName`, values)
+      GROUP BY e.EmployeeID, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName, p.PositionName ORDER BY e.LastName, e.FirstName, e.MiddleName`, values)
     return { employees }
   } finally { connection.release() }
 }
