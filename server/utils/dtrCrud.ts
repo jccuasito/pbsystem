@@ -261,8 +261,8 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
       AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
     ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [batch.AgencyID, batch.ClientID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
   for (const employee of permanentEmployees) {
-    await connection.execute(`INSERT INTO attendance_dtr_employee (BatchID, EmployeeID, DeploymentID, AttendanceType, CreatedBy)
-      VALUES (?, ?, ?, ?, ?)
+    await connection.execute(`INSERT INTO attendance_dtr_employee (BatchID, EmployeeID, DeploymentID, AttendanceType, IsPermanentSite, CreatedBy)
+      VALUES (?, ?, ?, ?, 1, ?)
       ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID)`, [batch.BatchID, employee.EmployeeID, employee.DeploymentID, employee.DeploymentType, createdBy])
   }
 }
@@ -346,14 +346,14 @@ export async function listDtrRecords(event: any) {
     await syncPermanentSiteEmployees(connection, batch, session.sub)
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
     const [[records], [shifts], [attendanceRows], [dutyRows]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
-      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, ed.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
+      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
       LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
-      WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, ed.IsPermanentSite, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
+      WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, de.IsPermanentSite, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
       ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
         at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
@@ -434,7 +434,9 @@ export async function addDtrEmployee(event: any) {
         VALUES (?, ?, ?, ?, 0, ?, ?, 'Created from DTR attendance assignment', ?)`, [employeeId, rate.ClientRateID, batch.SiteID, deploymentType, batch.PeriodStart, batch.PeriodEnd, session.sub])
       deploymentId = result.insertId
     }
-    await connection.execute('INSERT INTO attendance_dtr_employee (BatchID, EmployeeID, DeploymentID, AttendanceType, CreatedBy) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID)', [id, employeeId, deploymentId, deploymentType, session.sub])
+    await connection.execute(`INSERT INTO attendance_dtr_employee (BatchID, EmployeeID, DeploymentID, AttendanceType, IsPermanentSite, CreatedBy)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID), AttendanceType = VALUES(AttendanceType), IsPermanentSite = VALUES(IsPermanentSite)`, [id, employeeId, deploymentId, deploymentType, isPermanentSite ? 1 : 0, session.sub])
     if (isPermanentSite) await syncPermanentSiteEmployees(connection, batch, session.sub)
     await connection.commit(); return { success: true, deploymentId }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
@@ -481,7 +483,7 @@ export async function updateDtrEmployeeType(event: any) {
     let deploymentId = Number(enrollment.DeploymentID), syncedAttendanceRows = 0
     if (isPermanentSite === true) {
       deploymentId = await promoteDtrEmployeeToPermanentSite(connection, batch, employeeId, effectiveType, deploymentId, session.sub)
-      await connection.execute('UPDATE attendance_dtr_employee SET DeploymentID = ? WHERE BatchID = ? AND EmployeeID = ?', [deploymentId, id, employeeId])
+      await connection.execute('UPDATE attendance_dtr_employee SET DeploymentID = ?, IsPermanentSite = 1 WHERE BatchID = ? AND EmployeeID = ?', [deploymentId, id, employeeId])
       await syncPermanentSiteEmployees(connection, batch, session.sub)
     } else if (isPermanentSite === false) {
       const [deploymentResult] = await connection.execute<any>(`UPDATE employee_deployment
@@ -489,6 +491,7 @@ export async function updateDtrEmployeeType(event: any) {
           Remarks = CASE WHEN Remarks IS NULL OR Remarks = '' THEN 'Set to cutoff-only from DTR assignment' ELSE Remarks END
         WHERE DeploymentID = ? AND EmployeeID = ?`, [batch.PeriodEnd, batch.PeriodEnd, deploymentId, employeeId])
       if (!deploymentResult.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee deployment was not found.' })
+      await connection.execute('UPDATE attendance_dtr_employee SET IsPermanentSite = 0 WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     }
     if (deploymentType) {
       await connection.execute('UPDATE attendance_dtr_employee SET AttendanceType = ? WHERE BatchID = ? AND EmployeeID = ?', [deploymentType, id, employeeId])

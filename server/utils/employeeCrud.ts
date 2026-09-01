@@ -414,7 +414,7 @@ async function dtrDeploymentAssignments() {
     `SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName, d.SiteID, s.SiteName,
       d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
       de.EmployeeID, e.EmployeeNumber, CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
-      de.AttendanceType, ed.DeploymentID, ed.IsPermanentSite, p.PositionName
+      de.AttendanceType, ed.DeploymentID, de.IsPermanentSite, p.PositionName
     FROM attendance_dtr d
     INNER JOIN attendance_dtr_employee de ON de.BatchID = d.BatchID
     INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
