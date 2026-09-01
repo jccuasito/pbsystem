@@ -279,7 +279,7 @@ function deploymentSql(filters: string[]) {
     "  CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,",
     '  a.AgencyName, p.PositionName, c.ClientName, s.SiteName,',
     '  sc.ShiftCode, sc.ShiftName,',
-    '  ed.DeploymentType, ed.StartDate, ed.EndDate,',
+    '  ed.DeploymentType, ed.IsPermanentSite, ed.StartDate, ed.EndDate,',
     "  CASE WHEN ed.EndDate IS NULL OR ed.EndDate >= CURDATE() THEN 'Active' ELSE 'Ended' END AS Status,",
     '  ed.ClientRateID, ed.SiteID, ed.SiteShiftID, ed.Remarks, ed.CreatedAt,',
     '  ap.AgencyPositionID, ap.AgencyID, ap.PositionID',
@@ -414,7 +414,7 @@ async function dtrDeploymentAssignments() {
     `SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName, d.SiteID, s.SiteName,
       d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
       de.EmployeeID, e.EmployeeNumber, CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
-      de.AttendanceType, ed.DeploymentID, p.PositionName
+      de.AttendanceType, ed.DeploymentID, ed.IsPermanentSite, p.PositionName
     FROM attendance_dtr d
     INNER JOIN attendance_dtr_employee de ON de.BatchID = d.BatchID
     INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
