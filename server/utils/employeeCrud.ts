@@ -275,7 +275,7 @@ async function deploymentLookups() {
 function deploymentSql(filters: string[]) {
   return [
     'SELECT',
-    '  ed.DeploymentID, ed.EmployeeID, e.EmployeeNumber,',
+    '  ed.DeploymentID, ed.EmployeeID, e.EmployeeNumber, current_ap.AgencyID AS CurrentEmployeeAgencyID,',
     "  CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,",
     '  a.AgencyName, p.PositionName, c.ClientName, s.SiteName,',
     '  sc.ShiftCode, sc.ShiftName,',
@@ -285,6 +285,7 @@ function deploymentSql(filters: string[]) {
     '  ap.AgencyPositionID, ap.AgencyID, ap.PositionID',
     'FROM employee_deployment ed',
     'INNER JOIN employee e ON e.EmployeeID = ed.EmployeeID',
+    'LEFT JOIN agency_position current_ap ON current_ap.AgencyPositionID = e.AgencyPositionID',
     'INNER JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID',
     'INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID',
     'INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID',

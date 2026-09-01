@@ -54,7 +54,15 @@ function cutoffLabel(start: any, end: any) {
   if (startDate.getFullYear() === endDate.getFullYear()) return `${month.format(startDate)} ${startDate.getDate()}–${month.format(endDate)} ${endDate.getDate()}, ${year.format(endDate)}`
   return `${month.format(startDate)} ${startDate.getDate()}, ${year.format(startDate)}–${month.format(endDate)} ${endDate.getDate()}, ${year.format(endDate)}`
 }
-function historyStatus(item: any, history: any[]) { if (item.Status === 'Active') return 'Active'; const newer = history.find((candidate: any) => String(candidate.StartDate) > String(item.StartDate)); return newer && (newer.AgencyID !== item.AgencyID || newer.ClientRateID !== item.ClientRateID) ? 'Transferred' : 'Ended' }
+function historyStatus(item: any, history: any[]) {
+  // A DTR assignment may be a technical deployment only. When the employee's
+  // current agency differs from this permanent deployment, show the real
+  // employment movement without treating the DTR row itself as a transfer.
+  if (item.CurrentEmployeeAgencyID && String(item.CurrentEmployeeAgencyID) !== String(item.AgencyID)) return 'Transferred'
+  if (item.Status === 'Active') return 'Active'
+  const newer = history.find((candidate: any) => String(candidate.StartDate) > String(item.StartDate))
+  return newer && (newer.AgencyID !== item.AgencyID || newer.ClientRateID !== item.ClientRateID) ? 'Transferred' : 'Ended'
+}
 function openDetails(group: any) { selectedEmployee.value = group; detailsOpen.value = true }
 function openEmployeeDetails(person: any) {
   const group = employeeGroups.value.find(candidate => String(candidate.EmployeeID) === String(person.EmployeeID))
