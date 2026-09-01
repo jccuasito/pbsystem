@@ -282,9 +282,14 @@ async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, em
   const rate = await matchingDtrRate(connection, employeeId, batch)
   const [[existingPermanent]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
     WHERE EmployeeID = ? AND ClientRateID = ? AND SiteID = ? AND IsPermanentSite = 1
-      AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
+      AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= DATE_SUB(?, INTERVAL 1 DAY))
     ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, rate.ClientRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
-  if (existingPermanent) return Number(existingPermanent.DeploymentID)
+  if (existingPermanent) {
+    await connection.execute(`UPDATE employee_deployment
+      SET DeploymentType = ?, EndDate = NULL
+      WHERE DeploymentID = ?`, [deploymentType, existingPermanent.DeploymentID])
+    return Number(existingPermanent.DeploymentID)
+  }
 
   if (currentDeploymentId) {
     const [[currentDeployment]] = await connection.execute<any[]>(`SELECT DeploymentID, Remarks FROM employee_deployment
@@ -487,9 +492,14 @@ export async function updateDtrEmployeeType(event: any) {
       await syncPermanentSiteEmployees(connection, batch, session.sub)
     } else if (isPermanentSite === false) {
       const [deploymentResult] = await connection.execute<any>(`UPDATE employee_deployment
-        SET IsPermanentSite = 0, EndDate = CASE WHEN EndDate IS NULL OR EndDate > ? THEN ? ELSE EndDate END,
+        SET IsPermanentSite = CASE WHEN StartDate >= ? THEN 0 ELSE IsPermanentSite END,
+          EndDate = CASE
+            WHEN StartDate < ? AND (EndDate IS NULL OR EndDate > DATE_SUB(?, INTERVAL 1 DAY)) THEN DATE_SUB(?, INTERVAL 1 DAY)
+            WHEN StartDate >= ? THEN ?
+            ELSE EndDate
+          END,
           Remarks = CASE WHEN Remarks IS NULL OR Remarks = '' THEN 'Set to cutoff-only from DTR assignment' ELSE Remarks END
-        WHERE DeploymentID = ? AND EmployeeID = ?`, [batch.PeriodEnd, batch.PeriodEnd, deploymentId, employeeId])
+        WHERE DeploymentID = ? AND EmployeeID = ?`, [batch.PeriodStart, batch.PeriodStart, batch.PeriodStart, batch.PeriodStart, batch.PeriodStart, batch.PeriodEnd, deploymentId, employeeId])
       if (!deploymentResult.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee deployment was not found.' })
       await connection.execute('UPDATE attendance_dtr_employee SET IsPermanentSite = 0 WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     }
