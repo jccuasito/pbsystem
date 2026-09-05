@@ -322,8 +322,9 @@ export async function updateDtrSitePolicy(event: any) {
       ON DUPLICATE KEY UPDATE DayShiftNDEnabled = VALUES(DayShiftNDEnabled), AutoBreakEnabled = VALUES(AutoBreakEnabled), DefaultBreakMinutes = VALUES(DefaultBreakMinutes), Status = 'Active'`,
     [dayShiftNDEnabled ? 1 : 0, autoBreakEnabled ? 1 : 0, defaultBreakMinutes, batch.SiteID])
     const policy = await sitePolicyForBatch(connection, batch)
+    const recalculatedDayShiftRecords = await syncDayShiftNightDifferential(connection, batch, policy, session.sub)
     await connection.commit()
-    return { success: true, policy }
+    return { success: true, policy, recalculatedDayShiftRecords }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -665,6 +666,29 @@ async function syncBatchHolidays(connection: any, batch: any, updatedBy: number)
     const differs = Number(row.HolidayID || 0) !== Number(next.holidayId || 0) || holidayHourColumns.some(column => Number(row[column] || 0) !== Number(next.values[hourColumns.indexOf(column)] || 0))
     if (!differs) continue
     await connection.execute(`UPDATE attendance SET HolidayID = ?, ${holidayHourColumns.map(column => `${column} = ?`).join(', ')}, UpdatedBy = ? WHERE AttendanceID = ?`, [next.holidayId, ...holidayHourColumns.map(column => next.values[hourColumns.indexOf(column)]), updatedBy, row.AttendanceID])
+    changed++
+  }
+  return changed
+}
+
+// A saved DS policy immediately persists the correct ND on existing Day Shift
+// attendance in this Draft cutoff. DATE_FORMAT intentionally returns local
+// timestamp strings, avoiding the MySQL Date-object timezone conversion that
+// would otherwise make ordinary 07:00–19:00 duty look like night work.
+async function syncDayShiftNightDifferential(connection: any, batch: any, policy: any, updatedBy: number) {
+  if (batch.Status !== 'Draft') return 0
+  const [attendanceRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.NightDiffHours, sc.ShiftType,
+    DATE_FORMAT(at.TimeIn, '%Y-%m-%d %H:%i:%s') AS TimeIn,
+    DATE_FORMAT(at.TimeOut, '%Y-%m-%d %H:%i:%s') AS TimeOut
+    FROM attendance at
+    INNER JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
+    WHERE at.BatchID = ? AND UPPER(sc.ShiftType) IN ('DS', 'DAY')
+    FOR UPDATE`, [batch.BatchID])
+  let changed = 0
+  for (const row of attendanceRows) {
+    const nightDiffHours = shiftNightDifferentialHours(row.TimeIn, row.TimeOut, row, policy)
+    if (Number(row.NightDiffHours || 0) === nightDiffHours) continue
+    await connection.execute('UPDATE attendance SET NightDiffHours = ?, UpdatedBy = ? WHERE AttendanceID = ?', [nightDiffHours, updatedBy, row.AttendanceID])
     changed++
   }
   return changed
