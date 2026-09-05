@@ -34,6 +34,12 @@ function optionalBoolean(value: unknown, label: string) {
   throw createError({ statusCode: 400, statusMessage: `${label} must be on or off.` })
 }
 
+function wholeMinutes(value: unknown, label: string) {
+  const minutes = Number(value)
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 240) throw createError({ statusCode: 400, statusMessage: `${label} must be a whole number from 0 to 240.` })
+  return minutes
+}
+
 async function validateAssignment(connection: any, agencyId: number, clientId: number, siteId: number) {
   const [[clientRate]] = await connection.execute<any[]>(
     `SELECT cr.ClientRateID
@@ -249,6 +255,78 @@ async function batchDetail(connection: any, id: number) {
   return batch
 }
 
+async function sitePolicyForBatch(connection: any, batch: any) {
+  const [[policy]] = await connection.execute<any[]>(`SELECT
+      COALESCE(sp.DayShiftNDEnabled, 0) AS DayShiftNDEnabled,
+      COALESCE(sp.AutoBreakEnabled, 0) AS AutoBreakEnabled,
+      COALESCE(sp.DefaultBreakMinutes, 0) AS DefaultBreakMinutes
+    FROM site s
+    LEFT JOIN site_policy sp ON sp.SiteID = s.SiteID AND sp.Status = 'Active'
+    WHERE s.SiteID = ?`, [batch.SiteID])
+  return policy || { DayShiftNDEnabled: 0, AutoBreakEnabled: 0, DefaultBreakMinutes: 0 }
+}
+
+function autoBreakHours(policy: any) {
+  if (Number(policy?.AutoBreakEnabled) !== 1) return 0
+  return Math.round(Math.max(0, Number(policy?.DefaultBreakMinutes || 0)) / 60 * 100) / 100
+}
+
+function applyAutoBreak(values: number[], policy: any) {
+  const breakHours = autoBreakHours(policy)
+  if (!breakHours) return values
+  const result = [...values]
+  result[hourColumns.indexOf('BreakHours')] = breakHours
+  let remaining = breakHours
+  for (const column of ['OTExtHours', 'OTHours', 'RegularHours'] as const) {
+    const index = hourColumns.indexOf(column)
+    const deduction = Math.min(Math.max(0, Number(result[index] || 0)), remaining)
+    result[index] = Math.round((Number(result[index] || 0) - deduction) * 100) / 100
+    remaining = Math.round((remaining - deduction) * 100) / 100
+    if (!remaining) break
+  }
+  return result
+}
+
+function isDayShift(shift: any) { return ['DS', 'DAY'].includes(String(shift?.ShiftType || '').toUpperCase()) }
+
+function shiftNightDifferentialHours(timeIn: string | null, timeOut: string | null, shift: any, policy: any) {
+  // DS is the site's exception: the enabled site policy uses the standard
+  // statutory window. All other shift types remain fully shift-code based.
+  if (isDayShift(shift)) return nightDifferentialHours(timeIn, timeOut, Number(policy?.DayShiftNDEnabled) === 1, '22:00', '06:00')
+  return nightDifferentialHours(timeIn, timeOut, shift?.NDEnabled, shift?.NDStartTime, shift?.NDEndTime)
+}
+
+export async function getDtrSitePolicy(event: any) {
+  const session = requireSession(event); void session.sub
+  const batch = await batchDetail(pool, batchId(event))
+  return { batch, policy: await sitePolicyForBatch(pool, batch) }
+}
+
+export async function updateDtrSitePolicy(event: any) {
+  const session = requireSession(event)
+  const id = batchId(event), body = await readBody<Record<string, unknown>>(event) || {}
+  const dayShiftNDEnabled = optionalBoolean(body.DayShiftNDEnabled, 'Day shift Night Differential')
+  const autoBreakEnabled = optionalBoolean(body.AutoBreakEnabled, 'Automatic break')
+  if (dayShiftNDEnabled === null || autoBreakEnabled === null || body.DefaultBreakMinutes === undefined) throw createError({ statusCode: 400, statusMessage: 'Day shift Night Differential, automatic break, and break minutes are required.' })
+  const defaultBreakMinutes = wholeMinutes(body.DefaultBreakMinutes, 'Break minutes')
+  if (autoBreakEnabled && defaultBreakMinutes === 0) throw createError({ statusCode: 400, statusMessage: 'Enter break minutes before enabling the automatic break.' })
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    await connection.execute(`INSERT INTO site_policy
+      (SiteID, NDEnabled, NDStartTime, NDEndTime, DayShiftNDEnabled, AutoBreakEnabled, DefaultBreakMinutes, GraceMinutes, LateAfterMinutes, ComputeLate, ComputeUndertime, ComputeOT, ComputeHoliday, ComputeRestDay, Status)
+      SELECT s.SiteID, COALESCE(v.NDEnabled, 0), v.NDStartTime, v.NDEndTime, ?, ?, ?, COALESCE(v.GraceMinutes, 0), COALESCE(v.LateAfterMinutes, 0), COALESCE(v.ComputeLate, 1), COALESCE(v.ComputeUndertime, 1), COALESCE(v.ComputeOT, 1), COALESCE(v.ComputeHoliday, 1), COALESCE(v.ComputeRestDay, 1), 'Active'
+      FROM site s LEFT JOIN vw_effective_site_policy v ON v.SiteID = s.SiteID
+      WHERE s.SiteID = ?
+      ON DUPLICATE KEY UPDATE DayShiftNDEnabled = VALUES(DayShiftNDEnabled), AutoBreakEnabled = VALUES(AutoBreakEnabled), DefaultBreakMinutes = VALUES(DefaultBreakMinutes), Status = 'Active'`,
+    [dayShiftNDEnabled ? 1 : 0, autoBreakEnabled ? 1 : 0, defaultBreakMinutes, batch.SiteID])
+    const policy = await sitePolicyForBatch(connection, batch)
+    await connection.commit()
+    return { success: true, policy }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
 async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy: unknown) {
   if (batch.Status !== 'Draft') return
   const [permanentEmployees] = await connection.execute<any[]>(`SELECT ed.EmployeeID, ed.DeploymentID, ed.DeploymentType
@@ -350,7 +428,7 @@ export async function listDtrRecords(event: any) {
     await syncBatchHolidays(connection, batch, session.sub)
     await syncPermanentSiteEmployees(connection, batch, session.sub)
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
-    const [[records], [shifts], [attendanceRows], [dutyRows]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
+    const [policy, [records], [shifts], [attendanceRows], [dutyRows]] = await Promise.all([sitePolicyForBatch(connection, batch), connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
@@ -385,7 +463,7 @@ export async function listDtrRecords(event: any) {
           WHERE at.BatchID = ? AND (duty.AttendanceDutyID IS NOT NULL OR at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL)
           ORDER BY e.LastName, e.FirstName, e.MiddleName, at.AttendanceDate, duty.SourceRowNumber, at.AttendanceID`, [id])])
     await connection.commit()
-    return { batch, records, shifts, attendanceRows, dutyRows, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
+    return { batch, policy, records, shifts, attendanceRows, dutyRows, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -601,10 +679,10 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
-    const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
+    const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd), policy = await sitePolicyForBatch(connection, batch)
     const [[enrollment]] = await connection.execute<any[]>('SELECT de.DeploymentID, de.AttendanceType FROM attendance_dtr_employee de WHERE de.BatchID = ? AND de.EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before applying a shift.' })
-    const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
+    const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
     if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     if (!shift.TimeIn || !shift.TimeOut) throw createError({ statusCode: 400, statusMessage: 'A Flexible shift without default times cannot be applied to every cutoff day. Import or enter its biometric times per duty instead.' })
     const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, periodStart, periodEnd])
@@ -615,7 +693,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     for (const attendanceDate of cutoffDates(periodStart, periodEnd)) {
       const shiftTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
       const shiftTimeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
-      const baseHourValues = hourColumns.map(column => column === 'RegularHours' ? Number(shift.RegularHours || 0) : column === 'OTHours' ? Number(shift.RegularOTCap || 0) : column === 'NightDiffHours' ? nightDifferentialHours(shiftTimeIn, shiftTimeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime) : 0)
+      const baseHourValues = applyAutoBreak(hourColumns.map(column => column === 'RegularHours' ? Number(shift.RegularHours || 0) : column === 'OTHours' ? Number(shift.RegularOTCap || 0) : column === 'NightDiffHours' ? shiftNightDifferentialHours(shiftTimeIn, shiftTimeOut, shift, policy) : 0), policy)
       const holiday = holidayHours(baseHourValues, 'Present', shiftTimeIn, shiftTimeOut, holidays.get(attendanceDate))
       const hourValues = holiday.values
       const current = currentByDate.get(attendanceDate)
@@ -777,7 +855,7 @@ function importedDutyDuration(timeIn: string | null, timeOut: string | null) {
   return Math.round(((end - start) / 3600000) * 100) / 100
 }
 
-function importedDutyHours(shift: any, attendanceDate: string, timeIn: string, timeOut: string, referenceShift?: any) {
+function importedDutyHours(shift: any, attendanceDate: string, timeIn: string, timeOut: string, policy: any, referenceShift?: any) {
   const values = hourColumns.map(() => 0)
   if (String(shift.ShiftType) === 'Flexible') {
     const duration = importedDutyDuration(timeIn, timeOut)
@@ -824,7 +902,7 @@ function importedDutyHours(shift: any, attendanceDate: string, timeIn: string, t
     values[hourColumns.indexOf('LateHours')] = rounded((actualIn.getTime() - scheduledStart.getTime()) / 3600000)
     values[hourColumns.indexOf('UndertimeHours')] = rounded((regularEnd.getTime() - actualOut.getTime()) / 3600000)
   }
-  const nightHours = nightDifferentialHours(timeIn, timeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime)
+  const nightHours = shiftNightDifferentialHours(timeIn, timeOut, shift, policy)
   // One flexible augmentation represents one extra duty, even when the raw
   // biometric range crosses more than one calendar night.
   values[hourColumns.indexOf('NightDiffHours')] = String(shift.ShiftType) === 'Flexible'
@@ -842,6 +920,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const policy = await sitePolicyForBatch(connection, batch)
     const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
     const [[enrollments], [shiftRows]] = await Promise.all([
       connection.execute<any[]>(`SELECT de.EmployeeID, de.DeploymentID, de.AttendanceType, e.EmployeeNumber
@@ -918,7 +997,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
             ORDER BY ad.TimeOut DESC LIMIT 1`, [attendanceId])
           referenceShift = reference || null
         }
-        const dutyValues = importedDutyHours(shift, attendanceDate, timeIn!, timeOut!, referenceShift)
+        const dutyValues = importedDutyHours(shift, attendanceDate, timeIn!, timeOut!, policy, referenceShift)
         await connection.execute(`INSERT INTO attendance_duty (AttendanceID, ShiftCodeID, SourceRowNumber, TimeIn, TimeOut, RegularHours, OTHours, OTExtHours, NightDiffHours, LateHours, UndertimeHours, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE ShiftCodeID = VALUES(ShiftCodeID), TimeIn = VALUES(TimeIn), TimeOut = VALUES(TimeOut), RegularHours = VALUES(RegularHours), OTHours = VALUES(OTHours), OTExtHours = VALUES(OTExtHours), NightDiffHours = VALUES(NightDiffHours), LateHours = VALUES(LateHours), UndertimeHours = VALUES(UndertimeHours), UpdatedBy = VALUES(CreatedBy)`, [attendanceId, shift.ShiftCodeID, rowNumber, timeIn, timeOut, dutyValues[hourColumns.indexOf('RegularHours')], dutyValues[hourColumns.indexOf('OTHours')], dutyValues[hourColumns.indexOf('OTExtHours')], dutyValues[hourColumns.indexOf('NightDiffHours')], dutyValues[hourColumns.indexOf('LateHours')], dutyValues[hourColumns.indexOf('UndertimeHours')], session.sub])
       }
       const [[summary]] = await connection.execute<any[]>(`SELECT COUNT(*) AS DutyCount, MIN(TimeIn) AS TimeIn, MAX(TimeOut) AS TimeOut,
@@ -926,7 +1005,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
         COALESCE(SUM(OTExtHours), 0) AS OTExtHours, COALESCE(SUM(NightDiffHours), 0) AS NightDiffHours,
         COALESCE(SUM(LateHours), 0) AS LateHours, COALESCE(SUM(UndertimeHours), 0) AS UndertimeHours
         FROM attendance_duty WHERE AttendanceID = ? FOR UPDATE`, [attendanceId])
-      const baseValues = hourColumns.map(column => Number(summary[column] || 0))
+      const baseValues = applyAutoBreak(hourColumns.map(column => Number(summary[column] || 0)), policy)
       const holiday = holidayHours(baseValues, attendanceStatus, summary.TimeIn, summary.TimeOut, holidays.get(attendanceDate))
       const payableDays = noWorkStatus ? 1 : Math.max(1, Math.floor(Number(summary.RegularHours || 0) / 8))
       const summaryShiftCodeId = Number(summary.DutyCount || 0) === 1 ? Number(summary.OnlyShiftCodeID) : null
@@ -962,22 +1041,28 @@ export async function createDtrAttendance(event: any) {
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const policy = await sitePolicyForBatch(connection, batch)
     if (attendanceDate < batch.PeriodStart || attendanceDate > batch.PeriodEnd) throw createError({ statusCode: 400, statusMessage: 'Attendance date must be inside the DTR cutoff.' })
     const [[deployment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     if (!deployment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before entering attendance.' })
     const attendanceType = deployment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular'
     let shift: any = null
     if (shiftCodeId) {
-      const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, TimeIn, TimeOut, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
+      const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, ShiftType, TimeIn, TimeOut, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
       shift = activeShift
       if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     }
     const timeIn = noWorkStatus ? null : mysqlDateTime(body.TimeIn, 'Time in')
     const timeOut = noWorkStatus ? null : normalizedOvernightTimeOut(timeIn, mysqlDateTime(body.TimeOut, 'Time out'), shift)
     if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) throw createError({ statusCode: 400, statusMessage: 'Time out must be after time in. For an overnight shift, use the next calendar date.' })
+    // ND is always time-window based for a selected shift. The site setting only
+    // gates Day Shift; NS/MS/SS/Flexible keep their shift-code ND behavior.
+    const manualValues = hourColumns.map(column => column === 'NightDiffHours' && shift
+      ? shiftNightDifferentialHours(timeIn, timeOut, shift, policy)
+      : hours(body[column], column))
     const baseValues = noWorkStatus
       ? hourColumns.map(() => 0)
-      : hourColumns.map(column => column === 'NightDiffHours' && shift ? nightDifferentialHours(timeIn, timeOut, shift.NDEnabled, shift.NDStartTime, shift.NDEndTime) : hours(body[column], column))
+      : body.ApplySitePolicy === true && shift ? applyAutoBreak(manualValues, policy) : manualValues
     const matchingHolidays = await activeHolidaysByDate(connection, [attendanceDate])
     const holiday = holidayHours(baseValues, attendanceStatus, timeIn, timeOut, matchingHolidays.get(attendanceDate))
     const values = holiday.values
