@@ -9,13 +9,31 @@ const selectedEmployee = ref<any | null>(null), selectedRoster = ref<any | null>
 const employeeSearch = ref(''), agencyFilter = ref(''), clientFilter = ref(''), siteFilter = ref(''), cutoffFilter = ref('')
 const form = ref({ EmployeeID: '', ClientRateID: '', SiteID: '', SiteShiftID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' })
 
+function dateAfter(value: any, days: number) { const date = new Date(`${String(value).slice(0, 10)}T00:00:00`); date.setDate(date.getDate() + days); return date }
+function sameOrNextDay(left: any, right: any) { return !left || dateAfter(right, 1).getTime() >= new Date(`${String(left).slice(0, 10)}T00:00:00`).getTime() }
+function consolidatedPermanentHistory(entries: any[]) {
+  const ordered = [...entries].sort((a, b) => String(a.StartDate).localeCompare(String(b.StartDate)) || Number(a.DeploymentID) - Number(b.DeploymentID))
+  const timeline: any[] = []
+  for (const item of ordered) {
+    const previous = timeline[timeline.length - 1]
+    const sameSite = previous && String(previous.AgencyID) === String(item.AgencyID) && String(previous.SiteID) === String(item.SiteID)
+    if (sameSite && sameOrNextDay(item.StartDate, previous.EndDate)) {
+      previous.EndDate = !previous.EndDate || !item.EndDate ? null : String(previous.EndDate) > String(item.EndDate) ? previous.EndDate : item.EndDate
+      previous.DeploymentType = item.DeploymentType
+      previous.Status = item.Status === 'Active' || previous.Status === 'Active' ? 'Active' : previous.Status
+      previous.Remarks = previous.Remarks || item.Remarks
+      continue
+    }
+    timeline.push({ ...item, DeploymentID: `permanent-${item.DeploymentID}` })
+  }
+  return timeline.sort((a, b) => String(b.StartDate).localeCompare(String(a.StartDate)))
+}
 const employeeGroups = computed(() => {
   const groups = new Map<string, any>()
-  // A permanent timeline is site-assignment history, not one row per DTR cutoff.
-  // Cutoff-only enrollments, including old DTR-created technical deployments, remain
-  // visible in the separate DTR attendance history below.
+  // A permanent timeline is one continuous site assignment, never one record per cutoff.
+  // The raw cutoff-by-cutoff roster stays visible in the separate DTR attendance history.
   for (const item of items.value.filter(item => Number(item.IsPermanentSite) === 1)) { const key = String(item.EmployeeID); if (!groups.has(key)) groups.set(key, { ...item, history: [] }); groups.get(key).history.push(item) }
-  return Array.from(groups.values()).map(group => { group.history.sort((a: any, b: any) => String(b.StartDate).localeCompare(String(a.StartDate)) || Number(b.DeploymentID) - Number(a.DeploymentID)); group.current = group.history.find((item: any) => item.Status === 'Active') || group.history[0]; return group })
+  return Array.from(groups.values()).map(group => { group.history = consolidatedPermanentHistory(group.history); group.current = group.history.find((item: any) => item.Status === 'Active') || group.history[0]; return group })
 })
 const cutoffOptions = computed(() => {
   const values = new Map<string, any>()
