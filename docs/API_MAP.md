@@ -109,5 +109,7 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 
 **DTR straight-duty display rule.** `GET /api/attendance/dtr/:id/records` returns `IsStraightDuty: 1` when one employee/date contains both a scheduled duty and a Flexible augmentation duty in `attendance_duty`. `DtrAttendanceWorkspace.vue` renders that date as green `SS`; the raw duties and calculated payroll hours are unchanged.
 
+**DTR holiday credit rule.** A worked Legal or Special holiday is credited once per employee/calendar day, including straight duty or augmentation: maximum 8 holiday hours, 4 holiday OT hours, and 1 Total Day. Actual attendance-duty hours remain unchanged.
+
 - `database/rebuild-employee-deployment.sql` — recovery-only migration for a corrupt or missing `employee_deployment` InnoDB tablespace. It recreates the deployment schema with an optional `SiteShiftID`; it intentionally does not recreate lost deployment rows.
 - `database/recover-known-deployments.sql` — one-time, idempotent recovery data that restores the two verified Jhoncharls deployments and re-links the surviving August 1–15 attendance records to DeploymentID 1.
