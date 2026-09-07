@@ -770,6 +770,22 @@ async function resetDtrAttendanceBatchBody(event: any, body: { EmployeeID?: unkn
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
+async function clearDtrAttendanceBody(event: any, body: { EmployeeID?: unknown, AttendanceDate?: unknown }, session: any) {
+  const id = batchId(event)
+  const employeeId = positiveId(body.EmployeeID, 'Employee'), attendanceDate = date(body.AttendanceDate, 'Attendance date')
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const [[enrollment]] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
+    if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
+    const [result] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate = ?', [id, employeeId, attendanceDate])
+    const wdoCount = await syncAutoWdo(connection, batch, employeeId)
+    await connection.commit()
+    return { success: true, deletedAttendanceRows: result.affectedRows, wdoCount }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
 type ImportedDtrRow = {
   RowNumber?: unknown
   EmployeeID?: unknown
@@ -1061,6 +1077,7 @@ export async function createDtrAttendance(event: any) {
   // server can process batch fills without needing to discover a newly added route.
   if (body.ApplyBatch === true) return applyDtrShiftBatchBody(event, body, session)
   if (body.ResetBatch === true) return resetDtrAttendanceBatchBody(event, body, session)
+  if (body.ClearAttendance === true) return clearDtrAttendanceBody(event, body, session)
   if (body.ImportRows === true) return importDtrAttendanceDutyRows(event, body, session)
   const employeeId = positiveId(body.EmployeeID, 'Employee'), attendanceDate = date(body.AttendanceDate, 'Attendance date')
   const requestedShiftCodeId = body.ShiftCodeID === '' || body.ShiftCodeID === null || body.ShiftCodeID === undefined ? null : positiveId(body.ShiftCodeID, 'Shift code')

@@ -111,5 +111,7 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 
 **DTR holiday credit rule.** A worked Legal or Special holiday is credited once per employee/calendar day, including straight duty or augmentation: maximum 8 holiday hours, 4 holiday OT hours, and 1 Total Day. Actual attendance-duty hours remain unchanged.
 
+**DTR clear-cell action.** `POST /api/attendance/dtr/:id/records` with `{ ClearAttendance: true, EmployeeID, AttendanceDate }` deletes only that editable employee/date attendance entry, recalculates its WDO marker, and returns the matrix cell to `Click to add`. The `No shift / manual` choice triggers this action for a saved cell; on an untouched cell it simply closes the form without creating an entry.
+
 - `database/rebuild-employee-deployment.sql` — recovery-only migration for a corrupt or missing `employee_deployment` InnoDB tablespace. It recreates the deployment schema with an optional `SiteShiftID`; it intentionally does not recreate lost deployment rows.
 - `database/recover-known-deployments.sql` — one-time, idempotent recovery data that restores the two verified Jhoncharls deployments and re-links the surviving August 1–15 attendance records to DeploymentID 1.
