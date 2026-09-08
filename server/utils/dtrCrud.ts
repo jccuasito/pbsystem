@@ -1107,9 +1107,13 @@ export async function createDtrAttendance(event: any) {
     const manualValues = hourColumns.map(column => column === 'NightDiffHours' && shift
       ? shiftNightDifferentialHours(timeIn, timeOut, shift, policy)
       : hours(body[column], column))
+    // A newly selected individual shift previews the break immediately in the UI.
+    // Preserve that same preview on save instead of deducting the break twice.
+    const previewAlreadyApplied = body.AutoBreakPreviewApplied === true
+      && Number(manualValues[hourColumns.indexOf('BreakHours')] || 0) === autoBreakHours(policy)
     const baseValues = noWorkStatus
       ? hourColumns.map(() => 0)
-      : body.ApplySitePolicy === true && shift ? applyAutoBreak(manualValues, policy) : manualValues
+      : body.ApplySitePolicy === true && shift && !previewAlreadyApplied ? applyAutoBreak(manualValues, policy) : manualValues
     const matchingHolidays = await activeHolidaysByDate(connection, [attendanceDate])
     const holiday = holidayHours(baseValues, attendanceStatus, timeIn, timeOut, matchingHolidays.get(attendanceDate))
     const values = holiday.values
