@@ -105,6 +105,10 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 | POST | `/api/attendance/holidays` | `holiday` | `app/pages/attendance/holiday-manager/index.vue` | Session required. Creates a Legal or Special holiday with date, recurring flag, and status. Rejects duplicate name/date pairs. Returns `{ id }`. |
 | PUT | `/api/attendance/holidays` | `holiday` | `app/pages/attendance/holiday-manager/index.vue` | Session required. Body `{ id, HolidayName, HolidayDate, HolidayType, Recurring, Status }`. Updates a holiday after date/type validation. |
 | DELETE | `/api/attendance/holidays` | `holiday` | `app/pages/attendance/holiday-manager/index.vue` | Session required. Body `{ id }`; soft-deactivates the holiday and returns `{ success: true }`. |
+**DTR reliever work-position rule.** `GET /api/attendance/dtr/:id/records` now returns `workPositions`: active position/rate choices limited to the DTR agency and client. `POST /api/attendance/dtr/:id/records` accepts optional `{ WorkAgencyPositionID, WorkPositionApplyThrough }` only when the site policy's `RelieverPositionOverrideEnabled` is on. It saves the actual position, client-rate source, and payroll/billing regular-rate snapshot on the individual attendance record; an optional apply-through date updates only existing worked rows for that employee in the selected range. `GET` and `PUT /api/attendance/dtr/:id/site-policy` include `RelieverPositionOverrideEnabled`. The DTR workspace exposes this as **Allow reliever position and rate override**.
+
+`database/dtr-reliever-position-rate-override.sql` adds the policy flag and attendance-level position/rate snapshot columns.
+
 # Database recovery
 
 **DTR straight-duty display rule.** `GET /api/attendance/dtr/:id/records` returns `IsStraightDuty: 1` when one employee/date contains both a scheduled duty and a Flexible augmentation duty in `attendance_duty`. `DtrAttendanceWorkspace.vue` renders that date as green `SS`; the raw duties and calculated payroll hours are unchanged.

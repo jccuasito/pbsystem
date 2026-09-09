@@ -7,8 +7,8 @@ type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-p
 type Config = { table: string; id: string; fields: string[]; listSql: string; lookups?: () => Promise<Record<string, unknown>> }
 
 const policyFields = ['NDEnabled', 'NDStartTime', 'NDEndTime', 'AutoBreakEnabled', 'DefaultBreakMinutes', 'GraceMinutes', 'LateAfterMinutes', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay', 'Status']
-const sitePolicyFields = ['NDEnabled', 'DayShiftNDEnabled', 'NDStartTime', 'NDEndTime', 'AutoBreakEnabled', 'DefaultBreakMinutes', 'GraceMinutes', 'LateAfterMinutes', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay', 'Status']
-const booleanFields = new Set(['NDEnabled', 'DayShiftNDEnabled', 'AutoBreakEnabled', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay'])
+const sitePolicyFields = ['NDEnabled', 'DayShiftNDEnabled', 'NDStartTime', 'NDEndTime', 'AutoBreakEnabled', 'DefaultBreakMinutes', 'RelieverPositionOverrideEnabled', 'GraceMinutes', 'LateAfterMinutes', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay', 'Status']
+const booleanFields = new Set(['NDEnabled', 'DayShiftNDEnabled', 'AutoBreakEnabled', 'RelieverPositionOverrideEnabled', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay'])
 const numberFields = new Set(['AgencyID', 'PositionID', 'RegionID', 'ClientID', 'SiteID', 'ShiftCodeID', 'DefaultBreakMinutes', 'GraceMinutes', 'LateAfterMinutes'])
 
 const activeAgencies = async () => { const [rows] = await pool.execute<any[]>('SELECT AgencyID, AgencyName FROM agency WHERE Status = \'Active\' ORDER BY AgencyName'); return { agencies: rows } }
