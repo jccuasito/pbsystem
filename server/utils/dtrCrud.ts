@@ -278,7 +278,10 @@ function applyAutoBreak(values: number[], policy: any) {
   const result = [...values]
   result[hourColumns.indexOf('BreakHours')] = breakHours
   let remaining = breakHours
-  for (const column of ['OTExtHours', 'OTHours', 'RegularHours'] as const) {
+  // Deduct the scheduled break before touching time earned beyond the shift.
+  // For a 09:00–18:00 shift (8 regular + 1 OT), a one-hour break consumes
+  // that scheduled OT hour; a real 18:30 time-out still earns 0.5 extension.
+  for (const column of ['OTHours', 'RegularHours', 'OTExtHours'] as const) {
     const index = hourColumns.indexOf(column)
     const deduction = Math.min(Math.max(0, Number(result[index] || 0)), remaining)
     result[index] = Math.round((Number(result[index] || 0) - deduction) * 100) / 100
