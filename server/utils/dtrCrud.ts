@@ -532,12 +532,14 @@ export async function listDtrRecords(event: any) {
         FROM attendance at LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID LEFT JOIN holiday h ON h.HolidayID = at.HolidayID
         WHERE at.BatchID = ? ORDER BY at.EmployeeID, at.AttendanceDate`, [id]), connection.execute<any[]>(`SELECT at.EmployeeID, e.EmployeeNumber,
           CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, at.AttendanceDate, at.AttendanceStatus,
-          COALESCE(duty_shift.ShiftCode, saved_shift.ShiftCode) AS ShiftCode,
-          COALESCE(duty.TimeIn, at.TimeIn) AS TimeIn, COALESCE(duty.TimeOut, at.TimeOut) AS TimeOut,
+          CASE WHEN COALESCE(duty_count.DutyCount, 0) <= 1 THEN COALESCE(saved_shift.ShiftCode, duty_shift.ShiftCode) ELSE duty_shift.ShiftCode END AS ShiftCode,
+          CASE WHEN COALESCE(duty_count.DutyCount, 0) <= 1 THEN at.TimeIn ELSE duty.TimeIn END AS TimeIn,
+          CASE WHEN COALESCE(duty_count.DutyCount, 0) <= 1 THEN at.TimeOut ELSE duty.TimeOut END AS TimeOut,
           COALESCE(duty.SourceRowNumber, 0) AS SourceRowNumber
           FROM attendance at
           INNER JOIN employee e ON e.EmployeeID = at.EmployeeID
           LEFT JOIN attendance_duty duty ON duty.AttendanceID = at.AttendanceID
+          LEFT JOIN (SELECT AttendanceID, COUNT(*) AS DutyCount FROM attendance_duty GROUP BY AttendanceID) duty_count ON duty_count.AttendanceID = at.AttendanceID
           LEFT JOIN shift_code duty_shift ON duty_shift.ShiftCodeID = duty.ShiftCodeID
           LEFT JOIN shift_code saved_shift ON saved_shift.ShiftCodeID = at.ShiftCodeID
           WHERE at.BatchID = ? AND (duty.AttendanceDutyID IS NOT NULL OR at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL)
@@ -1033,7 +1035,9 @@ function importedDutyHours(shift: any, attendanceDate: string, timeIn: string, t
     // Time after the schedule's configured time out is extension, including minutes.
     values[hourColumns.indexOf('OTExtHours')] = rounded((actualOut.getTime() - scheduledEnd.getTime()) / 3600000)
     values[hourColumns.indexOf('LateHours')] = rounded((actualIn.getTime() - scheduledStart.getTime()) / 3600000)
-    values[hourColumns.indexOf('UndertimeHours')] = rounded((regularEnd.getTime() - actualOut.getTime()) / 3600000)
+    // Early departure is measured against the entire scheduled shift, including
+    // its OT block, so exported 18:36 on a 07:00–19:00 shift reimports as 24 min.
+    values[hourColumns.indexOf('UndertimeHours')] = rounded((scheduledEnd.getTime() - actualOut.getTime()) / 3600000)
   }
   const nightHours = shiftNightDifferentialHours(timeIn, timeOut, shift, policy)
   // One flexible augmentation represents one extra duty, even when the raw

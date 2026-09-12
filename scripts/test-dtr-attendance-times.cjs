@@ -18,24 +18,27 @@ const philtob = { ShiftCodeID: 7, ShiftCode: 'DS0900-1800', ShiftType: 'DS', Tim
 const employee = { EmployeeID: 5, DeploymentType: 'Regular' }
 const record = { ...employee, AttendanceDate: '2026-09-01', AttendanceStatus: 'Present', ShiftCodeID: '7', TimeIn: '2026-09-01 09:23:00', TimeOut: '2026-09-01 18:00:00', RegularHours: 8, OTHours: 0, OTExtHours: 0, BreakHours: 1, LateHours: 0.38, UndertimeHours: 0, WorkAgencyPositionID: '2', WorkPayrollRegularRate: '500.00' }
 
-function workspace(shift = philtob, saved = record, sitePolicy = policy) {
+function workspace(shift = philtob, saved = record, sitePolicy = policy, exportResult) {
   const requests = []
+  const workbooks = []
   const scope = vue.effectScope()
   const context = {
+    Date,
     ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 11, PeriodStart: '2026-09-01', PeriodEnd: '2026-09-15' } }), defineEmits: () => () => {},
     module: { exports: {} }, require: name => name.includes('dtrAttendanceStatus') ? statusModule.exports : require(name),
+    xlsxForTest: { ...require('xlsx'), writeFile: workbook => workbooks.push(workbook) },
     $fetch: async (url, options) => {
       if (options) requests.push({ url, ...options })
-      return { records: [employee], attendanceRows: [saved], shifts: [shift], policy: sitePolicy }
+      return exportResult || { records: [employee], attendanceRows: [saved], shifts: [shift], policy: sitePolicy }
     },
   }
   vm.createContext(context)
-  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports = { dayForm, dayOpen, shifts, sitePolicy, attendanceRows, openDay, saveDay, onHourInput, recalculateHoursFromTimes, selectDayShift, statusCellClass };', { loader: 'ts', format: 'cjs' }).code, context))
+  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, shifts, sitePolicy, attendanceRows, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr };', { loader: 'ts', format: 'cjs' }).code, context))
   const state = context.module.exports
   state.shifts.value = [shift]
   state.sitePolicy.value = { ...sitePolicy }
   state.attendanceRows.value = [{ ...saved }]
-  return { state, requests, close: () => scope.stop() }
+  return { state, requests, workbooks, close: () => scope.stop() }
 }
 
 function backend() {
@@ -46,6 +49,73 @@ function backend() {
   return context.module.exports.calculate
 }
 const calculate = backend()
+
+test('manual 24-minute undertime and 56-minute late change timestamps and survive Excel export/reimport', async () => {
+  const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }
+  const harness = workspace(shift, { ...record, TimeIn: '2026-09-01 07:00', TimeOut: '2026-09-01 19:00', LateHours: 0, OTHours: 4, BreakHours: 0 }, { AutoBreakEnabled: 0 })
+  try {
+    const { state } = harness
+    state.openDay(employee, record.AttendanceDate)
+    state.dayForm.value.UndertimeMinutes = 24
+    state.onMinuteInput('UndertimeMinutes')
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 18:36')
+    assert.equal(state.dayForm.value.OTHours, 3.6)
+    assert.equal(state.dayForm.value.RegularHours, 8)
+    assert.equal(state.dayForm.value.UndertimeMinutes, 24)
+    state.dayForm.value.OTHours = 4
+    state.onHourInput('OTHours')
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 19:00')
+    assert.equal(state.dayForm.value.UndertimeMinutes, 0)
+    state.dayForm.value.UndertimeMinutes = 24
+    state.onMinuteInput('UndertimeMinutes')
+    state.dayForm.value.LateMinutes = 56
+    state.onMinuteInput('LateMinutes')
+    assert.equal(state.dayForm.value.TimeIn, '2026-09-01 07:56')
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 18:36')
+    state.onMinuteInput('UndertimeMinutes')
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 18:36')
+    await state.saveDay()
+    const body = harness.requests[0].body
+    assert.equal(body.UndertimeHours, 0.4)
+    assert.equal(body.LateHours, 56 / 60)
+    const exporter = workspace(shift, record, {}, { records: [employee], shifts: [shift], dutyRows: [{ ...body, ShiftCode: shift.ShiftCode }] })
+    try {
+      await exporter.state.exportDtr()
+      const XLSX = require('xlsx')
+      const bytes = XLSX.write(exporter.workbooks[0], { type: 'buffer', bookType: 'xlsx' })
+      const reopened = XLSX.read(bytes, { type: 'buffer' })
+      const exported = XLSX.utils.sheet_to_json(reopened.Sheets.DTR, { raw: false })[0]
+      assert.equal(exported['Time In'], '7:56')
+      assert.equal(exported['Time Out'], '18:36')
+      assert.equal(exported['Date In'], '1-Sep-26')
+      assert.equal(exported['Date Out'], '1-Sep-26')
+      const imported = calculate(shift, '2026-09-01 ' + exported['Time In'].padStart(5, '0'), '2026-09-01 ' + exported['Time Out'].padStart(5, '0'), { AutoBreakEnabled: 0 })
+      assert.equal(imported.UndertimeHours, 0.4)
+      assert.equal(Math.round(imported.LateHours * 60), 56)
+    } finally { exporter.close() }
+  } finally { harness.close() }
+})
+
+test('manual minute adjustments preserve overnight dates and the one-hour Philtob break', () => {
+  for (const [shift, sitePolicy, input, output, regular, ot] of [
+    [{ ...philtob, ShiftType: 'NS', TimeIn: '22:00', TimeOut: '10:00', RegularOTCap: 4 }, { AutoBreakEnabled: 0 }, '2026-09-01 22:00', '2026-09-02 09:36', 8, 3.6],
+    [philtob, policy, '2026-09-01 09:00', '2026-09-01 17:36', 7.6, 0],
+  ]) {
+    const harness = workspace(shift, { ...record, TimeIn: input, LateHours: 0 }, sitePolicy)
+    try {
+      harness.state.openDay(employee, record.AttendanceDate)
+      harness.state.dayForm.value.UndertimeMinutes = 24
+      harness.state.onMinuteInput('UndertimeMinutes')
+      assert.equal(harness.state.dayForm.value.TimeOut, output)
+      assert.equal(harness.state.dayForm.value.RegularHours, regular)
+      assert.equal(harness.state.dayForm.value.OTHours, ot)
+      assert.equal(harness.state.dayForm.value.UndertimeMinutes, 24)
+      harness.state.dayForm.value.UndertimeMinutes = 0
+      harness.state.onMinuteInput('UndertimeMinutes')
+      assert.equal(harness.state.dayForm.value.TimeOut.slice(-5), shift.TimeOut.slice(0, 5))
+    } finally { harness.close() }
+  }
+})
 
 test('automatic status uses half of regular hours, excludes ND/holiday duplication, and prioritizes Half-Day', () => {
   const base = { AttendanceStatus: 'Present', RegularHours: 4, OTHours: 0, LateHours: 0 }
