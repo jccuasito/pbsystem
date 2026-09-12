@@ -109,6 +109,12 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 
 `database/dtr-reliever-position-rate-override.sql` adds the policy flag and attendance-level position/rate snapshot columns.
 
+| Method | Path | Tables used | Caller | Request / response |
+| --- | --- | --- | --- | --- |
+| POST | `/api/attendance/dtr/:id/records` (reliever-position action) | `attendance_dtr`, `attendance_dtr_employee`, `attendance`, `site_policy`, `client_rate`, `payroll_rate`, `billing_rate`, `agency_position`, `position` | `app/components/DtrAttendanceWorkspace.vue` | Session required, editable Draft batch, site override enabled. Body `{ ApplyWorkPosition: true, EmployeeID, WorkAgencyPositionID, AttendanceDates: ['YYYY-MM-DD', ...] }`; legacy `{ StartDate, EndDate }` is also supported. Only existing worked rows for that employee within the cutoff qualify. Returns `{ success: true, updatedRows }`, counting newly assigned or changed positions. Rows already assigned to the same position retain their original five `Work*` snapshot values; unselected dates are unchanged. |
+
+**Reliever snapshot preservation.** Ordinary attendance saves preserve the stored `WorkAgencyPositionID`, `WorkClientRateID`, `WorkPositionName`, `WorkPayrollRegularRate`, and `WorkBillingRegularRate` when the position is omitted or unchanged, even if source rates were later edited/deactivated or the site override has since been disabled. A different position resolves and snapshots the rate effective for that worked date. Explicit `null`/empty position clears an override when enabled; saving a non-work status clears it. Client-supplied snapshot amounts are never trusted. The RP modal shows each date's saved position and auto-checks dates for the selected position. Its toolbar settings icon edits a draft flag: Cancel and failed saves leave RP visibility based on the persisted policy. `GET` site-policy returns `{ policy }`; `PUT` requires `{ DayShiftNDEnabled, AutoBreakEnabled, DefaultBreakMinutes, RelieverPositionOverrideEnabled }` and returns `{ success, policy, recalculatedDayShiftRecords }`.
+
 # Database recovery
 
 **DTR straight-duty display rule.** `GET /api/attendance/dtr/:id/records` returns `IsStraightDuty: 1` when one employee/date contains both a scheduled duty and a Flexible augmentation duty in `attendance_duty`. `DtrAttendanceWorkspace.vue` renders that date as green `SS`; the raw duties and calculated payroll hours are unchanged.

@@ -381,25 +381,31 @@ function workPositionValues(rate: any) {
 }
 
 async function applyWorkPositionThrough(connection: any, batch: any, employeeId: number, startDate: string, endDate: string, agencyPositionId: number, updatedBy: unknown) {
-  const [rows] = await connection.execute<any[]>(`SELECT AttendanceID, AttendanceDate FROM attendance
+  const [rows] = await connection.execute<any[]>(`SELECT AttendanceID, AttendanceDate, WorkAgencyPositionID FROM attendance
     WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate BETWEEN ? AND ?
-      AND AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever') FOR UPDATE`, [batch.BatchID, employeeId, startDate, endDate])
+      AND ${workedAttendanceCondition()} FOR UPDATE`, [batch.BatchID, employeeId, startDate, endDate])
+  let updatedRows = 0
   for (const row of rows) {
+    if (Number(row.WorkAgencyPositionID) === agencyPositionId) continue
     const rate = await matchingWorkPositionRate(connection, batch, agencyPositionId, databaseDate(row.AttendanceDate))
     await connection.execute(`UPDATE attendance SET WorkAgencyPositionID = ?, WorkClientRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [...workPositionValues(rate), updatedBy, row.AttendanceID])
+    updatedRows++
   }
-  return rows.length
+  return updatedRows
 }
 
 async function applyWorkPositionDates(connection: any, batch: any, employeeId: number, attendanceDates: string[], agencyPositionId: number, updatedBy: unknown) {
-  const [rows] = await connection.execute<any[]>(`SELECT AttendanceID, AttendanceDate FROM attendance
+  const [rows] = await connection.execute<any[]>(`SELECT AttendanceID, AttendanceDate, WorkAgencyPositionID FROM attendance
     WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate IN (${attendanceDates.map(() => '?').join(', ')})
-      AND AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever') FOR UPDATE`, [batch.BatchID, employeeId, ...attendanceDates])
+      AND ${workedAttendanceCondition()} FOR UPDATE`, [batch.BatchID, employeeId, ...attendanceDates])
+  let updatedRows = 0
   for (const row of rows) {
+    if (Number(row.WorkAgencyPositionID) === agencyPositionId) continue
     const rate = await matchingWorkPositionRate(connection, batch, agencyPositionId, databaseDate(row.AttendanceDate))
     await connection.execute(`UPDATE attendance SET WorkAgencyPositionID = ?, WorkClientRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [...workPositionValues(rate), updatedBy, row.AttendanceID])
+    updatedRows++
   }
-  return rows.length
+  return updatedRows
 }
 
 async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, employeeId: number, deploymentType: 'Regular' | 'Reliever', currentDeploymentId: number | null, createdBy: unknown) {
@@ -1170,11 +1176,9 @@ export async function createDtrAttendance(event: any) {
     const policy = await sitePolicyForBatch(connection, batch)
     if (attendanceDate < batch.PeriodStart || attendanceDate > batch.PeriodEnd) throw createError({ statusCode: 400, statusMessage: 'Attendance date must be inside the DTR cutoff.' })
     if (workPositionApplyThrough && (workPositionApplyThrough < attendanceDate || workPositionApplyThrough > batch.PeriodEnd)) throw createError({ statusCode: 400, statusMessage: 'Apply-through date must be within this DTR cutoff and not before the attendance date.' })
-    if (requestedWorkAgencyPositionId && Number(policy.RelieverPositionOverrideEnabled) !== 1) throw createError({ statusCode: 400, statusMessage: 'Reliever position and rate override is disabled for this DTR site.' })
     const [[deployment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     if (!deployment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before entering attendance.' })
     const attendanceType = deployment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular'
-    const workRate = noWorkStatus || !requestedWorkAgencyPositionId ? null : await matchingWorkPositionRate(connection, batch, requestedWorkAgencyPositionId, attendanceDate)
     let shift: any = null
     if (shiftCodeId) {
       const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, ShiftType, TimeIn, TimeOut, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
@@ -1202,8 +1206,17 @@ export async function createDtrAttendance(event: any) {
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
-    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
+    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, WorkAgencyPositionID, WorkClientRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
     if (existing && Number(existing.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR for this date.' })
+    // Attendance edits and reapplying the same position must retain the original
+    // snapshot, including after the site's override setting has been disabled.
+    const preserveWorkPosition = !noWorkStatus && existing && (body.WorkAgencyPositionID === undefined || (requestedWorkAgencyPositionId !== null && requestedWorkAgencyPositionId === Number(existing.WorkAgencyPositionID)))
+    const changingWorkPosition = !noWorkStatus && body.WorkAgencyPositionID !== undefined && Number(requestedWorkAgencyPositionId) !== Number(existing?.WorkAgencyPositionID || 0)
+    if ((changingWorkPosition || workPositionApplyThrough) && Number(policy.RelieverPositionOverrideEnabled) !== 1) throw createError({ statusCode: 400, statusMessage: 'Reliever position and rate override is disabled for this DTR site.' })
+    const workRate = preserveWorkPosition ? {
+      AgencyPositionID: existing.WorkAgencyPositionID, ClientRateID: existing.WorkClientRateID,
+      PositionName: existing.WorkPositionName, PayrollRegularRate: existing.WorkPayrollRegularRate, BillingRegularRate: existing.WorkBillingRegularRate,
+    } : noWorkStatus || !requestedWorkAgencyPositionId ? null : await matchingWorkPositionRate(connection, batch, requestedWorkAgencyPositionId, attendanceDate)
     if (existing) {
       await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkAgencyPositionID = ?, WorkClientRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
       const relieverPositionRows = workPositionApplyThrough && requestedWorkAgencyPositionId ? await applyWorkPositionThrough(connection, batch, employeeId, attendanceDate, workPositionApplyThrough, requestedWorkAgencyPositionId, session.sub) : 0
