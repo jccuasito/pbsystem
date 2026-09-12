@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import DtrAttendanceWorkspace from '~/components/DtrAttendanceWorkspace.vue'
-type Agency={AgencyID:number,AgencyName:string}; type Client={AgencyID:number,ClientID:number,ClientName:string}; type Site={SiteID:number,ClientID:number,SiteName:string}; type Dtr={BatchID:number,AgencyID:number,AgencyName:string,ClientID:number,ClientName:string,SiteID:number,SiteName:string,PeriodStart:string,PeriodEnd:string,Status:string,CreatedAt:string,PeopleCount:number}
+type Agency={AgencyID:number,AgencyName:string}; type Client={AgencyID:number,ClientID:number,ClientName:string}; type Site={SiteID:number,ClientID:number,SiteName:string}; type Dtr={BatchID:number,AgencyID:number,AgencyName:string,AgencyHasLogo?:number,ClientID:number,ClientName:string,SiteID:number,SiteName:string,SiteHasLogo?:number,PeriodStart:string,PeriodEnd:string,Status:string,CreatedAt:string,PeopleCount:number}
+const failedLogos=ref(new Set<string>())
+function logoKey(resource:'agency'|'site',id:number){return resource+'-'+id}
+function logoInitials(name:string){return name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase()||'—'}
 const now=new Date(), selectedYear=ref(String(now.getFullYear())), selectedCutoff=ref(''), search=ref(''), agencyId=ref(''), clientId=ref(''), siteId=ref(''), items=ref<Dtr[]>([]), agencies=ref<Agency[]>([]), clients=ref<Client[]>([]), sites=ref<Site[]>([]), loading=ref(false), saving=ref(false), error=ref(''), formOpen=ref(false), editing=ref<Dtr|null>(null), workspace=ref<Dtr|null>(null), summaryOpen=ref(false), summary=ref<any>(null)
 const form=reactive({AgencyID:'',ClientID:'',SiteID:'',PeriodStart:'',PeriodEnd:''})
 function cutoffOptions(year:number){return Array.from({length:12},(_,m)=>{const name=new Date(year,m).toLocaleString('en-PH',{month:'long'}), last=new Date(year,m+1,0).getDate(),p=`${year}-${String(m+1).padStart(2,'0')}`;return[{value:`${p}-01:${p}-15`,label:`${name} 1–15, ${year}`},{value:`${p}-16:${p}-${last}`,label:`${name} 16–${last}, ${year}`}]}).flat()}
@@ -38,8 +41,24 @@ function blurActions(event:FocusEvent){
     <thead><tr><th scope="col">DTR / Agency</th><th scope="col">Client / Site</th><th scope="col">Cutoff</th><th scope="col">People / Status</th><th scope="col" class="action-heading">Actions</th></tr></thead>
     <tbody>
       <tr v-for="i in items" :key="i.BatchID" class="dtr-list-row">
-        <td data-label="DTR / Agency"><strong class="cell-title">DTR-{{String(i.BatchID).padStart(4,'0')}}</strong><span class="cell-detail">{{i.AgencyName}}</span></td>
-        <td data-label="Client / Site"><strong class="cell-title">{{i.ClientName}}</strong><span class="cell-detail">{{i.SiteName}}</span></td>
+        <td data-label="DTR / Agency">
+          <div class="dtr-brand-cell">
+            <span class="dtr-logo">
+              <img v-if="Number(i.AgencyHasLogo)===1&&!failedLogos.has(logoKey('agency',i.AgencyID))" :src="'/api/organization/logo?resource=agency&id='+i.AgencyID" :alt="i.AgencyName+' logo'" width="40" height="40" loading="lazy" decoding="async" @error="failedLogos.add(logoKey('agency',i.AgencyID))">
+              <span v-else aria-hidden="true">{{logoInitials(i.AgencyName)}}</span>
+            </span>
+            <div class="dtr-brand-details"><strong class="cell-title">DTR-{{String(i.BatchID).padStart(4,'0')}}</strong><span class="cell-detail">{{i.AgencyName}}</span></div>
+          </div>
+        </td>
+        <td data-label="Client / Site">
+          <div class="dtr-brand-cell">
+            <span class="dtr-logo">
+              <img v-if="Number(i.SiteHasLogo)===1&&!failedLogos.has(logoKey('site',i.SiteID))" :src="'/api/organization/logo?resource=site&id='+i.SiteID" :alt="i.SiteName+' logo'" width="40" height="40" loading="lazy" decoding="async" @error="failedLogos.add(logoKey('site',i.SiteID))">
+              <span v-else aria-hidden="true">{{logoInitials(i.SiteName)}}</span>
+            </span>
+            <div class="dtr-brand-details"><strong class="cell-title">{{i.ClientName}}</strong><span class="cell-detail">{{i.SiteName}}</span></div>
+          </div>
+        </td>
         <td data-label="Cutoff"><strong class="cell-title">{{formatPeriod(i.PeriodStart,i.PeriodEnd)}}</strong><span class="cell-detail">Created {{formatDate(i.CreatedAt)}}</span></td>
         <td data-label="People / Status"><span class="people-count">{{i.PeopleCount}} {{Number(i.PeopleCount)===1?'person':'people'}}</span><span class="status">{{i.Status}}</span></td>
         <td class="dtr-action-cell">
@@ -85,6 +104,10 @@ function blurActions(event:FocusEvent){
 .dtr-page .dtr-list-table tr:last-child td { border-bottom: 0; }
 .dtr-page .cell-title { display: block; color: #18365f; font-size: 14px; font-weight: 700; line-height: 1.5; }
 .dtr-page .cell-detail { display: block; margin-top: 3px; color: #64738d; font-size: 12px; line-height: 1.5; }
+.dtr-page .dtr-brand-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dtr-page .dtr-brand-details { min-width: 0; }
+.dtr-page .dtr-logo { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; overflow: hidden; border: 1px solid #e1e8f2; border-radius: 9px; background: #f5f8fd; color: #536987; font-size: 12px; font-weight: 800; }
+.dtr-page .dtr-logo img { display: block; box-sizing: border-box; width: 100%; height: 100%; padding: 3px; object-fit: contain; background: #fff; }
 .dtr-page .people-count { display: block; margin-bottom: 6px; color: #28446e; }
 .dtr-page .dtr-list-table .empty { text-align: center; color: #64738d; padding: 36px 16px; }
 .dtr-page .status { display: inline-block; padding: 4px 9px; border-radius: 999px; background: #e8efff; color: #2548c8; font-size: 12px; font-weight: 800; }
