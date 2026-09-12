@@ -8,6 +8,9 @@ const { parse, compileScript, compileTemplate } = require('@vue/compiler-sfc')
 const vue = require('vue')
 
 const root = path.resolve(__dirname, '..')
+const statusModule = { exports: {} }
+vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, 'shared/utils/dtrAttendanceStatus.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code, { module: statusModule })
+const { automaticDtrAttendanceStatus } = statusModule.exports
 const filename = path.join(root, 'app/components/DtrAttendanceWorkspace.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
 const policy = { AutoBreakEnabled: 1, DefaultBreakMinutes: 60, RelieverPositionOverrideEnabled: 1, DayShiftNDEnabled: 0 }
@@ -20,14 +23,14 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy) {
   const scope = vue.effectScope()
   const context = {
     ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 11, PeriodStart: '2026-09-01', PeriodEnd: '2026-09-15' } }), defineEmits: () => () => {},
-    module: { exports: {} }, require,
+    module: { exports: {} }, require: name => name.includes('dtrAttendanceStatus') ? statusModule.exports : require(name),
     $fetch: async (url, options) => {
       if (options) requests.push({ url, ...options })
       return { records: [employee], attendanceRows: [saved], shifts: [shift], policy: sitePolicy }
     },
   }
   vm.createContext(context)
-  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports = { dayForm, dayOpen, shifts, sitePolicy, attendanceRows, openDay, saveDay, onHourInput, recalculateHoursFromTimes, selectDayShift };', { loader: 'ts', format: 'cjs' }).code, context))
+  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports = { dayForm, dayOpen, shifts, sitePolicy, attendanceRows, openDay, saveDay, onHourInput, recalculateHoursFromTimes, selectDayShift, statusCellClass };', { loader: 'ts', format: 'cjs' }).code, context))
   const state = context.module.exports
   state.shifts.value = [shift]
   state.sitePolicy.value = { ...sitePolicy }
@@ -43,6 +46,73 @@ function backend() {
   return context.module.exports.calculate
 }
 const calculate = backend()
+
+test('automatic status uses half of regular hours, excludes ND/holiday duplication, and prioritizes Half-Day', () => {
+  const base = { AttendanceStatus: 'Present', RegularHours: 4, OTHours: 0, LateHours: 0 }
+  assert.equal(automaticDtrAttendanceStatus(base, 8), 'Half-Day')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, RegularHours: 4.02 }, 8), 'Present')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, RegularHours: 3, LateHours: 0.5 }, 8), 'Half-Day')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, RegularHours: 8, LateHours: 0.5 }, 8), 'Late')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, SpecialHolidayHours: 4, NightDiffHours: 4 }, 8), 'Half-Day')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, RegularHours: 8 }, 16), 'Half-Day')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, RegularHours: 0 }, 8), 'Present')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, AttendanceStatus: 'Late', RegularHours: 8 }, 8), 'Present')
+  assert.equal(automaticDtrAttendanceStatus({ ...base, RegularHours: 8, TimeIn: '2026-09-01 13:00', TimeOut: '2026-09-01 17:00' }, 8), 'Half-Day')
+  for (const status of ['Absent', 'Rest Day', 'On-Leave', 'Reliever']) assert.equal(automaticDtrAttendanceStatus({ ...base, AttendanceStatus: status, LateHours: 1 }, 8), status)
+})
+
+test('two undertime minutes immediately change status, clear correctly, and persist on save', async () => {
+  const harness = workspace(philtob, { ...record, TimeIn: '2026-09-01 09:00', LateHours: 0 })
+  try {
+    const { state } = harness
+    state.openDay(employee, record.AttendanceDate)
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Present')
+    state.dayForm.value.UndertimeMinutes = 2
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Late')
+    assert.equal(state.statusCellClass(state.dayForm.value), 'status-late')
+    assert.equal(state.dayForm.value.LateMinutes, 0)
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 18:00')
+    state.dayForm.value.UndertimeMinutes = 0
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Present')
+    state.dayForm.value.LateMinutes = 1
+    state.dayForm.value.UndertimeMinutes = 2
+    state.dayForm.value.UndertimeMinutes = 0
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Late')
+    state.dayForm.value.LateMinutes = 0
+    state.dayForm.value.UndertimeMinutes = 2
+    await state.saveDay()
+    const body = harness.requests[0].body
+    assert.equal(body.AttendanceStatus, 'Late')
+    assert.equal(body.UndertimeHours, 2 / 60)
+    assert.equal(body.LateHours, 0)
+    assert.equal(automaticDtrAttendanceStatus({ ...body, AttendanceStatus: 'Present' }, 8), 'Late')
+    assert.equal(automaticDtrAttendanceStatus({ AttendanceStatus: 'Present', RegularHours: 4, UndertimeHours: 2 / 60 }, 8), 'Half-Day')
+    assert.equal(automaticDtrAttendanceStatus({ ...body, AttendanceStatus: 'Absent' }, 8), 'Absent')
+  } finally { harness.close() }
+})
+
+test('form status and bottom-line class follow time/late edits and are submitted on save', async () => {
+  const harness = workspace()
+  try {
+    const { state } = harness
+    state.openDay(employee, record.AttendanceDate)
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Late')
+    assert.equal(state.statusCellClass(state.dayForm.value), 'status-late')
+    state.dayForm.value.TimeIn = '2026-09-01 09:00'
+    state.dayForm.value.TimeOut = '2026-09-01 13:00'
+    state.recalculateHoursFromTimes()
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Half-Day')
+    assert.equal(state.statusCellClass(state.dayForm.value), 'status-half-day')
+    state.dayForm.value.LateMinutes = 30
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Half-Day')
+    await state.saveDay()
+    assert.equal(harness.requests[0].body.AttendanceStatus, 'Half-Day')
+    state.openDay(employee, record.AttendanceDate)
+    state.dayForm.value.LateMinutes = 0
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Present')
+    assert.equal(state.statusCellClass(state.dayForm.value), '')
+  } finally { harness.close() }
+})
 
 test('Vue script and template compile', () => {
   assert.deepEqual(errors, [])

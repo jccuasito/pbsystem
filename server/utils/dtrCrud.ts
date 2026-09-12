@@ -1,6 +1,8 @@
 import { createError, getQuery, getRouterParam, readBody } from 'h3'
+import type { PoolConnection } from 'mysql2/promise'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceStatus'
 
 type DtrBody = Record<string, unknown>
 
@@ -451,11 +453,32 @@ function assertEditableBatch(batch: any) {
   if (String(batch.Status).startsWith('Computed') || batch.Status === 'Locked' || batch.Status === 'Approved') throw createError({ statusCode: 409, statusMessage: 'This DTR is already computed or locked and cannot be changed.' })
 }
 
-// WDO is a persisted payroll marker, not a display-only total. A semi-monthly
-// cutoff gets one WDO once 14 days were worked and two once 15+ were worked.
-// The latest qualifying worked day(s) are marked so a status correction moves
-// the marker deterministically within the same transaction.
+// Reconcile Draft attendance using the same classification as the live form.
+async function syncAutomaticAttendanceStatuses(connection: PoolConnection, batch: any, employeeId?: number) {
+  if (batch.Status !== 'Draft') return
+  const [attendanceRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceStatus, at.TimeIn, at.TimeOut,
+      ${hourColumns.map(column => `at.${column}`).join(', ')},
+      COALESCE(sc.RegularHours, duty_shift.RegularHours) AS ShiftRegularHours
+    FROM attendance at
+    LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
+    LEFT JOIN (
+      SELECT ad.AttendanceID, MAX(ds.RegularHours) AS RegularHours
+      FROM attendance_duty ad INNER JOIN shift_code ds ON ds.ShiftCodeID = ad.ShiftCodeID
+      INNER JOIN attendance source_at ON source_at.AttendanceID = ad.AttendanceID
+      WHERE source_at.BatchID = ? GROUP BY ad.AttendanceID
+    ) duty_shift ON duty_shift.AttendanceID = at.AttendanceID
+    WHERE at.BatchID = ?${employeeId === undefined ? '' : ' AND at.EmployeeID = ?'} FOR UPDATE`,
+  employeeId === undefined ? [batch.BatchID, batch.BatchID] : [batch.BatchID, batch.BatchID, employeeId])
+  for (const row of attendanceRows) {
+    const status = automaticDtrAttendanceStatus(row, row.ShiftRegularHours)
+    if (status !== row.AttendanceStatus) await connection.execute('UPDATE attendance SET AttendanceStatus = ? WHERE AttendanceID = ?', [status, row.AttendanceID])
+  }
+}
+
+// WDO is a persisted payroll marker. The latest qualifying day(s) receive the
+// 14/15+ day marker, within the same transaction as attendance/status changes.
 async function syncAutoWdo(connection: any, batch: any, employeeId: number) {
+  await syncAutomaticAttendanceStatuses(connection, batch, employeeId)
   const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
   const [workedRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.WorkdayCount
     FROM attendance at
@@ -482,6 +505,7 @@ export async function listDtrRecords(event: any) {
     const batch = await batchDetail(connection, id)
     await syncBatchHolidays(connection, batch, session.sub)
     await syncPermanentSiteEmployees(connection, batch, session.sub)
+    await syncAutomaticAttendanceStatuses(connection, batch)
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
     const [policy, [records], [shifts], [attendanceRows], [dutyRows], [workPositions]] = await Promise.all([sitePolicyForBatch(connection, batch), connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
@@ -495,6 +519,7 @@ export async function listDtrRecords(event: any) {
       ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
         at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, at.WorkAgencyPositionID, at.WorkClientRateID, at.WorkPositionName, at.WorkPayrollRegularRate, at.WorkBillingRegularRate, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
+        COALESCE(sc.RegularHours, (SELECT MAX(status_shift.RegularHours) FROM attendance_duty status_duty INNER JOIN shift_code status_shift ON status_shift.ShiftCodeID = status_duty.ShiftCodeID WHERE status_duty.AttendanceID = at.AttendanceID)) AS ShiftRegularHours,
         CASE WHEN EXISTS (
           SELECT 1 FROM attendance_duty flexible_duty
           INNER JOIN shift_code flexible_shift ON flexible_shift.ShiftCodeID = flexible_duty.ShiftCodeID
