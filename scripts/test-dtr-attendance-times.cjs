@@ -50,6 +50,50 @@ function backend() {
 }
 const calculate = backend()
 
+test('DJA 07:23–18:02 retains 8 regular + 4 OT with separate 23 late / 58 undertime minutes', async () => {
+  const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }
+  const saved = { ...record, TimeIn: '2026-09-01 07:23', TimeOut: '2026-09-01 18:02', OTHours: 3.03, BreakHours: 0, UndertimeHours: 0.97 }
+  const harness = workspace(shift, saved, { AutoBreakEnabled: 0 })
+  try {
+    const { state } = harness
+    state.openDay(employee, record.AttendanceDate)
+    state.recalculateHoursFromTimes()
+    assert.equal(state.dayForm.value.RegularHours, 8)
+    assert.equal(state.dayForm.value.OTHours, 4)
+    assert.equal(state.dayForm.value.OTExtHours, 0)
+    assert.equal(state.dayForm.value.LateMinutes, 23)
+    assert.equal(state.dayForm.value.UndertimeMinutes, 58)
+    for (const field of ['RegularHours', 'OTHours']) state.onHourInput(field)
+    assert.equal(state.dayForm.value.TimeIn, saved.TimeIn)
+    assert.equal(state.dayForm.value.TimeOut, saved.TimeOut)
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Late')
+    await state.saveDay()
+    assert.equal(harness.requests[0].body.OTHours, 4)
+    const imported = calculate(shift, saved.TimeIn, saved.TimeOut, { AutoBreakEnabled: 0 })
+    assert.equal(imported.RegularHours, 8)
+    assert.equal(imported.OTHours, 4)
+    assert.equal(Math.round(imported.LateHours * 60), 23)
+    assert.equal(Math.round(imported.UndertimeHours * 60), 58)
+    // Half-Day is based on actual work, even with full gross allocations.
+    state.dayForm.value.TimeOut = '2026-09-01 11:23'
+    state.recalculateHoursFromTimes()
+    assert.equal(state.dayForm.value.RegularHours, 8)
+    assert.equal(state.dayForm.value.OTHours, 4)
+    assert.equal(state.dayForm.value.AttendanceStatus, 'Half-Day')
+    assert.equal(automaticDtrAttendanceStatus({ RegularHours: 8, OTHours: 4, UndertimeHours: 8 }, 8), 'Half-Day')
+  } finally { harness.close() }
+})
+
+test('referenced augmentation keeps gross hours while standalone Flexible uses actual duration', () => {
+  const shift = { ShiftType: 'Flexible', RegularHours: 8, RegularOTCap: 4 }
+  const result = calculate(shift, '2026-09-01 19:12', '2026-09-02 06:36', { AutoBreakEnabled: 0 }, { TimeIn: '07:00', TimeOut: '19:00' })
+  assert.equal(result.RegularHours, 8)
+  assert.equal(result.OTHours, 4)
+  assert.equal(result.LateHours, 0.2)
+  assert.equal(result.UndertimeHours, 0.4)
+  assert.equal(result.OTExtHours, 0)
+})
+
 test('manual 24-minute undertime and 56-minute late change timestamps and survive Excel export/reimport', async () => {
   const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }
   const harness = workspace(shift, { ...record, TimeIn: '2026-09-01 07:00', TimeOut: '2026-09-01 19:00', LateHours: 0, OTHours: 4, BreakHours: 0 }, { AutoBreakEnabled: 0 })
@@ -59,13 +103,13 @@ test('manual 24-minute undertime and 56-minute late change timestamps and surviv
     state.dayForm.value.UndertimeMinutes = 24
     state.onMinuteInput('UndertimeMinutes')
     assert.equal(state.dayForm.value.TimeOut, '2026-09-01 18:36')
-    assert.equal(state.dayForm.value.OTHours, 3.6)
+    assert.equal(state.dayForm.value.OTHours, 4)
     assert.equal(state.dayForm.value.RegularHours, 8)
     assert.equal(state.dayForm.value.UndertimeMinutes, 24)
     state.dayForm.value.OTHours = 4
     state.onHourInput('OTHours')
-    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 19:00')
-    assert.equal(state.dayForm.value.UndertimeMinutes, 0)
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 18:36')
+    assert.equal(state.dayForm.value.UndertimeMinutes, 24)
     state.dayForm.value.UndertimeMinutes = 24
     state.onMinuteInput('UndertimeMinutes')
     state.dayForm.value.LateMinutes = 56
@@ -92,14 +136,16 @@ test('manual 24-minute undertime and 56-minute late change timestamps and surviv
       const imported = calculate(shift, '2026-09-01 ' + exported['Time In'].padStart(5, '0'), '2026-09-01 ' + exported['Time Out'].padStart(5, '0'), { AutoBreakEnabled: 0 })
       assert.equal(imported.UndertimeHours, 0.4)
       assert.equal(Math.round(imported.LateHours * 60), 56)
+      assert.equal(imported.RegularHours, 8)
+      assert.equal(imported.OTHours, 4)
     } finally { exporter.close() }
   } finally { harness.close() }
 })
 
 test('manual minute adjustments preserve overnight dates and the one-hour Philtob break', () => {
   for (const [shift, sitePolicy, input, output, regular, ot] of [
-    [{ ...philtob, ShiftType: 'NS', TimeIn: '22:00', TimeOut: '10:00', RegularOTCap: 4 }, { AutoBreakEnabled: 0 }, '2026-09-01 22:00', '2026-09-02 09:36', 8, 3.6],
-    [philtob, policy, '2026-09-01 09:00', '2026-09-01 17:36', 7.6, 0],
+    [{ ...philtob, ShiftType: 'NS', TimeIn: '22:00', TimeOut: '10:00', RegularOTCap: 4 }, { AutoBreakEnabled: 0 }, '2026-09-01 22:00', '2026-09-02 09:36', 8, 4],
+    [philtob, policy, '2026-09-01 09:00', '2026-09-01 17:36', 8, 0],
   ]) {
     const harness = workspace(shift, { ...record, TimeIn: input, LateHours: 0 }, sitePolicy)
     try {

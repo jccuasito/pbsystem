@@ -1008,14 +1008,13 @@ function importedDutyHours(shift: any, attendanceDate: string, timeIn: string, t
     if (referenceShift?.TimeIn && referenceShift?.TimeOut) {
       const referenceStart = dateTimeForShift(attendanceDate, referenceShift.TimeOut, String(referenceShift.TimeOut).slice(0, 5) <= String(referenceShift.TimeIn).slice(0, 5))
       const referenceStartDate = new Date(referenceStart.replace(' ', 'T'))
-      const referenceRegularEndDate = new Date(referenceStartDate.getTime() + regularLimit * 3600000)
       const referenceEndDate = new Date(referenceStartDate.getTime() + (regularLimit + otLimit) * 3600000)
       const actualIn = new Date(timeIn.replace(' ', 'T')), actualOut = new Date(timeOut.replace(' ', 'T'))
       const rounded = (value: number) => Math.round(Math.max(0, value) * 100) / 100
       // Late does not consume the employee's earned extension. The actual
       // time out is compared directly with the reference shift end.
-      values[hourColumns.indexOf('RegularHours')] = Math.min(regularLimit, rounded((actualOut.getTime() - referenceStartDate.getTime()) / 3600000))
-      values[hourColumns.indexOf('OTHours')] = Math.min(otLimit, rounded((actualOut.getTime() - referenceRegularEndDate.getTime()) / 3600000))
+      values[hourColumns.indexOf('RegularHours')] = regularLimit
+      values[hourColumns.indexOf('OTHours')] = otLimit
       values[hourColumns.indexOf('OTExtHours')] = rounded((actualOut.getTime() - referenceEndDate.getTime()) / 3600000)
       values[hourColumns.indexOf('LateHours')] = rounded((actualIn.getTime() - referenceStartDate.getTime()) / 3600000)
       values[hourColumns.indexOf('UndertimeHours')] = rounded((referenceEndDate.getTime() - actualOut.getTime()) / 3600000)
@@ -1026,12 +1025,11 @@ function importedDutyHours(shift: any, attendanceDate: string, timeIn: string, t
     const scheduledOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
     const actualIn = new Date(timeIn.replace(' ', 'T')), actualOut = new Date(timeOut.replace(' ', 'T'))
     const scheduledStart = new Date(scheduledIn.replace(' ', 'T')), scheduledEnd = new Date(scheduledOut.replace(' ', 'T'))
-    const regularEnd = new Date(scheduledStart.getTime() + regularLimit * 3600000)
     const rounded = (value: number) => Math.round(Math.max(0, value) * 100) / 100
-    const workedThroughRegular = rounded((actualOut.getTime() - scheduledStart.getTime()) / 3600000)
-    const overtimeAfterRegular = rounded((actualOut.getTime() - regularEnd.getTime()) / 3600000)
-    values[hourColumns.indexOf('RegularHours')] = Math.min(regularLimit, workedThroughRegular)
-    values[hourColumns.indexOf('OTHours')] = Math.min(otLimit, overtimeAfterRegular)
+    // DTR stores scheduled allocations before late/undertime deductions. Keep
+    // both metrics separate for downstream payroll, without deducting twice.
+    values[hourColumns.indexOf('RegularHours')] = regularLimit
+    values[hourColumns.indexOf('OTHours')] = otLimit
     // Time after the schedule's configured time out is extension, including minutes.
     values[hourColumns.indexOf('OTExtHours')] = rounded((actualOut.getTime() - scheduledEnd.getTime()) / 3600000)
     values[hourColumns.indexOf('LateHours')] = rounded((actualIn.getTime() - scheduledStart.getTime()) / 3600000)

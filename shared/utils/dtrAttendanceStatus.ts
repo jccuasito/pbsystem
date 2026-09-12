@@ -39,12 +39,13 @@ export function automaticDtrAttendanceStatus(record: AttendanceStatusInput, regu
     amount(record.RestDayLegalHolidayHours) + amount(record.RestDayLegalHolidayOTHours),
     amount(record.RestDaySpecialHolidayHours) + amount(record.RestDaySpecialHolidayOTHours),
   )
-  // Scheduled allocations track late separately; remove it for classification.
-  let worked = Math.max(0, credited - late)
+  // Gross scheduled allocations keep deductions separate. Subtract them only
+  // for classification when actual timestamps are unavailable.
+  let worked = Math.max(0, credited - late - amount(record.UndertimeHours))
   const start = timestamp(record.TimeIn), end = timestamp(record.TimeOut)
   if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
     const actual = Math.max(0, (end - start) / 3600000 - amount(record.BreakHours))
-    worked = credited > 0 ? Math.min(worked, actual) : actual
+    worked = credited > 0 ? Math.min(Math.max(0, credited - late), actual) : actual
   }
   const regular = amount(regularHours)
   if (regular > 0 && worked > 0 && Math.round(worked * 60) <= Math.round(regular * 30)) return 'Half-Day'
