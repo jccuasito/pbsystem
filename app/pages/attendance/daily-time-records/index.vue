@@ -67,6 +67,8 @@ function blurActions(event:FocusEvent){
             <details class="dtr-action-menu" @keydown.esc.prevent="closeActions($event,true)" @focusout="blurActions">
               <summary class="secondary" :aria-label="'More actions for DTR-'+String(i.BatchID).padStart(4,'0')">More <span aria-hidden="true">⌄</span></summary>
               <div class="dtr-action-options" @click="closeActions($event)">
+                <button type="button" disabled title="View Details — coming soon">View Details</button>
+                <button type="button" disabled title="Break Time Reliever — coming soon">Add BTR</button>
                 <button type="button" @click="viewSummary(i)">View Summary DTR</button>
                 <button type="button" @click="compute(i,'payroll')">Compute to payroll</button>
                 <button type="button" @click="compute(i,'billing')">Compute to billing</button>
