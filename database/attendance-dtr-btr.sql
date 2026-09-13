@@ -1,0 +1,25 @@
+-- BTR is a separate ledger. Saving it never reduces attendance hour columns.
+CREATE TABLE IF NOT EXISTS attendance_dtr_btr (
+  BTRID INT NOT NULL AUTO_INCREMENT,
+  BatchID INT NOT NULL,
+  AttendanceDate DATE NOT NULL,
+  ReplacedEmployeeID INT NOT NULL,
+  RelieverEmployeeID INT NOT NULL,
+  Hours DECIMAL(5,2) NOT NULL,
+  Status ENUM('Active', 'Inactive') NOT NULL DEFAULT 'Active',
+  Revision INT NOT NULL DEFAULT 1,
+  CreatedBy INT NULL,
+  CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedBy INT NULL,
+  UpdatedAt DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (BTRID),
+  UNIQUE KEY uq_dtr_btr_pair (BatchID, AttendanceDate, ReplacedEmployeeID, RelieverEmployeeID),
+  KEY idx_dtr_btr_reliever (RelieverEmployeeID, AttendanceDate),
+  CONSTRAINT fk_dtr_btr_batch FOREIGN KEY (BatchID) REFERENCES attendance_dtr(BatchID) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_dtr_btr_replaced FOREIGN KEY (ReplacedEmployeeID) REFERENCES employee(EmployeeID) ON UPDATE CASCADE,
+  CONSTRAINT fk_dtr_btr_reliever FOREIGN KEY (RelieverEmployeeID) REFERENCES employee(EmployeeID) ON UPDATE CASCADE,
+  CONSTRAINT fk_dtr_btr_createdby FOREIGN KEY (CreatedBy) REFERENCES user(UserID) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_dtr_btr_updatedby FOREIGN KEY (UpdatedBy) REFERENCES user(UserID) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT chk_dtr_btr_hours CHECK (Hours > 0 AND Hours <= 24),
+  CONSTRAINT chk_dtr_btr_people CHECK (ReplacedEmployeeID <> RelieverEmployeeID)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

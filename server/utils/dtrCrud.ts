@@ -3,6 +3,7 @@ import type { PoolConnection } from 'mysql2/promise'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceStatus'
+import { assertDtrBtrReady } from './dtrBtrCrud'
 
 type DtrBody = Record<string, unknown>
 
@@ -160,9 +161,10 @@ export async function computeDtr(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[current]] = await connection.execute<any[]>('SELECT Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
+    const [[current]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
     if (current.Status === 'Locked' || current.Status === 'Approved') throw createError({ statusCode: 409, statusMessage: 'This DTR is locked and cannot be computed.' })
+    if (target === 'payroll') await assertDtrBtrReady(connection, current)
     const nextStatus = current.Status === 'Computed to Both'
       ? 'Computed to Both'
       : current.Status === 'Computed to Payroll' && target === 'billing' || current.Status === 'Computed to Billing' && target === 'payroll'
