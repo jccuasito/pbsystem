@@ -1,15 +1,15 @@
 import { createError, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { rateMoneyFields } from '../../shared/utils/rateFields'
 
 type Resource = 'payroll-rate' | 'billing-rate' | 'client-rate'
-const moneyFields = ['RegularRate', 'OTRate', 'NightDiffRate', 'RestDayRate', 'SpecialHolidayRate', 'LegalHolidayRate', 'SpecialHolidayOTRate', 'LegalHolidayOTRate', 'BreakDeduction', 'Allowance']
+const moneyFields = rateMoneyFields.map(({ key }) => key)
 const rateFields = ['AgencyPositionID', 'RegionID', ...moneyFields, 'EffectiveDate', 'Status']
 
 const rateListSql = (table: 'payroll_rate' | 'billing_rate', id: 'PayrollRateID' | 'BillingRateID') => `
   SELECT r.${id}, r.AgencyPositionID, a.AgencyName, p.PositionName, r.RegionID, rg.RegionCode, rg.RegionName,
-    r.RegularRate, r.OTRate, r.NightDiffRate, r.RestDayRate, r.SpecialHolidayRate, r.LegalHolidayRate,
-    r.SpecialHolidayOTRate, r.LegalHolidayOTRate, r.BreakDeduction, r.Allowance, r.EffectiveDate, r.Status
+    ${moneyFields.map(field => `r.${field}`).join(', ')}, r.EffectiveDate, r.Status
   FROM ${table} r
   INNER JOIN agency_position ap ON ap.AgencyPositionID = r.AgencyPositionID
   INNER JOIN agency a ON a.AgencyID = ap.AgencyID
@@ -38,7 +38,8 @@ function validId(value: unknown, field: string, optional = false) {
 function amount(value: unknown, field: string) {
   if (value === null || value === undefined || value === '') return 0
   const number = Number(value)
-  if (!Number.isFinite(number) || number < 0) throw createError({ statusCode: 400, statusMessage: `${field} must be a non-negative amount.` })
+  if (!['number', 'string'].includes(typeof value) || !Number.isFinite(number) || number < 0 || number > 99999999.99) throw createError({ statusCode: 400, statusMessage: `${field} must be an amount from 0 to 99,999,999.99.` })
+  if (Math.abs(number * 100 - Math.round(number * 100)) > 0.000001) throw createError({ statusCode: 400, statusMessage: `${field} supports up to two decimal places.` })
   return number
 }
 function status(value: unknown) {
@@ -46,8 +47,8 @@ function status(value: unknown) {
   if (value === 'Active' || value === 'Inactive') return value
   throw createError({ statusCode: 400, statusMessage: 'Status must be Active or Inactive.' })
 }
-function rateValues(body: Record<string, any>) {
-  return [validId(body.AgencyPositionID, 'AgencyPositionID'), validId(body.RegionID, 'RegionID', true), ...moneyFields.map((field) => amount(body[field], field)), typeof body.EffectiveDate === 'string' && body.EffectiveDate ? body.EffectiveDate : null, status(body.Status)]
+function rateValues(body: Record<string, any>, preserveOmittedAmounts = false) {
+  return [validId(body.AgencyPositionID, 'AgencyPositionID'), validId(body.RegionID, 'RegionID', true), ...moneyFields.map((field) => preserveOmittedAmounts && !Object.hasOwn(body, field) ? null : amount(body[field], field)), typeof body.EffectiveDate === 'string' && body.EffectiveDate ? body.EffectiveDate : null, status(body.Status)]
 }
 function rateTable(resource: Resource) { return resource === 'payroll-rate' ? { table: 'payroll_rate', id: 'PayrollRateID' } : { table: 'billing_rate', id: 'BillingRateID' } }
 
@@ -103,7 +104,7 @@ export async function updateRateResource(event: any) {
   const selected = resource(event); const body = await readBody<Record<string, any>>(event) || {}; const id = validId(body.id, 'id')
   if (selected !== 'client-rate') {
     const definition = rateTable(selected)
-    const [result] = await pool.execute<any>(`UPDATE ${definition.table} SET AgencyPositionID = ?, RegionID = ?, ${moneyFields.map((field) => `${field} = ?`).join(', ')}, EffectiveDate = ?, Status = ? WHERE ${definition.id} = ?`, [...rateValues(body), id])
+    const [result] = await pool.execute<any>(`UPDATE ${definition.table} SET AgencyPositionID = ?, RegionID = ?, ${moneyFields.map((field) => `${field} = COALESCE(?, ${field})`).join(', ')}, EffectiveDate = ?, Status = ? WHERE ${definition.id} = ?`, [...rateValues(body, true), id])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Rate not found.' })
     return { success: true }
   }
