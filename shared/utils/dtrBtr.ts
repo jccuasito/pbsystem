@@ -10,6 +10,17 @@ export type BtrAttendance = {
   RegularHours: number | string
   OTHours: number | string
 }
+export type BtrAttendanceDay = {
+  EmployeeID: number
+  AttendanceDate: string
+  AttendanceStatus: string
+  HasWork: boolean
+}
+export function btrAttendanceWarning(employeeId: number, date: string, attendance: BtrAttendanceDay[]): string {
+  const day = attendance.find(row => Number(row.EmployeeID) === Number(employeeId) && row.AttendanceDate === date)
+  if (day?.HasWork) return ''
+  return 'No worked attendance recorded for this REST employee on '+date+(day ? ' (status: '+day.AttendanceStatus+')' : '')+'. Check the date or update their DTR attendance.'
+}
 export type BtrEntry = {
   BTRID: number
   AttendanceDate: string

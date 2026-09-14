@@ -3,7 +3,7 @@ import type { PoolConnection } from 'mysql2/promise'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { resolveBtrEmployee, btrDate, btrHundredths, summarizeBtr } from '../../shared/utils/dtrBtr'
-import type { BtrEmployee, BtrEntry } from '../../shared/utils/dtrBtr'
+import type { BtrAttendanceDay, BtrEmployee, BtrEntry } from '../../shared/utils/dtrBtr'
 
 type Batch = { BatchID: number; AgencyID: number; PeriodStart: string; PeriodEnd: string; Status: string }
 function id(value: unknown, label: string) {
@@ -64,7 +64,20 @@ async function relieversFor(connection: PoolConnection, batch: Batch): Promise<B
     ORDER BY e.LastName, e.FirstName, e.MiddleName`, [batch.AgencyID, batch.BatchID])
   return rows
 }
-// Membership and cutoff define BTR eligibility; attendance status/hours do not.
+async function attendanceFor(connection: PoolConnection, batchId: number): Promise<BtrAttendanceDay[]> {
+  // Match DTR worked-day detection, including holiday/OT allocations and time logs.
+  // Breaks and deductions alone are not evidence of work.
+  const workedColumns = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours',
+    'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours',
+    'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours']
+  const [rows] = await connection.execute<any[]>(`SELECT EmployeeID, AttendanceDate, AttendanceStatus,
+    (COALESCE(AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever')
+      AND (${workedColumns.map(column => `COALESCE(${column}, 0) > 0`).join(' OR ')}
+        OR TimeIn IS NOT NULL OR TimeOut IS NOT NULL)) AS HasWork
+    FROM attendance WHERE BatchID = ?`, [batchId])
+  return rows.map(row => ({ ...row, AttendanceDate: btrDate(row.AttendanceDate), HasWork: !!Number(row.HasWork) }))
+}
+// Missing worked attendance is advisory; membership/cutoff issues remain blockers.
 export function btrIssues(entries: BtrEntry[], employees: BtrEmployee[], batch: Batch): BtrEntry[] {
   const enrolled = new Set(employees.map(employee => Number(employee.EmployeeID)))
   return entries.map(row => ({ ...row, Issue:
@@ -87,8 +100,9 @@ export async function listDtrBtr(event: any) {
     const batch = await batchFor(connection, batchId)
     const employees = await employeesFor(connection, batchId), relievers = await relieversFor(connection, batch)
     const entries = btrIssues(await entriesFor(connection, batchId), employees, batch)
+    const attendance = await attendanceFor(connection, batchId)
     await connection.commit()
-    return { batch, employees, relievers, entries, totals: summarizeBtr(entries) }
+    return { batch, employees, relievers, attendance, entries, totals: summarizeBtr(entries) }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 export async function saveDtrBtr(event: any) {

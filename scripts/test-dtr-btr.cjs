@@ -57,6 +57,16 @@ test('only cutoff and REST membership trigger review; attendance status/hours ne
   assert.equal(server.btrIssues([{ ...entry, Hours: 9 }], fixture.employees, batch)[0].Issue, '')
 })
 
+test('REST attendance warning checks the exact employee/date and reports non-work status', () => {
+  const days = [{ EmployeeID: 1, AttendanceDate: '2026-08-16', AttendanceStatus: 'Late', HasWork: true }]
+  assert.equal(shared.btrAttendanceWarning(1, '2026-08-16', days), '')
+  assert.match(shared.btrAttendanceWarning(1, '2026-08-17', days), /No worked attendance.*2026-08-17/)
+  assert.match(shared.btrAttendanceWarning(2, '2026-08-16', days), /No worked attendance/)
+  for (const status of ['Present', 'Absent', 'Rest Day', 'On-Leave', 'Reliever']) {
+    assert.ok(shared.btrAttendanceWarning(1, '2026-08-16', [{ ...days[0], HasWork: false, AttendanceStatus: status }]).includes('status: '+status))
+  }
+})
+
 test('sheet parser accepts the Excel template, Employee No headers, and supported dates', () => {
   const rows = [sheetHelpers.btrSheetHeaders,
     ['EMP-0002', 'Doe', '16-Aug-26', 1, 'DJA-0001', 'Name'],
@@ -83,7 +93,7 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
     $fetch: async (url, options) => { calls.push({ url, options }); return options ? { success: true } : { ...fixture, attendance: [] } } }
   try {
     scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') +
-      '\nmodule.exports={load,drafts,save,data,ready,totals,readFile,download,resolve,addRow};', { loader: 'ts', format: 'cjs' }).code, context))
+      '\nmodule.exports={load,drafts,save,data,ready,totals,readFile,download,resolve,addRow,attendanceWarning,cutoffDays,gridCell,personTotal,dateTotal,gridTotal,openCell,cellReliever,cellHours,cellError,addCoverage,updateCoverage,removeCoverage,cellRows};', { loader: 'ts', format: 'cjs' }).code, context))
     const state = module.exports
     await state.load(); state.addRow()
     const sheet = XLSX.utils.aoa_to_sheet([sheetHelpers.btrSheetHeaders, ...[16,17,18].map(day => ['EMP-0002', 'Ignored stale Excel name', new Date('2026-08-'+day+'T00:00:00'), 1, 'DJA-0001', 'Ignored stale name'])])
@@ -93,6 +103,19 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
     assert.equal(state.drafts.value.length, 3)
     assert.equal(state.resolve(state.drafts.value[0], 'rest').EmployeeName, entry.ReplacedEmployeeName)
     assert.equal(state.ready.value, true)
+    const first = state.drafts.value[0]
+    const warning = vue.computed(() => state.attendanceWarning(state.resolve(first, 'rest')?.EmployeeID, first.AttendanceDate))
+    assert.match(warning.value, /No worked attendance/)
+    state.data.value.attendance = [{ EmployeeID: 1, AttendanceDate: '2026-08-16', AttendanceStatus: 'Half-Day', HasWork: true }]
+    assert.equal(warning.value, '')
+    first.AttendanceDate = '2026-08-17'
+    assert.match(warning.value, /2026-08-17/)
+    first.AttendanceDate = '2026-08-16'
+    first.ReplacedEmployeeID = 'EMP-0001'
+    assert.equal(warning.value, '')
+    first.ReplacedEmployeeID = 'DJA-0001'
+    assert.match(state.attendanceWarning(1, state.drafts.value[1].AttendanceDate), /No worked attendance/)
+    assert.equal(state.ready.value, true, 'Attendance warnings are advisory and do not block saving')
     await state.save()
     const writes = calls.filter(call => call.options)
     assert.equal(writes.length, 1); assert.equal(writes[0].url, '/api/attendance/dtr/5/btr')
@@ -112,7 +135,73 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
     assert.equal(reimported[0].AttendanceDate, '2026-08-16'); assert.equal(reimported[0].Hours, '1')
     assert.equal(reimported[0].RelieverEmployeeID, 'EMP-0002')
     await state.download(true); assert.deepEqual(XLSX.utils.sheet_to_json(workbooks[1].Sheets.BTR,{header:1})[0], Array.from(sheetHelpers.btrSheetHeaders))
+    // Grid dates come from the cutoff; multiple relievers share a cell. Edits
+    // replace the saved value in totals instead of counting it twice.
+    const secondReliever = { EmployeeID: 4, EmployeeName: 'Another, Reliever', EmployeeNumber: null }
+    state.data.value = { ...fixture, entries: [entry], relievers: [...fixture.relievers, secondReliever] }
+    assert.equal(state.cutoffDays.value.length, 16)
+    assert.equal(state.cutoffDays.value[0], '2026-08-16')
+    assert.equal(state.cutoffDays.value[15], '2026-08-31')
+    await state.openCell(fixture.employees[0], '2026-08-16')
+    assert.equal(state.drafts.value.length, 0, 'Opening a cell must not stage an edit')
+    state.cellReliever.value = 'EMP-0004'; state.cellHours.value = 1
+    state.addCoverage()
+    assert.equal(state.drafts.value[0].AttendanceDate, '2026-08-16')
+    assert.equal(state.drafts.value[0].ReplacedEmployeeID, 'EMP-0001')
+    assert.equal(state.gridCell(1, '2026-08-16').rows.length, 2)
+    assert.equal(state.personTotal(1), 2); assert.equal(state.dateTotal('2026-08-16'), 2)
+    state.addCoverage()
+    assert.match(state.cellError.value, /already listed/)
+    assert.equal(state.drafts.value.length, 1)
+    const savedCellKey = state.cellRows.value.find(row => row.saved).key
+    state.updateCoverage(state.cellRows.value.find(row => row.saved), '0.5')
+    assert.equal(state.cellRows.value.find(row => row.saved).key, savedCellKey, 'Editing preserves input identity and focus')
+    assert.equal(state.gridTotal.value, 1.5)
+    assert.equal(entry.Hours, 1, 'Saved data is unchanged until Save BTR')
+    const edit = state.drafts.value.find(row => row.BTRID)
+    assert.equal(edit.Revision, 1); assert.equal(edit.BTRID, 1)
+    await state.removeCoverage(state.cellRows.value.find(row => !row.saved))
+    assert.equal(state.gridTotal.value, 0.5)
+    state.updateCoverage(state.cellRows.value[0], '0')
+    assert.equal(state.ready.value, false)
+    state.updateCoverage(state.cellRows.value[0], '0.5')
+    assert.equal(state.ready.value, true)
+    await state.save()
+    const gridWrite = calls.filter(call => call.options).at(-1).options.body.Rows[0]
+    assert.equal(gridWrite.BTRID, 1); assert.equal(gridWrite.Revision, 1); assert.equal(gridWrite.Hours, '0.5')
+    assert.equal(gridWrite.AttendanceDate, '2026-08-16')
+    state.data.value = { ...fixture, batch: { ...batch, Status: 'Computed to Payroll' } }
+    state.addCoverage(); assert.equal(state.drafts.value.length, 0, 'Computed DTR stays read-only')
+    state.data.value = { ...fixture, batch: { ...batch, PeriodStart: '2028-02-16', PeriodEnd: '2028-02-29' } }
+    assert.equal(state.cutoffDays.value.length, 14); assert.equal(state.cutoffDays.value.at(-1), '2028-02-29')
   } finally { scope.stop() }
+})
+
+test('MySQL BTR attendance warnings read current batch attendance without changing records', { skip: process.env.BTR_TEST_DATABASE !== '1' }, async () => {
+  const mysql = require('mysql2/promise')
+  const env = { ...require('node:util').parseEnv(fs.readFileSync('.env', 'utf8')), ...process.env }
+  const connection = await mysql.createConnection({ host: env.DB_HOST || '127.0.0.1', port: Number(env.DB_PORT || 3306),
+    user: env.DB_USER || 'root', password: env.DB_PASSWORD, database: env.DB_NAME || 'pbsystem', dateStrings: true })
+  try {
+    const [batches] = await connection.execute('SELECT DISTINCT BatchID FROM attendance WHERE BatchID IS NOT NULL')
+    assert.ok(batches.length, 'Existing DTR attendance is needed for this read-only check')
+    const api = moduleFrom('server/utils/dtrBtrCrud.ts', { h3, '../../shared/utils/dtrBtr': shared,
+      '../connection/dbconnect': { getConnection: async () => ({ execute: (...args) => connection.execute(...args),
+        beginTransaction: () => connection.query('START TRANSACTION READ ONLY'), commit: () => connection.commit(), rollback: () => connection.rollback(), release() {} }) },
+      './auth': { requireSession: () => ({ sub: 1 }) } })
+    for (const { BatchID } of batches) {
+      const listing = await api.listDtrBtr({ batchId: BatchID })
+      const [rows] = await connection.execute('SELECT * FROM attendance WHERE BatchID=?', [BatchID])
+      assert.equal(listing.attendance.length, rows.length)
+      for (const row of rows) {
+        const day = listing.attendance.find(item => item.EmployeeID === row.EmployeeID && item.AttendanceDate === row.AttendanceDate)
+        const worked = !['Absent','Rest Day','On-Leave','Reliever'].includes(row.AttendanceStatus) &&
+          (Object.entries(row).some(([key,value]) => key.endsWith('Hours') && !['BreakHours','LateHours','UndertimeHours'].includes(key) && Number(value) > 0) || row.TimeIn != null || row.TimeOut != null)
+        assert.equal(day.HasWork, worked)
+        assert.equal(!!shared.btrAttendanceWarning(row.EmployeeID, row.AttendanceDate, listing.attendance), !worked)
+      }
+    }
+  } finally { await connection.end() }
 })
 
 test('MySQL BTR CRUD, atomic sheet save, membership guards, soft removal, and payroll review (all writes rolled back)', { skip: process.env.BTR_TEST_DATABASE !== '1' }, async () => {
@@ -150,6 +239,7 @@ test('MySQL BTR CRUD, atomic sheet save, membership guards, soft removal, and pa
     let listing = await api.listDtrBtr(event)
     assert.equal(listing.entries.length, 1); assert.equal(listing.totals.TotalHours, 1)
     assert.equal(listing.entries[0].Issue, '')
+    assert.equal(shared.btrAttendanceWarning(worked.EmployeeID, worked.AttendanceDate, listing.attendance), '')
     await assert.rejects(api.saveDtrBtr(event), /already has/)
     await assert.rejects(api.saveDtrBtr({ ...event, body: { ...body, RelieverEmployeeID: body.ReplacedEmployeeID } }), /different employee/)
     await assert.rejects(api.saveDtrBtr({ ...event, body: { ...body, AttendanceDate: '2026-02-30' } }), /valid date/)
@@ -175,7 +265,9 @@ test('MySQL BTR CRUD, atomic sheet save, membership guards, soft removal, and pa
       await connection.query('SAVEPOINT btr_status_case')
       await connection.execute('UPDATE attendance SET AttendanceStatus=?, RegularHours=0 WHERE BatchID=? AND EmployeeID=? AND AttendanceDate=?', [status, worked.BatchID, worked.EmployeeID, worked.AttendanceDate])
       await api.saveDtrBtr({ ...event, body: { ...body, BTRID: saved.BTRID, Revision: 3, Hours: 2 } })
-      assert.equal((await api.listDtrBtr(event)).entries[0].Issue, '')
+      const reviewed = await api.listDtrBtr(event)
+      assert.equal(reviewed.entries[0].Issue, '')
+      assert.ok(shared.btrAttendanceWarning(worked.EmployeeID, worked.AttendanceDate, reviewed.attendance).includes('status: '+status))
       await connection.query('ROLLBACK TO SAVEPOINT btr_status_case')
     }
     await connection.query('SAVEPOINT btr_blank_case')
