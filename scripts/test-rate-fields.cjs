@@ -15,17 +15,17 @@ function evaluate(source, dependencies = {}, globals = {}) {
 const fields = evaluate(fs.readFileSync('shared/utils/rateFields.ts', 'utf8'))
 const additional = ['OTExtRate', 'RestDayOTRate', 'LateDeduction', 'UndertimeDeduction']
 const amounts = { RegularRate: 700, OTRate: 110, OTExtRate: 115.25, RestDayRate: 120, RestDayOTRate: 156.75, LateDeduction: 87.5, UndertimeDeduction: 88.25 }
-const visibleAdditional = ['OTExtRate', 'RestDayOTRate']
-const visibleAmounts = Object.fromEntries(Object.entries(amounts).filter(([key]) => !['LateDeduction', 'UndertimeDeduction'].includes(key)))
+const visibleAdditional = additional
+const visibleAmounts = amounts
 
-test('rate forms omit separate late/undertime rates while retaining the stored API fields', () => {
+test('rate forms expose late/undertime amounts with hourly labels', () => {
   for (const key of additional) {
     assert.ok(fields.rateMoneyFields.some(field => field.key === key))
   }
   for (const key of visibleAdditional) assert.equal(fields.emptyRateAmounts()[key], 0)
   for (const key of ['LateDeduction', 'UndertimeDeduction']) {
-    assert.equal(fields.emptyRateAmounts()[key], undefined)
-    assert.equal(fields.rateFormFields.some(field => field.key === key), false)
+    assert.equal(fields.emptyRateAmounts()[key], 0)
+    assert.equal(fields.rateFormFields.some(field => field.key === key), true)
   }
   assert.match(fields.rateMoneyFields.find(field => field.key === 'LateDeduction').label, /hour/)
   assert.match(fields.rateMoneyFields.find(field => field.key === 'UndertimeDeduction').label, /hour/)
@@ -56,14 +56,14 @@ test('payroll and billing forms submit, reopen, and reset every additional rate'
     const posted = calls.find(call => call.options).options
     assert.equal(posted.method, 'POST')
     for (const key of visibleAdditional) assert.equal(posted.body[key], amounts[key])
-    assert.equal(posted.body.LateDeduction, undefined); assert.equal(posted.body.UndertimeDeduction, undefined)
+    assert.equal(posted.body.LateDeduction, amounts.LateDeduction); assert.equal(posted.body.UndertimeDeduction, amounts.UndertimeDeduction)
     state.reset({ PayrollRateID: 11, BillingRateID: 12, AgencyPositionID: 1, ...amounts })
     for (const key of visibleAdditional) assert.equal(state.form.value[key], amounts[key])
-    assert.equal(state.form.value.LateDeduction, undefined); assert.equal(state.form.value.UndertimeDeduction, undefined)
+    assert.equal(state.form.value.LateDeduction, amounts.LateDeduction); assert.equal(state.form.value.UndertimeDeduction, amounts.UndertimeDeduction)
     state.form.value.RestDayOTRate = 199.5; await state.save()
     const updated = calls.filter(call => call.options).at(-1).options
     assert.equal(updated.method, 'PUT'); assert.equal(updated.body.RestDayOTRate, 199.5)
-    assert.equal(updated.body.LateDeduction, undefined); assert.equal(updated.body.UndertimeDeduction, undefined)
+    assert.equal(updated.body.LateDeduction, amounts.LateDeduction); assert.equal(updated.body.UndertimeDeduction, amounts.UndertimeDeduction)
     state.reset(); for (const key of visibleAdditional) assert.equal(state.form.value[key], 0)
   }
 })
@@ -78,7 +78,7 @@ test('client inline creation sends complete payroll/billing amounts and linked p
   const body = calls.find(call => call.options).options.body
   for (const key of visibleAdditional) assert.equal(body.inlinePayrollRate[key], amounts[key])
   for (const rate of [body.inlinePayrollRate, body.inlineBillingRate]) {
-    assert.equal(rate.LateDeduction, undefined); assert.equal(rate.UndertimeDeduction, undefined)
+    assert.equal(rate.LateDeduction, amounts.LateDeduction); assert.equal(rate.UndertimeDeduction, amounts.UndertimeDeduction)
   }
   assert.equal(body.inlineBillingRate.OTExtRate, 200)
   state.payrollRates.value = [{ PayrollRateID: 1, ...amounts }]; state.billingRates.value = [{ BillingRateID: 2, ...amounts }]

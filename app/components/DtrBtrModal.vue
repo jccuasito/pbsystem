@@ -59,6 +59,60 @@ const gridCell=(employeeId:number,date:string)=>gridCells.value.get(employeeId+'
 const personTotal=(employeeId:number)=>cutoffDays.value.reduce((sum,date)=>sum+(gridCell(employeeId,date)?.units||0),0)/100
 const dateTotal=(date:string)=>gridPeople.value.reduce((sum,employee)=>sum+(gridCell(employee.EmployeeID,date)?.units||0),0)/100
 const gridTotal=computed(()=>gridPeople.value.reduce((sum,employee)=>sum+Math.round(personTotal(employee.EmployeeID)*100),0)/100)
+// Use the same saved-plus-pending rows as the REST grid, grouped by the reliever.
+const relieverRoster=computed(()=>{
+  type Day={date:string;units:number;pending:boolean}
+  type Coverage={employee:BtrEmployee;units:number;days:Map<string,Day>}
+  type Reliever={employee:BtrEmployee;units:number;pending:boolean;coverage:Map<number,Coverage>}
+  const people=new Map<number,Reliever>(),dates=new Set(cutoffDays.value)
+  for(const row of gridEntries.value){
+    if(!dates.has(row.date))continue
+    const id=Number(row.draft?resolve(row.draft,'btr')?.EmployeeID:row.saved?.RelieverEmployeeID)
+    if(!id)continue
+    const employee=relievers.value.find(item=>Number(item.EmployeeID)===id)||{EmployeeID:id,EmployeeName:row.name,EmployeeNumber:row.saved?.RelieverEmployeeNumber||null}
+    const reliever=people.get(id)||{employee,units:0,pending:false,coverage:new Map<number,Coverage>()}
+    const rest=employees.value.find(item=>Number(item.EmployeeID)===row.employeeId)||{EmployeeID:row.employeeId,EmployeeName:row.saved?.ReplacedEmployeeName||canonicalId(row.employeeId),EmployeeNumber:row.saved?.ReplacedEmployeeNumber||null}
+    const coverage=reliever.coverage.get(row.employeeId)||{employee:rest,units:0,days:new Map<string,Day>()}
+    const day=coverage.days.get(row.date)||{date:row.date,units:0,pending:false}
+    const units=Number.isFinite(Number(row.hours))?Math.round(Number(row.hours)*100):0
+    reliever.units+=units;coverage.units+=units;day.units+=units
+    reliever.pending ||= !!row.draft;day.pending ||= !!row.draft
+    coverage.days.set(row.date,day);reliever.coverage.set(row.employeeId,coverage);people.set(id,reliever)
+  }
+  return [...people.values()].map(person=>({...person,coverage:[...person.coverage.values()].map(item=>({...item,days:[...item.days.values()].sort((a,b)=>a.date.localeCompare(b.date))})).sort((a,b)=>a.employee.EmployeeName.localeCompare(b.employee.EmployeeName))})).sort((a,b)=>a.employee.EmployeeName.localeCompare(b.employee.EmployeeName))
+})
+const relieverRosterTotal=computed(()=>relieverRoster.value.reduce((sum,person)=>sum+person.units,0)/100)
+const relieverDayCells=computed(()=>{
+  const cells=new Map<string,{units:number;pending:boolean;coverage:{employee:BtrEmployee;units:number}[]}>()
+  for(const person of relieverRoster.value)for(const coverage of person.coverage)for(const day of coverage.days){
+    const key=person.employee.EmployeeID+':'+day.date,cell=cells.get(key)||{units:0,pending:false,coverage:[]}
+    cell.units+=day.units;cell.pending ||= day.pending;cell.coverage.push({employee:coverage.employee,units:day.units});cells.set(key,cell)
+  }
+  return cells
+})
+const relieverDay=(employeeId:number,date:string)=>relieverDayCells.value.get(employeeId+':'+date)
+const relieverDateTotal=(date:string)=>relieverRoster.value.reduce((sum,person)=>sum+(relieverDay(person.employee.EmployeeID,date)?.units||0),0)/100
+const relieverDayTitle=(employee:BtrEmployee,date:string)=>employee.EmployeeName+' — '+dateLabel(date)+': '+hours((relieverDay(employee.EmployeeID,date)?.units||0)/100)+' BTR hours'+(relieverDay(employee.EmployeeID,date)?.coverage.map(item=>' · '+item.employee.EmployeeName+': '+hours(item.units/100)+' h').join('')||'')
+const relieverDayWarning=(employeeId:number,date:string)=>relieverDay(employeeId,date)?.coverage.some(item=>!!attendanceWarning(item.employee.EmployeeID,date))||false
+const isBtrDay=(employeeId:number,date:string)=>(relieverDay(employeeId,date)?.units||0)>0
+// Each employee appears once, even when they cover breaks and take breaks in the same cutoff.
+const sheetPeople=computed(()=>{
+  const people=new Map<number,BtrEmployee>()
+  for(const employee of gridPeople.value)people.set(Number(employee.EmployeeID),employee)
+  const query=gridSearch.value.trim().toLowerCase()
+  for(const person of relieverRoster.value){
+    const employee=person.employee
+    if((employee.EmployeeName+' '+canonicalId(employee.EmployeeID)+' '+(employee.EmployeeNumber||'')).toLowerCase().includes(query))people.set(Number(employee.EmployeeID),employee)
+  }
+  const btrIds=new Set(relieverRoster.value.filter(person=>cutoffDays.value.some(date=>isBtrDay(person.employee.EmployeeID,date))).map(person=>Number(person.employee.EmployeeID)))
+  return [...people.values()].sort((a,b)=>Number(btrIds.has(Number(b.EmployeeID)))-Number(btrIds.has(Number(a.EmployeeID)))||a.EmployeeName.localeCompare(b.EmployeeName))
+})
+const employeeBtrTotal=(employeeId:number)=>cutoffDays.value.reduce((sum,date)=>sum+(relieverDay(employeeId,date)?.units||0),0)/100
+const sheetBtrDateTotal=(date:string)=>sheetPeople.value.reduce((sum,employee)=>sum+(relieverDay(employee.EmployeeID,date)?.units||0),0)/100
+const sheetBtrTotal=computed(()=>sheetPeople.value.reduce((sum,employee)=>sum+Math.round(employeeBtrTotal(employee.EmployeeID)*100),0)/100)
+const sheetCellTitle=(employee:BtrEmployee,date:string)=>relieverDayTitle(employee,date)+' · Breaks taken: '+hours((gridCell(employee.EmployeeID,date)?.units||0)/100)+' h'
+const canReceiveCoverage=computed(()=>employees.value.some(employee=>Number(employee.EmployeeID)===Number(selectedCell.value?.employee.EmployeeID)))
+const coveredEmployees=computed(()=>selectedCell.value?relieverDay(selectedCell.value.employee.EmployeeID,selectedCell.value.date)?.coverage||[]:[])
 const cellRows=computed(()=>selectedCell.value?gridCell(selectedCell.value.employee.EmployeeID,selectedCell.value.date)?.rows||[]:[])
 const cellCandidates=computed(()=>relievers.value.filter(employee=>Number(employee.EmployeeID)!==Number(selectedCell.value?.employee.EmployeeID)))
 async function openCell(employee:BtrEmployee,date:string){
@@ -67,7 +121,7 @@ async function openCell(employee:BtrEmployee,date:string){
   await nextTick();cellDialog.value?.showModal()
 }
 function addCoverage(){
-  if(!selectedCell.value||!editable.value||saving.value||reading.value)return
+  if(!selectedCell.value||!canReceiveCoverage.value||!editable.value||saving.value||reading.value)return
   const row:Draft={key:nextKey++,ReplacedEmployeeID:canonicalId(selectedCell.value.employee.EmployeeID),RelieverEmployeeID:cellReliever.value,AttendanceDate:selectedCell.value.date,Hours:cellHours.value}
   cellError.value=rowError(row)
   if(cellError.value)return
@@ -192,17 +246,31 @@ onMounted(()=>{dialog.value?.showModal();void load()})
           <p v-if="!editable" class="btr-note">This DTR is {{data.batch.Status}}. Saved BTR is view-only.</p>
           <datalist id="btr-employee-options"><option v-for="employee in relievers" :key="employee.EmployeeID" :value="canonicalId(employee.EmployeeID)">{{employee.EmployeeName}}{{employee.EmployeeNumber?' / '+employee.EmployeeNumber:''}}</option></datalist>
           <datalist id="btr-rest-options"><option v-for="employee in employees" :key="employee.EmployeeID" :value="canonicalId(employee.EmployeeID)">{{employee.EmployeeName}}{{employee.EmployeeNumber?' / '+employee.EmployeeNumber:''}}</option></datalist>
-          <div class="btr-section-title"><h3>REST employees <small>· employees being relieved</small></h3><input v-model="gridSearch" type="search" aria-label="Search REST employees" placeholder="Search employee name or ID"></div>
+          <div class="btr-section-title"><h3>BTR / REST employees</h3><input v-model="gridSearch" type="search" aria-label="Search employees" placeholder="Search employee name or ID"></div>
+          <p class="btr-grid-hint">Assign a reliever on the REST employee's day. Those hours automatically total under the reliever, with BTR shown below the hours on that date. One row per employee; relievers appear first.</p>
           <div class="btr-grid-legend"><span><i class="btr-legend-filled"></i>Recorded BTR</span><span><i class="btr-legend-pending"></i>Unsaved change</span><span><i class="btr-legend-warning"></i>Check attendance</span></div>
-          <div class="btr-grid-wrap" tabindex="0" aria-label="BTR cutoff grid, scroll to see all days">
+          <div class="btr-grid-wrap" tabindex="0" aria-label="BTR and REST cutoff grid, scroll to see all days">
             <table class="btr-grid"><colgroup><col class="btr-person-col"><col v-for="date in cutoffDays" :key="date" class="btr-day-col"><col class="btr-total-col"></colgroup>
               <thead><tr><th scope="col" rowspan="2" class="btr-grid-person">Name of personnel / E-ID</th><th v-for="date in cutoffDays" :key="date" scope="col" :title="dateLabel(date)">{{Number(date.slice(8))}}</th><th scope="col" rowspan="2" class="btr-grid-total">Total<br>hours</th></tr><tr><th v-for="date in cutoffDays" :key="date" scope="col" class="btr-hours-head">HRS</th></tr></thead>
-              <tbody><tr v-for="employee in gridPeople" :key="employee.EmployeeID">
+              <tbody><tr v-for="employee in sheetPeople" :key="employee.EmployeeID">
                 <th scope="row" class="btr-grid-person"><strong>{{employee.EmployeeName}}</strong><small>{{canonicalId(employee.EmployeeID)}}<template v-if="employee.EmployeeNumber"> / {{employee.EmployeeNumber}}</template></small></th>
-                <td v-for="date in cutoffDays" :key="date" class="btr-grid-day"><button type="button" :disabled="loading||saving||reading" :class="{'has-btr':!!gridCell(employee.EmployeeID,date),'is-pending':gridCell(employee.EmployeeID,date)?.pending,'has-warning':!!gridCell(employee.EmployeeID,date)&&!!attendanceWarning(employee.EmployeeID,date)}" :aria-label="cellTitle(employee,date)" :title="cellTitle(employee,date)+(attendanceWarning(employee.EmployeeID,date)?' · '+attendanceWarning(employee.EmployeeID,date):'')" @click="openCell(employee,date)"><strong>{{gridCell(employee.EmployeeID,date)?hours(gridCell(employee.EmployeeID,date)!.units/100):'–'}}</strong><small v-if="!gridCell(employee.EmployeeID,date)&&editable">+</small><small v-else-if="gridCell(employee.EmployeeID,date)?.pending">●</small></button></td>
-                <td class="btr-grid-total">{{hours(personTotal(employee.EmployeeID))}}</td>
-              </tr><tr v-if="!gridPeople.length"><td :colspan="cutoffDays.length+2" class="btr-empty">{{employees.length?'No matching employees.':'No employees enrolled in this DTR.'}}</td></tr></tbody>
-              <tfoot><tr><th class="btr-grid-person">{{gridSearch.trim()?'FILTERED TOTAL':'TOTAL'}}</th><td v-for="date in cutoffDays" :key="date">{{hours(dateTotal(date))}}</td><th class="btr-grid-total">{{hours(gridTotal)}}</th></tr></tfoot>
+                <td v-for="date in cutoffDays" :key="date" class="btr-grid-day">
+                  <button type="button" :disabled="loading||saving||reading" :class="{'has-btr':!!relieverDay(employee.EmployeeID,date)||!!gridCell(employee.EmployeeID,date),'is-pending':relieverDay(employee.EmployeeID,date)?.pending||gridCell(employee.EmployeeID,date)?.pending,'has-warning':relieverDayWarning(employee.EmployeeID,date)||(!!gridCell(employee.EmployeeID,date)&&!!attendanceWarning(employee.EmployeeID,date))}" :aria-label="sheetCellTitle(employee,date)" :title="sheetCellTitle(employee,date)" @click="openCell(employee,date)">
+                    <template v-if="relieverDay(employee.EmployeeID,date)">
+                      <strong>{{hours(relieverDay(employee.EmployeeID,date)!.units/100)}}</strong>
+                      <small v-if="isBtrDay(employee.EmployeeID,date)" class="btr-cell-label">BTR</small>
+                    </template>
+                    <template v-if="gridCell(employee.EmployeeID,date)">
+                      <strong>{{hours(gridCell(employee.EmployeeID,date)!.units/100)}}</strong>
+                      <small v-if="relieverDay(employee.EmployeeID,date)" class="btr-rest-label">REST</small>
+                    </template>
+                    <template v-if="!relieverDay(employee.EmployeeID,date)&&!gridCell(employee.EmployeeID,date)"><strong>–</strong><small v-if="editable">+</small></template>
+                    <small v-if="relieverDay(employee.EmployeeID,date)?.pending||gridCell(employee.EmployeeID,date)?.pending" aria-label="Unsaved change">●</small>
+                  </button>
+                </td>
+                <td class="btr-grid-total"><template v-if="employeeBtrTotal(employee.EmployeeID)">{{hours(employeeBtrTotal(employee.EmployeeID))}}<small>BTR</small></template><template v-if="personTotal(employee.EmployeeID)">{{hours(personTotal(employee.EmployeeID))}}<small>REST</small></template><template v-if="!employeeBtrTotal(employee.EmployeeID)&&!personTotal(employee.EmployeeID)">0.00</template></td>
+              </tr><tr v-if="!sheetPeople.length"><td :colspan="cutoffDays.length+2" class="btr-empty">No matching employees.</td></tr></tbody>
+              <tfoot><tr><th class="btr-grid-person">{{gridSearch.trim()?'FILTERED BTR TOTAL':'BTR TOTAL'}}</th><td v-for="date in cutoffDays" :key="date">{{hours(sheetBtrDateTotal(date))}}</td><th class="btr-grid-total">{{hours(sheetBtrTotal)}}</th></tr><tr><th class="btr-grid-person">{{gridSearch.trim()?'FILTERED REST TOTAL':'REST TOTAL'}}</th><td v-for="date in cutoffDays" :key="date">{{hours(dateTotal(date))}}</td><th class="btr-grid-total">{{hours(gridTotal)}}</th></tr></tfoot>
             </table>
           </div>
           <p class="btr-grid-hint">Grid totals include pending changes. BTR hours are separate from regular and OT attendance totals.</p>
@@ -248,8 +316,11 @@ onMounted(()=>{dialog.value?.showModal();void load()})
         <template v-if="selectedCell">
           <header class="btr-header"><div><p class="btr-eyebrow">BREAK TIME RELIEVER</p><h2 id="btr-cell-title">{{dateLabel(selectedCell.date)}}</h2><p><strong>{{selectedCell.employee.EmployeeName}}</strong><br>{{canonicalId(selectedCell.employee.EmployeeID)}} · REST employee</p></div><button type="button" class="btr-close" aria-label="Close day editor" :disabled="saving||reading" @click="closeCell">×</button></header>
           <div class="btr-body">
+            <section v-if="coveredEmployees.length" class="btr-covered-list"><h3>Breaks covered on this day · {{hours((relieverDay(selectedCell.employee.EmployeeID,selectedCell.date)?.units||0)/100)}} h</h3><p v-for="coverage in coveredEmployees" :key="coverage.employee.EmployeeID"><span>{{coverage.employee.EmployeeName}} · {{hours(coverage.units/100)}} h</span><button type="button" :disabled="saving||reading" @click="openCell(coverage.employee,selectedCell.date)">View / edit</button></p></section>
+            <h3 v-if="canReceiveCoverage">This employee's own break</h3>
+            <p v-else class="btr-grid-hint">This employee is not enrolled in this DTR. Their recorded break coverage is shown above.</p>
             <p v-if="attendanceWarning(selectedCell.employee.EmployeeID,selectedCell.date)" class="btr-cell-warning" role="alert">{{attendanceWarning(selectedCell.employee.EmployeeID,selectedCell.date)}} You can still record BTR after reviewing.</p>
-            <form v-if="editable" class="btr-cell-form" @submit.prevent="addCoverage"><label>Break time reliever<select v-model="cellReliever" :disabled="saving||reading" required><option value="">Select employee</option><option v-for="employee in cellCandidates" :key="employee.EmployeeID" :value="canonicalId(employee.EmployeeID)">{{employee.EmployeeName}} — {{canonicalId(employee.EmployeeID)}}{{employee.EmployeeNumber?' / '+employee.EmployeeNumber:''}}</option></select></label><label>Hours<input v-model="cellHours" type="number" min="0.01" max="24" step="0.01" :disabled="saving||reading" required></label><button type="submit" :disabled="saving||reading">+ Add coverage</button></form>
+            <form v-if="editable&&canReceiveCoverage" class="btr-cell-form" @submit.prevent="addCoverage"><label>Break time reliever<select v-model="cellReliever" :disabled="saving||reading" required><option value="">Select employee</option><option v-for="employee in cellCandidates" :key="employee.EmployeeID" :value="canonicalId(employee.EmployeeID)">{{employee.EmployeeName}} — {{canonicalId(employee.EmployeeID)}}{{employee.EmployeeNumber?' / '+employee.EmployeeNumber:''}}</option></select></label><label>Hours<input v-model="cellHours" type="number" min="0.01" max="24" step="0.01" :disabled="saving||reading" required></label><button type="submit" :disabled="saving||reading">+ Add coverage</button></form>
             <p v-if="cellError" class="btr-error" role="alert">{{cellError}}</p>
             <p v-if="!cellRows.length" class="btr-empty">No BTR recorded for this day.</p>
             <div v-for="item in cellRows" :key="item.key" class="btr-coverage"><div><strong>{{item.name}}</strong><small>{{item.draft?'Unsaved change':'Saved'}}</small><p v-if="item.saved?.Issue" class="btr-error">{{item.saved.Issue}}</p><p v-if="item.draft&&rowError(item.draft)" class="btr-error" role="alert">{{rowError(item.draft)}}</p></div><input :value="item.hours" type="number" min="0.01" max="24" step="0.01" :aria-label="'BTR hours for '+item.name" :disabled="!editable||saving||reading" @input="updateCoverage(item,($event.target as HTMLInputElement).value)"><button v-if="editable" type="button" class="btr-remove" :disabled="saving||reading" @click="removeCoverage(item)">Remove</button></div>
@@ -264,6 +335,7 @@ onMounted(()=>{dialog.value?.showModal();void load()})
 </template>
 
 <style scoped>
+.btr-grid .btr-grid-day button .btr-cell-label{color:#000;font-weight:700}.btr-grid .btr-grid-day button .btr-rest-label{color:#60718d}.btr-grid-total small{display:block;font-size:9px;font-weight:400;margin:2px 0 4px}.btr-covered-list{margin-bottom:16px;padding:12px;border:1px solid #dce5f2;border-radius:8px}.btr-covered-list p{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .btr-grid-wrap{overflow:auto;max-height:55vh;border:1px solid #b9c0c7;border-radius:10px;background:#fff}.btr-grid{width:100%;min-width:1020px;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:12px}.btr-person-col{width:235px}.btr-day-col{width:44px}.btr-total-col{width:78px}.btr-grid th,.btr-grid td{border-right:1px solid #b9c0c7;border-bottom:1px solid #b9c0c7;text-align:center;padding:7px 3px}.btr-grid thead th{background:#fff700;color:#101820;font-size:11px;text-transform:uppercase;position:sticky;top:0;z-index:2;height:29px}.btr-grid thead tr:nth-child(2) th{top:29px;height:25px;font-size:10px}.btr-grid .btr-grid-person{position:sticky;left:0;z-index:3;text-align:left;padding:10px 12px;background:white;white-space:normal}.btr-grid-person strong{display:block;font-size:12px}.btr-grid-person small{display:block;color:#63738d;font-size:10px;margin-top:5px;font-weight:400}.btr-grid .btr-grid-total{position:sticky;right:0;z-index:3;background:#f4f8ee;font-weight:700}.btr-grid thead .btr-grid-person,.btr-grid thead .btr-grid-total{z-index:4;background:#fff700}.btr-grid .btr-grid-day{padding:0}.btr-grid .btr-grid-day button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:53px;width:100%;padding:4px 1px;border:0;border-radius:0;font-size:11px;background:#fff;color:#60718d}.btr-grid .btr-grid-day button small{font-size:10px;line-height:10px}.btr-grid .btr-grid-day button.has-btr{background:#eaf2ff;color:#1f4d8b}.btr-grid .btr-grid-day button.is-pending{background:#fff4ce;color:#765200}.btr-grid .btr-grid-day button.has-warning{box-shadow:inset 0 -3px #f97316}.btr-grid .btr-grid-day button:hover{background:#dce9ff}.btr-grid tfoot th,.btr-grid tfoot td,.btr-grid tfoot .btr-grid-person,.btr-grid tfoot .btr-grid-total{background:#c6dfb5;color:#132919;font-weight:700}.btr-grid-legend{display:flex;flex-wrap:wrap;gap:16px;margin:10px 0;color:#60718d;font-size:11px}.btr-grid-legend span{display:flex;gap:6px;align-items:center}.btr-grid-legend i{display:inline-block;width:16px;height:10px;border:1px solid #c9d7e8}.btr-legend-filled{background:#eaf2ff}.btr-legend-pending{background:#fff4ce}.btr-grid-legend .btr-legend-warning{height:3px;background:#f97316;border:0}.btr-grid-hint{font-size:12px;color:#60718d;margin:10px 0 0}
 .btr-dialog.btr-cell-dialog{width:min(720px,calc(100vw - 24px));max-height:88vh}.btr-cell-dialog::backdrop{background:rgba(14,28,55,.45)}.btr-cell-form{display:grid;grid-template-columns:minmax(0,1fr) 85px;gap:12px;align-items:end}.btr-cell-form label{font-size:12px;font-weight:700;display:grid;gap:6px}.btr-cell-form select{width:100%;min-width:0;min-height:38px;padding:7px;border:1px solid #ccd9ec;border-radius:6px;background:#fff;color:#19365e;font:inherit}.btr-cell-form>button{grid-column:1/-1;justify-self:end}.btr-cell-warning{padding:12px;background:#fff5e8;border-left:3px solid #f97316;color:#924312;font-size:12px;line-height:1.6;margin:0 0 16px}.btr-coverage{display:grid;grid-template-columns:minmax(0,1fr) 85px auto;gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid #dce5f2}.btr-coverage strong{font-size:13px}.btr-coverage small{display:block;font-size:11px;color:#718098;margin-top:5px}.btr-cell-total{display:flex;justify-content:space-between;font-size:14px;font-weight:700;margin:18px 0 0}.btr-cell-dialog .btr-footer{flex-wrap:wrap}.btr-cell-dialog .btr-footer>div{margin-left:auto}
 @media(max-width:650px){.btr-person-col{width:160px}.btr-grid{min-width:960px}.btr-grid-person strong{font-size:11px}.btr-grid-person small{font-size:9px}.btr-footer{flex-wrap:wrap}.btr-coverage{gap:6px;grid-template-columns:minmax(0,1fr) 65px auto}}

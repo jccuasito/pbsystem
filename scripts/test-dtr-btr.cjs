@@ -93,7 +93,7 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
     $fetch: async (url, options) => { calls.push({ url, options }); return options ? { success: true } : { ...fixture, attendance: [] } } }
   try {
     scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') +
-      '\nmodule.exports={load,drafts,save,data,ready,totals,readFile,download,resolve,addRow,attendanceWarning,cutoffDays,gridCell,personTotal,dateTotal,gridTotal,openCell,cellReliever,cellHours,cellError,addCoverage,updateCoverage,removeCoverage,cellRows};', { loader: 'ts', format: 'cjs' }).code, context))
+      '\nmodule.exports={load,drafts,save,data,ready,totals,readFile,download,resolve,addRow,attendanceWarning,cutoffDays,gridCell,personTotal,dateTotal,gridTotal,openCell,cellReliever,cellHours,cellError,addCoverage,updateCoverage,removeCoverage,cellRows,relieverRoster,relieverRosterTotal,relieverDay,relieverDateTotal,gridSearch,sheetPeople,isBtrDay,employeeBtrTotal,sheetBtrDateTotal,sheetBtrTotal,coveredEmployees,canReceiveCoverage};', { loader: 'ts', format: 'cjs' }).code, context))
     const state = module.exports
     await state.load(); state.addRow()
     const sheet = XLSX.utils.aoa_to_sheet([sheetHelpers.btrSheetHeaders, ...[16,17,18].map(day => ['EMP-0002', 'Ignored stale Excel name', new Date('2026-08-'+day+'T00:00:00'), 1, 'DJA-0001', 'Ignored stale name'])])
@@ -150,6 +150,16 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
     assert.equal(state.drafts.value[0].ReplacedEmployeeID, 'EMP-0001')
     assert.equal(state.gridCell(1, '2026-08-16').rows.length, 2)
     assert.equal(state.personTotal(1), 2); assert.equal(state.dateTotal('2026-08-16'), 2)
+    assert.equal(state.relieverRoster.value.length, 2, 'Separate rows include a reliever outside the DTR roster')
+    assert.equal(state.relieverRosterTotal.value, 2)
+    const pendingReliever = state.relieverRoster.value.find(row => row.employee.EmployeeID === 4)
+    assert.equal(pendingReliever.pending, true)
+    assert.equal(pendingReliever.coverage[0].employee.EmployeeID, 1)
+    assert.equal(pendingReliever.coverage[0].days[0].date, '2026-08-16')
+    state.gridSearch.value = 'no matching REST employee'
+    assert.equal(state.gridTotal.value, 0)
+    assert.equal(state.relieverRosterTotal.value, 2, 'REST search does not hide reliever totals')
+    state.gridSearch.value = ''
     state.addCoverage()
     assert.match(state.cellError.value, /already listed/)
     assert.equal(state.drafts.value.length, 1)
@@ -157,11 +167,18 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
     state.updateCoverage(state.cellRows.value.find(row => row.saved), '0.5')
     assert.equal(state.cellRows.value.find(row => row.saved).key, savedCellKey, 'Editing preserves input identity and focus')
     assert.equal(state.gridTotal.value, 1.5)
+    assert.equal(state.relieverRosterTotal.value, 1.5, 'Pending edits replace saved amounts in both views')
+    assert.equal(state.relieverDay(2, '2026-08-16').units, 50)
+    assert.equal(state.relieverDateTotal('2026-08-16'), 1.5)
     assert.equal(entry.Hours, 1, 'Saved data is unchanged until Save BTR')
     const edit = state.drafts.value.find(row => row.BTRID)
     assert.equal(edit.Revision, 1); assert.equal(edit.BTRID, 1)
     await state.removeCoverage(state.cellRows.value.find(row => !row.saved))
     assert.equal(state.gridTotal.value, 0.5)
+    assert.equal(state.relieverRoster.value.length, 1)
+    assert.equal(state.relieverRosterTotal.value, 0.5)
+    assert.equal(state.relieverDay(4, '2026-08-16'), undefined)
+    assert.equal(state.relieverDateTotal('2026-08-16'), 0.5)
     state.updateCoverage(state.cellRows.value[0], '0')
     assert.equal(state.ready.value, false)
     state.updateCoverage(state.cellRows.value[0], '0.5')
@@ -170,6 +187,66 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
     const gridWrite = calls.filter(call => call.options).at(-1).options.body.Rows[0]
     assert.equal(gridWrite.BTRID, 1); assert.equal(gridWrite.Revision, 1); assert.equal(gridWrite.Hours, '0.5')
     assert.equal(gridWrite.AttendanceDate, '2026-08-16')
+    state.data.value = { ...fixture, entries: [entry,
+      { ...entry, BTRID: 2, AttendanceDate: '2026-08-17' },
+      { ...entry, BTRID: 3, ReplacedEmployeeID: 99, ReplacedEmployeeName: 'Another REST employee' }] }
+    assert.equal(state.relieverRoster.value.length, 1, 'One row per reliever, across days and REST employees')
+    assert.equal(state.relieverRoster.value[0].coverage.length, 2)
+    assert.equal(state.relieverRoster.value[0].coverage.find(row => row.employee.EmployeeID === 1).days.length, 2)
+    assert.equal(state.relieverRosterTotal.value, 3)
+    assert.equal(state.relieverDay(2, '2026-08-16').units, 200, 'One day cell sums coverage of two REST employees')
+    assert.equal(state.relieverDay(2, '2026-08-16').coverage.length, 2)
+    assert.equal(state.relieverDay(2, '2026-08-17').units, 100)
+    assert.equal(state.relieverDateTotal('2026-08-16'), 2)
+    assert.equal(state.relieverDateTotal('2026-08-17'), 1)
+    assert.equal(state.relieverDateTotal('2026-08-18'), 0)
+    assert.equal(state.relieverDateTotal('2026-08-16'), state.dateTotal('2026-08-16'))
+    assert.equal(state.relieverRosterTotal.value, state.gridTotal.value)
+    assert.equal(state.isBtrDay(2, '2026-08-16'), true)
+    assert.equal(state.isBtrDay(2, '2026-08-17'), true, 'One coverage hour receives a BTR label')
+    assert.equal(state.isBtrDay(1, '2026-08-16'), false, 'Taking a break does not make the REST employee a reliever')
+    assert.equal(state.sheetPeople.value[0].EmployeeID, 2, 'An employee with a BTR day sorts first')
+    // The reliever is also enrolled and takes their own break, including on a day they cover others.
+    state.data.value = { ...state.data.value,
+      employees: [...fixture.employees, fixture.relievers[0]],
+      relievers: [...fixture.relievers, fixture.employees[0]],
+      entries: [...state.data.value.entries,
+        { ...entry, BTRID: 4, ReplacedEmployeeID: 2, ReplacedEmployeeName: 'Doe, John Example', RelieverEmployeeID: 1, RelieverEmployeeName: 'Name, Example Data' },
+        { ...entry, BTRID: 5, AttendanceDate: '2026-08-18', ReplacedEmployeeID: 2, ReplacedEmployeeName: 'Doe, John Example', RelieverEmployeeID: 1, RelieverEmployeeName: 'Name, Example Data' }] }
+    assert.equal(state.sheetPeople.value.filter(person => person.EmployeeID === 2).length, 1, 'Enrolled reliever is never duplicated')
+    assert.equal(new Set(state.sheetPeople.value.map(person => person.EmployeeID)).size, state.sheetPeople.value.length)
+    assert.equal(state.employeeBtrTotal(2), 3)
+    assert.equal(state.personTotal(2), 2, 'Own breaks are preserved separately from coverage')
+    assert.equal(state.relieverDay(2, '2026-08-16').units, 200)
+    assert.equal(state.gridCell(2, '2026-08-16').units, 100, 'Both roles on one day remain accessible in the same row')
+    assert.equal(state.relieverDay(2, '2026-08-18'), undefined)
+    assert.equal(state.gridCell(2, '2026-08-18').units, 100, 'A REST-only day is not treated as BTR')
+    assert.equal(state.isBtrDay(1, '2026-08-16'), true, 'BTR is based on coverage assigned on that date')
+    assert.equal(state.isBtrDay(1, '2026-08-17'), false, 'BTR status does not carry into an unassigned date')
+    await state.openCell(fixture.relievers[0], '2026-08-16')
+    assert.equal(state.coveredEmployees.value.length, 2)
+    assert.equal(state.canReceiveCoverage.value, true)
+    assert.equal(state.cellRows.value.length, 1)
+    state.gridSearch.value = 'DJA-NOID001'
+    assert.equal(state.sheetPeople.value.length, 1, 'Search covers the unified employee list')
+    assert.equal(state.sheetBtrDateTotal('2026-08-16'), 2)
+    assert.equal(state.sheetBtrTotal.value, 3)
+    state.gridSearch.value = ''
+    assert.equal(state.sheetBtrTotal.value, state.gridTotal.value, 'Coverage is balanced, not added twice')
+    // Positive coverage, including fractions of an hour, always has BTR status.
+    await state.openCell(fixture.employees[0], '2026-08-16')
+    state.updateCoverage(state.cellRows.value.find(row => row.saved?.BTRID === 1), '0.99')
+    assert.equal(state.isBtrDay(2, '2026-08-16'), true)
+    state.updateCoverage(state.cellRows.value.find(row => row.saved?.BTRID === 1), '1')
+    assert.equal(state.isBtrDay(2, '2026-08-16'), true)
+    await state.openCell(fixture.employees[0], '2026-08-17')
+    state.updateCoverage(state.cellRows.value.find(row => row.saved?.BTRID === 2), '0.01')
+    assert.equal(state.isBtrDay(2, '2026-08-17'), true, 'Fractional BTR hours also receive the label')
+    assert.equal(state.relieverDay(2, '2026-08-17').units, 1)
+    state.updateCoverage(state.cellRows.value.find(row => row.saved?.BTRID === 2), '0')
+    assert.equal(state.isBtrDay(2, '2026-08-17'), false, 'Zero hours cannot create BTR status')
+    assert.equal(state.ready.value, false, 'Zero-hour coverage remains invalid for saving')
+    state.drafts.value = []
     state.data.value = { ...fixture, batch: { ...batch, Status: 'Computed to Payroll' } }
     state.addCoverage(); assert.equal(state.drafts.value.length, 0, 'Computed DTR stays read-only')
     state.data.value = { ...fixture, batch: { ...batch, PeriodStart: '2028-02-16', PeriodEnd: '2028-02-29' } }

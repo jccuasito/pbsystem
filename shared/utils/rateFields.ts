@@ -1,4 +1,4 @@
-// Stored/API fields retain legacy deduction values for compatibility.
+// Shared stored/API monetary fields for payroll and billing rates.
 export const rateMoneyFields = [
   { key: 'RegularRate', label: 'Regular' },
   { key: 'OTRate', label: 'OT' },
@@ -16,6 +16,6 @@ export const rateMoneyFields = [
   { key: 'Allowance', label: 'Allowance' },
 ] as const
 
-// Payroll will deduct missed time using the applicable regular/OT rate.
-export const rateFormFields = rateMoneyFields.filter(field => field.key !== 'LateDeduction' && field.key !== 'UndertimeDeduction')
+// Forms and linked-rate previews expose every configurable rate.
+export const rateFormFields = rateMoneyFields
 export const emptyRateAmounts = () => Object.fromEntries(rateFormFields.map(({ key }) => [key, 0]))
