@@ -451,7 +451,7 @@ onBeforeUnmount(() => {
           </div>
 
           <KeepAlive>
-            <component v-if="activePageComponent" :key="activeWorkspaceView" :is="activePageComponent" @navigate="openWorkspaceView" />
+            <component v-if="activePageComponent" :key="activeWorkspaceView" :is="activePageComponent" class="dash-workspace-page" @navigate="openWorkspaceView" />
           </KeepAlive>
 
           <section v-if="activeWorkspaceView && !activePageComponent" class="workspace-placeholder">

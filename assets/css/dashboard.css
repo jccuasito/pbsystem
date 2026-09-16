@@ -276,7 +276,17 @@
 .dash-user-chip .dash-avatar { width: 30px; height: 30px; font-size: 0.7rem; }
 .dash-user-chip span { font-size: 0.82rem; font-weight: 700; color: var(--ink); }
 
-.dash-content { padding: 28px; max-width: 1320px; }
+.dash-content { box-sizing: border-box; width: 100%; min-width: 0; padding: 28px; }
+/* Embedded pages share the shell's gutters and available width in either sidebar state.
+   Standalone page routes retain their own padding and width limits. */
+.dash-shell .dash-content > .dash-workspace-page {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
 
 .dash-header h1 { margin: 0; font-size: 1.75rem; font-weight: 800; letter-spacing: -0.035em; color: var(--ink); }
 .dash-header p { margin: 6px 0 0; color: var(--muted); font-size: 0.92rem; }
