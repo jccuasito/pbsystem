@@ -11,6 +11,8 @@ const root = path.resolve(__dirname, '..')
 const statusModule = { exports: {} }
 vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, 'shared/utils/dtrAttendanceStatus.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code, { module: statusModule })
 const { automaticDtrAttendanceStatus } = statusModule.exports
+const alertModule = { exports: {} }
+vm.runInNewContext(transformSync(fs.readFileSync(path.join(root, 'components/alertmessage/messages.ts'), 'utf8'), { loader: 'ts', format: 'cjs' }).code, { module: alertModule })
 const filename = path.join(root, 'app/components/DtrAttendanceWorkspace.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
 const policy = { AutoBreakEnabled: 1, DefaultBreakMinutes: 60, RelieverPositionOverrideEnabled: 1, DayShiftNDEnabled: 0 }
@@ -25,7 +27,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
   const context = {
     Date,
     ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 11, PeriodStart: '2026-09-01', PeriodEnd: '2026-09-15' } }), defineEmits: () => () => {},
-    module: { exports: {} }, require: name => name.includes('dtrAttendanceStatus') ? statusModule.exports : require(name),
+    module: { exports: {} }, require: name => name.includes('dtrAttendanceStatus') ? statusModule.exports : name.endsWith('/messages') ? alertModule.exports : name.endsWith('.vue') ? {} : require(name),
     xlsxForTest: { ...require('xlsx'), writeFile: workbook => workbooks.push(workbook) },
     $fetch: async (url, options) => {
       if (options) requests.push({ url, ...options })
