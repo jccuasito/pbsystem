@@ -1,6 +1,7 @@
 import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { alertMessages, DEPLOYMENT_ALREADY_EXISTS } from '../../components/alertmessage/messages'
 
 type EmployeeSection = 'profile' | 'government' | 'education' | 'license' | 'training' | 'clearance' | 'bank' | 'insurance'
 
@@ -55,7 +56,7 @@ const activeEmployees = async () => {
   const [rows] = await pool.execute<any[]>(
     [
       'SELECT e.EmployeeID, e.EmployeeNumber, CONCAT_WS(\' \', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,',
-      '  ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName',
+      '  e.AgencyPositionID, ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName',
       'FROM employee e',
       'INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID',
       'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
@@ -255,7 +256,7 @@ async function activeClientRates() {
 }
 
 async function deploymentLookups() {
-  const [agencies, clientRates, employees, sites, shiftCodes] = await Promise.all([
+  const [agencies, clientRates, employees, sites, shiftCodes, agencyShiftCodes] = await Promise.all([
     activeAgencies(),
     activeClientRates(),
     activeEmployees(),
@@ -267,9 +268,10 @@ async function deploymentLookups() {
        INNER JOIN site s ON s.SiteID = ss.SiteID
        WHERE ss.Status = 'Active' AND sc.Status = 'Active' AND s.Status = 'Active'
        ORDER BY s.SiteName, sc.ShiftCode, sc.ShiftName`
-    ).then(([rows]) => rows)
+    ).then(([rows]) => rows),
+    pool.execute<any[]>("SELECT ShiftCodeID, AgencyID, ShiftCode, ShiftName, TimeIn, TimeOut FROM shift_code WHERE Status = 'Active' ORDER BY ShiftCode, ShiftName").then(([rows]) => rows)
   ])
-  return { agencies, clientRates, employees, sites, shiftCodes }
+  return { agencies, clientRates, employees, sites, shiftCodes, agencyShiftCodes }
 }
 
 function deploymentSql(filters: string[]) {
@@ -444,7 +446,9 @@ export async function createDeployment(event: any) {
   const employeeId = parseInteger(body.EmployeeID, 'EmployeeID')
   const clientRateID = parseInteger(body.ClientRateID, 'ClientRateID')
   const siteID = parseInteger(body.SiteID, 'SiteID')
-  const siteShiftID = parseInteger(body.SiteShiftID, 'SiteShiftID')
+  const shiftCodeID = parseInteger(body.ShiftCodeID, 'ShiftCodeID', true)
+  let siteShiftID = parseInteger(body.SiteShiftID, 'SiteShiftID', true)
+  if (!shiftCodeID && !siteShiftID) throw createError({ statusCode: 400, statusMessage: 'Select a shift for this deployment.' })
   const deploymentType = parseText(body.DeploymentType) || 'Regular'
   if (deploymentType !== 'Regular' && deploymentType !== 'Reliever') {
     throw createError({ statusCode: 400, statusMessage: 'Deployment type must be Regular or Reliever.' })
@@ -452,13 +456,14 @@ export async function createDeployment(event: any) {
   const startDate = parseDate(body.StartDate)
   if (!startDate) throw createError({ statusCode: 400, statusMessage: 'StartDate is required.' })
   const endDate = parseDate(body.EndDate)
+  if (endDate && endDate < startDate) throw createError({ statusCode: 400, statusMessage: 'End date must be on or after start date.' })
   const remarks = parseText(body.Remarks)
 
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
     const [[employee]] = await connection.execute<any[]>(
-      `SELECT ap.AgencyID
+      `SELECT e.AgencyPositionID, ap.AgencyID
        FROM employee e
        INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
        WHERE e.EmployeeID = ? AND e.Status = 'Active'
@@ -467,8 +472,23 @@ export async function createDeployment(event: any) {
     )
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
 
+    // The employee lock serializes repeated/concurrent submissions. Check before
+    // changing any site link or deployment; transfers have a separate endpoint.
+    const [[conflict]] = await connection.execute<any[]>(
+      `SELECT DeploymentID FROM employee_deployment
+       WHERE EmployeeID = ? AND IsPermanentSite = 1
+         AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
+       LIMIT 1 FOR UPDATE`,
+      [employeeId, endDate || '9999-12-31', startDate]
+    )
+    if (conflict) throw createError({
+      statusCode: 409,
+      statusMessage: alertMessages.deploymentAlreadyExists().message,
+      data: { code: DEPLOYMENT_ALREADY_EXISTS, deploymentId: conflict.DeploymentID },
+    })
+
     const [[clientRate]] = await connection.execute<any[]>(
-      `SELECT cr.ClientID, ap.AgencyID
+      `SELECT cr.ClientID, pr.AgencyPositionID, ap.AgencyID
        FROM client_rate cr
        INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
        INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
@@ -479,25 +499,31 @@ export async function createDeployment(event: any) {
     if (!clientRate || Number(clientRate.AgencyID) !== Number(employee.AgencyID)) {
       throw createError({ statusCode: 400, statusMessage: 'Select a client rate registered under the employee\'s current agency.' })
     }
+    if (Number(clientRate.AgencyPositionID) !== Number(employee.AgencyPositionID)) {
+      throw createError({ statusCode: 400, statusMessage: alertMessages.deploymentPositionMismatch().message })
+    }
 
     const [[site]] = await connection.execute<any[]>(
-      'SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1',
+      'SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1 FOR UPDATE',
       [siteID, clientRate.ClientID]
     )
     if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site that belongs to the selected client rate.' })
 
-    const [[shift]] = await connection.execute<any[]>(
-      'SELECT SiteShiftID FROM site_shift WHERE SiteShiftID = ? AND SiteID = ? AND Status = \'Active\' LIMIT 1',
-      [siteShiftID, siteID]
-    )
-    if (!shift) throw createError({ statusCode: 400, statusMessage: 'Select an active shift for the selected site.' })
-
-    const [[activeRow]] = await connection.execute<any[]>(
-      `SELECT DeploymentID, StartDate FROM employee_deployment WHERE EmployeeID = ? AND (EndDate IS NULL OR EndDate >= CURDATE()) ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`,
-      [employeeId]
-    )
-    if (activeRow?.DeploymentID) {
-      await connection.execute('UPDATE employee_deployment SET EndDate = DATE_SUB(?, INTERVAL 1 DAY) WHERE DeploymentID = ?', [startDate, activeRow.DeploymentID])
+    if (shiftCodeID) {
+      const [[shift]] = await connection.execute<any[]>("SELECT ShiftCodeID FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = 'Active' FOR UPDATE", [shiftCodeID, employee.AgencyID])
+      if (!shift) throw createError({ statusCode: 400, statusMessage: 'Select an active shift code from the employee\'s agency.' })
+      const [[linked]] = await connection.execute<any[]>('SELECT SiteShiftID, Status FROM site_shift WHERE SiteID = ? AND ShiftCodeID = ? LIMIT 1 FOR UPDATE', [siteID, shiftCodeID])
+      if (linked) {
+        siteShiftID = linked.SiteShiftID
+        if (linked.Status !== 'Active') await connection.execute("UPDATE site_shift SET Status = 'Active' WHERE SiteShiftID = ?", [siteShiftID])
+      } else {
+        const [link] = await connection.execute<any>("INSERT INTO site_shift (SiteID, ShiftCodeID, NDPolicyOverride, Status) VALUES (?, ?, 'Inherit', 'Active')", [siteID, shiftCodeID])
+        siteShiftID = link.insertId
+      }
+    } else {
+      const [[shift]] = await connection.execute<any[]>(`SELECT ss.SiteShiftID FROM site_shift ss INNER JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID
+        WHERE ss.SiteShiftID = ? AND ss.SiteID = ? AND ss.Status = 'Active' AND sc.Status = 'Active' AND sc.AgencyID = ? LIMIT 1`, [siteShiftID, siteID, employee.AgencyID])
+      if (!shift) throw createError({ statusCode: 400, statusMessage: 'Select an active shift for this site and employee agency.' })
     }
 
     const [result] = await connection.execute<any>(

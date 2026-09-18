@@ -2,7 +2,18 @@ export type AlertMessage = { title: string; message: string; tone: 'info' | 'suc
 
 // Pure data: shared by Vue screens and server validation. Keep new alert copy here.
 export const DTR_EMPLOYEE_ALREADY_ADDED = 'DTR_EMPLOYEE_ALREADY_ADDED'
+export const DEPLOYMENT_ALREADY_EXISTS = 'DEPLOYMENT_ALREADY_EXISTS'
 export const alertMessages = {
+  deploymentPositionMismatch: (): AlertMessage => ({
+    title: 'Position does not match',
+    message: 'Select a client rate matching the agency and position saved in Employee List. Refresh the form if the employee position was recently changed.',
+    tone: 'error',
+  }),
+  deploymentAlreadyExists: (name = 'This employee'): AlertMessage => ({
+    title: 'Employee already deployed',
+    message: `${name} already has a deployment covering these dates. No new deployment was added and the existing assignment was not changed. Check Deployment History, or use Transfer in Employee List to move the employee to another site.`,
+    tone: 'info',
+  }),
   dtrEmployeeAlreadyAdded: (name = 'This employee'): AlertMessage => ({
     title: 'Already added to this DTR',
     message: `${name} is already included in this DTR. No duplicate was added and the existing assignment was not changed. To update the employee, use their row in the DTR.`,
