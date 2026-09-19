@@ -36,6 +36,12 @@ const shiftSetupError = ref('')
 const createNewShiftCode = ref(false)
 const filters = ref({ agencyId: '', positionId: '' })
 const search = ref('')
+const visibleEmployeeCount = ref(50)
+const loadMoreSentinel = ref<HTMLElement | null>(null)
+const isCompactView = ref(false)
+const employeeBatchSize = 50
+let employeeObserver: IntersectionObserver | null = null
+let compactViewQuery: MediaQueryList | null = null
 const deleteWarning = alertMessages.employeePermanentDelete()
 
 const form = ref({
@@ -194,6 +200,27 @@ const filteredItems = computed(() => {
     .some((value) => String(value || '').toLowerCase().includes(query)))
 })
 
+const visibleItems = computed(() => filteredItems.value.slice(0, visibleEmployeeCount.value))
+const hasMoreEmployees = computed(() => visibleItems.value.length < filteredItems.value.length)
+
+function loadMoreEmployees() {
+  if (!hasMoreEmployees.value) return
+  visibleEmployeeCount.value = Math.min(visibleEmployeeCount.value + employeeBatchSize, filteredItems.value.length)
+}
+
+function handleCompactViewChange(event: MediaQueryListEvent) {
+  isCompactView.value = event.matches
+}
+
+watch([search, () => filters.value.agencyId, () => filters.value.positionId], () => {
+  visibleEmployeeCount.value = employeeBatchSize
+})
+
+watch(loadMoreSentinel, (next, previous) => {
+  if (previous) employeeObserver?.unobserve(previous)
+  if (next) employeeObserver?.observe(next)
+})
+
 watch(() => filters.value.agencyId, () => {
   filters.value.positionId = ''
   void load()
@@ -308,8 +335,21 @@ async function saveTransfer() {
 }
 
 onMounted(load)
-onMounted(() => document.addEventListener('click', closeRatePicker))
-onBeforeUnmount(() => document.removeEventListener('click', closeRatePicker))
+onMounted(() => {
+  document.addEventListener('click', closeRatePicker)
+  compactViewQuery = window.matchMedia('(max-width: 980px)')
+  isCompactView.value = compactViewQuery.matches
+  compactViewQuery.addEventListener('change', handleCompactViewChange)
+  employeeObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) loadMoreEmployees()
+  }, { rootMargin: '500px 0px' })
+  if (loadMoreSentinel.value) employeeObserver.observe(loadMoreSentinel.value)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeRatePicker)
+  compactViewQuery?.removeEventListener('change', handleCompactViewChange)
+  employeeObserver?.disconnect()
+})
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </script>
 
@@ -349,8 +389,19 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
-    <div class="table-wrap">
-      <table>
+    <div class="table-wrap employee-table-wrap">
+      <table class="employee-table">
+        <colgroup>
+          <col class="col-id" />
+          <col class="col-number" />
+          <col class="col-name" />
+          <col class="col-agency" />
+          <col class="col-position" />
+          <col class="col-site" />
+          <col class="col-deployment" />
+          <col class="col-status" />
+          <col class="col-actions" />
+        </colgroup>
         <thead>
           <tr>
             <th>Employee ID</th>
@@ -365,21 +416,82 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           </tr>
         </thead>
         <tbody>
-          <tr v-if="loading"><td colspan="9">Loading...</td></tr>
-          <tr v-else-if="!filteredItems.length"><td colspan="9">No employees found.</td></tr>
-          <tr v-for="item in filteredItems" :key="item.EmployeeID">
-            <td class="employee-id">{{ formatEmployeeId(item.EmployeeID) }}</td>
-            <td>{{ formatEmployeeNumber(item.EmployeeNumber) }}</td>
-            <td>{{ formatEmployeeName(item) }}</td>
-            <td>{{ format(item.AgencyName) }}</td>
-            <td>{{ format(item.PositionName) }}</td>
-            <td>{{ format(item.SiteName) }}</td>
-            <td><span class="status" :class="`status--${String(item.DeploymentStatus || 'unassigned').toLowerCase()}`">{{ item.DeploymentStatus }}</span></td>
-            <td><span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span></td>
-            <td class="row-actions"><button @click="reset(item); modalOpen = true">Edit</button><button :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">Transfer</button><button :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button><button class="delete-action" @click="openDelete(item)">Delete</button></td>
+          <tr v-if="loading" class="table-message"><td colspan="9">Loading...</td></tr>
+          <tr v-else-if="!filteredItems.length" class="table-message"><td colspan="9">No employees found.</td></tr>
+          <tr v-for="item in visibleItems" :key="item.EmployeeID">
+            <td class="employee-id" data-label="Employee ID">{{ formatEmployeeId(item.EmployeeID) }}</td>
+            <td data-label="Employee No.">{{ formatEmployeeNumber(item.EmployeeNumber) }}</td>
+            <td class="employee-name" data-label="Name">{{ formatEmployeeName(item) }}</td>
+            <td data-label="Agency">{{ format(item.AgencyName) }}</td>
+            <td data-label="Position">{{ format(item.PositionName) }}</td>
+            <td data-label="Current Site">{{ format(item.SiteName) }}</td>
+            <td data-label="Deployment"><span class="status" :class="`status--${String(item.DeploymentStatus || 'unassigned').toLowerCase()}`">{{ item.DeploymentStatus }}</span></td>
+            <td data-label="Status"><span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span></td>
+            <td class="row-actions" data-label="Actions">
+              <button class="action-icon action-icon--edit" type="button" aria-label="Edit employee" title="Edit" @click="reset(item); modalOpen = true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              </button>
+              <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee" title="Transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
+              </button>
+              <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/></svg>
+              </button>
+              <button class="action-icon action-icon--delete" type="button" aria-label="Delete employee permanently" title="Delete permanently" @click="openDelete(item)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <section class="mobile-employee-list" aria-label="Employee list">
+      <p v-if="loading" class="mobile-list-message">Loading...</p>
+      <p v-else-if="!filteredItems.length" class="mobile-list-message">No employees found.</p>
+      <article v-for="item in visibleItems" :key="item.EmployeeID" class="employee-card">
+        <header class="employee-card__head">
+          <div class="employee-card__identity">
+            <strong>{{ formatEmployeeName(item) }}</strong>
+            <span>{{ formatEmployeeId(item.EmployeeID) }} · {{ formatEmployeeNumber(item.EmployeeNumber) }}</span>
+          </div>
+          <span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span>
+        </header>
+
+        <div class="employee-card__details">
+          <p class="employee-card__agency">{{ format(item.AgencyName) }}</p>
+          <p>{{ format(item.PositionName) }} <span aria-hidden="true">·</span> {{ format(item.SiteName) }}</p>
+        </div>
+
+        <footer class="employee-card__footer">
+          <div class="employee-card__deployment">
+            <span>Deployment</span>
+            <span class="status" :class="`status--${String(item.DeploymentStatus || 'unassigned').toLowerCase()}`">{{ item.DeploymentStatus }}</span>
+          </div>
+          <div class="mobile-actions" aria-label="Employee actions">
+            <button class="action-icon action-icon--edit" type="button" aria-label="Edit employee" title="Edit" @click="reset(item); modalOpen = true">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee" title="Transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
+            </button>
+            <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/></svg>
+            </button>
+            <button class="action-icon action-icon--delete" type="button" aria-label="Delete employee permanently" title="Delete permanently" @click="openDelete(item)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
+            </button>
+          </div>
+        </footer>
+      </article>
+    </section>
+
+    <div v-if="!loading && filteredItems.length" class="employee-list-progress" aria-live="polite">
+      <span>Showing <strong>{{ visibleItems.length }}</strong> of <strong>{{ filteredItems.length }}</strong> employees</span>
+      <button v-if="hasMoreEmployees" ref="loadMoreSentinel" type="button" @click="loadMoreEmployees">
+        Load more employees
+      </button>
+      <span v-else>All employees displayed</span>
     </div>
 
     <Teleport to="body">
@@ -517,4 +629,428 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
 <style scoped>
 .employees-page{padding:32px;max-width:1400px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.filters{display:grid;grid-template-columns:minmax(280px,1fr) minmax(180px,220px) minmax(180px,220px);gap:14px;margin:0 0 16px}.filters label{display:grid;min-width:0;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters input,.filters select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff;font:inherit}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}.row-actions button{border:1px solid #cfd8e6;border-radius:7px;background:#fff;padding:7px 9px;color:#24415f;font-weight:700;cursor:pointer}.row-actions .delete-action{border-color:#fecaca;color:#b42318;background:#fff7f7}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.transfer-subtitle{margin:-5px 0 0;color:#405675;font-weight:700}.transfer-note{margin:0;padding:10px 12px;border-radius:8px;background:#eff6ff;color:#315887;font-size:.85rem;line-height:1.4}.rate-picker{position:relative}.rate-picker input{padding-right:86px}.rate-picker small{color:#637287;font-weight:600}.rate-search-button{position:absolute;right:6px;top:27px;border:0;border-radius:6px;background:#2349e6;color:#fff;padding:7px 11px;font-weight:800;cursor:pointer}.rate-picker__results{position:absolute;z-index:4;top:100%;left:0;right:0;max-height:270px;overflow:auto;border:1px solid #bfcee4;border-radius:8px;background:#fff;box-shadow:0 12px 26px rgba(15,23,42,.16)}.rate-picker__results button{display:grid;width:100%;gap:3px;padding:10px 12px;border:0;border-bottom:1px solid #edf1f6;background:#fff;text-align:left;cursor:pointer;color:#1d3557}.rate-picker__results button:hover{background:#eff6ff}.rate-picker__results span{font-size:.8rem;color:#61708a}.rate-picker__results p{margin:0;padding:12px;color:#66758b;font-weight:600}.shift-missing{display:grid;gap:5px;padding:12px;border:1px solid #f5c978;border-radius:9px;background:#fff9ed;color:#80530b;font-size:.85rem}.shift-missing span{color:#8a6a30}.shift-missing button{justify-self:start;border:0;border-radius:7px;background:#f59e0b;color:#fff;padding:7px 10px;font-weight:800;cursor:pointer}.shift-choice{display:flex;gap:8px;flex-wrap:wrap}.shift-choice button{border:1px solid #cfd8e6;border-radius:7px;background:#fff;padding:8px 10px;font-weight:700;cursor:pointer}.shift-choice button.active{border-color:#2349e6;background:#eef3ff;color:#2043cc}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}.delete-modal{width:min(100%,540px);justify-items:center;text-align:center;gap:14px}.delete-modal__icon{display:grid;place-items:center;width:50px;height:50px;border-radius:50%;background:#fee2e2;color:#b42318;font-size:1.5rem;font-weight:900}.delete-modal__employee{margin:0;color:#1e3655;font-weight:800}.delete-modal__employee span{color:#64748b;font-weight:700}.delete-modal__note{margin:0;padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7;color:#7f1d1d;font-size:.88rem;line-height:1.55;text-align:left}.delete-modal footer{width:100%}.delete-modal footer button{min-width:90px;border:1px solid #cfd8e6;border-radius:8px;background:#fff;padding:9px 16px;font-weight:800;cursor:pointer}.delete-modal footer .danger{border-color:#dc2626;background:#dc2626;color:#fff}@media(max-width:760px){.employees-page{padding:20px}.filters,.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
+</style>
+
+<style scoped>
+.employee-table-wrap {
+  overflow: hidden;
+}
+
+.employee-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.employee-table .col-id { width: 8%; }
+.employee-table .col-number { width: 9%; }
+.employee-table .col-name { width: 12%; }
+.employee-table .col-agency { width: 16%; }
+.employee-table .col-position { width: 10%; }
+.employee-table .col-site { width: 10%; }
+.employee-table .col-deployment { width: 10%; }
+.employee-table .col-status { width: 7%; }
+.employee-table .col-actions { width: 174px; }
+
+.employee-table th,
+.employee-table td {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+.employee-table .employee-id,
+.employee-table .employee-name {
+  color: #17375f;
+  font-weight: 800;
+}
+
+.employee-table .row-actions {
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  padding-right: 10px;
+  padding-left: 10px;
+}
+
+.employee-table th:last-child {
+  text-align: center;
+}
+
+.action-icon {
+  display: inline-grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border-color: #d3dcea;
+  border-radius: 8px;
+  color: #315173;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, transform .16s ease;
+}
+
+.action-icon:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #9cb5dc;
+  background: #edf4ff;
+  color: #174ea6;
+}
+
+.action-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.action-icon--deactivate {
+  color: #9a6700;
+}
+
+.action-icon--deactivate:hover:not(:disabled) {
+  border-color: #f3c969;
+  background: #fff8e5;
+  color: #7a4e00;
+}
+
+.action-icon--delete {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b42318;
+}
+
+.action-icon--delete:hover:not(:disabled) {
+  border-color: #ef4444;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.mobile-employee-list {
+  display: none;
+}
+
+.employee-list-progress {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 14px;
+  color: #607089;
+  font-size: .82rem;
+}
+
+.employee-list-progress button {
+  min-height: 36px;
+  border: 1px solid #d3dcea;
+  border-radius: 8px;
+  background: #fff;
+  color: #24415f;
+  font: inherit;
+  font-weight: 800;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.employee-list-progress button:hover {
+  border-color: #9cb5dc;
+  background: #edf4ff;
+  color: #174ea6;
+}
+
+.employee-card,
+.mobile-list-message {
+  border: 1px solid #dce3ee;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(30, 54, 85, .045);
+}
+
+.mobile-list-message {
+  margin: 0;
+  padding: 20px;
+  text-align: center;
+  color: #607089;
+}
+
+.employee-card {
+  overflow: hidden;
+}
+
+.employee-card__head,
+.employee-card__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.employee-card__head {
+  border-bottom: 1px solid #edf1f6;
+}
+
+.employee-card__identity {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.employee-card__identity strong {
+  overflow: hidden;
+  color: #17375f;
+  font-size: .94rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-card__identity span {
+  overflow: hidden;
+  color: #66758b;
+  font-size: .72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-card__details {
+  display: grid;
+  gap: 4px;
+  padding: 10px 14px;
+  color: #53657d;
+  font-size: .79rem;
+}
+
+.employee-card__details p {
+  margin: 0;
+}
+
+.employee-card__agency {
+  overflow: hidden;
+  color: #283f5e;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-card__footer {
+  border-top: 1px solid #edf1f6;
+  background: #fbfcfe;
+}
+
+.employee-card__deployment {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.employee-card__deployment > span:first-child {
+  color: #66758b;
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.mobile-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 36px);
+  gap: 6px;
+}
+
+.mobile-actions .action-icon {
+  width: 36px;
+  height: 36px;
+}
+
+@media (max-width: 980px) {
+  .employee-table-wrap {
+    display: none;
+  }
+
+  .mobile-employee-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .employee-table-wrap {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .employee-table,
+  .employee-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .employee-table colgroup,
+  .employee-table thead {
+    display: none;
+  }
+
+  .employee-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .employee-table tbody tr:not(.table-message) {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid #dce3ee;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 5px 16px rgba(30, 54, 85, .05);
+  }
+
+  .employee-table tbody tr:not(.table-message) td {
+    display: grid;
+    grid-template-columns: minmax(110px, .7fr) minmax(0, 1.3fr);
+    gap: 12px;
+    align-items: center;
+    width: auto;
+    padding: 10px 14px;
+    border-bottom: 1px solid #edf1f6;
+    text-align: left;
+  }
+
+  .employee-table tbody tr:not(.table-message) td::before {
+    content: attr(data-label);
+    color: #66758b;
+    font-size: .69rem;
+    font-weight: 800;
+    letter-spacing: .045em;
+    text-transform: uppercase;
+  }
+
+  .employee-table tbody tr:not(.table-message) td:last-child {
+    border-bottom: 0;
+  }
+
+  .employee-table .status {
+    justify-self: start;
+  }
+
+  .employee-table .row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .employee-table .row-actions::before {
+    margin-right: auto;
+  }
+
+  .employee-table .table-message {
+    display: block;
+  }
+
+  .employee-table .table-message td {
+    display: block;
+    padding: 18px;
+    border: 1px solid #dce3ee;
+    border-radius: 14px;
+    background: #fff;
+    text-align: center;
+  }
+}
+
+@media (max-width: 600px) {
+  .employees-page {
+    padding: 16px 12px;
+  }
+
+  .page-head {
+    gap: 14px;
+  }
+
+  .actions-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .actions-row .primary,
+  .actions-row .ghost {
+    min-width: 0;
+    padding: 10px 8px;
+    font-size: .83rem;
+    text-align: center;
+  }
+
+  .filters {
+    gap: 10px;
+  }
+
+  .employee-list-progress {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    text-align: center;
+  }
+
+  .employee-list-progress button {
+    width: 100%;
+  }
+
+  .employee-table tbody tr:not(.table-message) td {
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 8px;
+    padding: 9px 12px;
+  }
+
+  .employee-table .row-actions {
+    flex-wrap: wrap;
+  }
+
+  .row-actions .action-icon {
+    flex-basis: 42px;
+    width: 42px;
+    height: 42px;
+  }
+
+  .action-icon svg {
+    width: 19px;
+    height: 19px;
+  }
+}
+
+@media (max-width: 380px) {
+  .actions-row {
+    grid-template-columns: 1fr;
+  }
+
+  .employee-table tbody tr:not(.table-message) td {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .employee-table .row-actions::before {
+    width: 100%;
+    margin-bottom: 4px;
+  }
+
+  .employee-card__head {
+    align-items: flex-start;
+  }
+
+  .employee-card__footer {
+    display: grid;
+    gap: 10px;
+  }
+
+  .mobile-actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .mobile-actions .action-icon {
+    width: 100%;
+  }
+}
 </style>
