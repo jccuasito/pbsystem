@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceStatus'
+import { automaticDtrAttendanceStatus } from '~~/shared/utils/dtrAttendanceStatus'
 import SystemAlert from '../../components/alertmessage/SystemAlert.vue'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED, type AlertMessage } from '../../components/alertmessage/messages'
 type Dtr={BatchID:number,AgencyID?:number,AgencyName:string,ClientName:string,SiteName:string,PeriodStart:string,PeriodEnd:string}

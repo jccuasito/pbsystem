@@ -361,6 +361,42 @@ export async function deleteEmployee(event: any) {
   return { success: true }
 }
 
+export async function permanentlyDeleteEmployee(event: any) {
+  const session = requireSession(event)
+  void session.sub
+  const employeeId = parseInteger(getRouterParam(event, 'id'), 'Employee') as number
+  const connection = await pool.getConnection()
+
+  try {
+    await connection.beginTransaction()
+    const [[employee]] = await connection.execute<any[]>(
+      'SELECT EmployeeID FROM employee WHERE EmployeeID = ? FOR UPDATE',
+      [employeeId]
+    )
+    if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+
+    // All other employee-owned rows use ON DELETE CASCADE. BTR has two
+    // employee references with RESTRICT, so remove both roles first.
+    const [btrResult] = await connection.execute<any>(
+      'DELETE FROM attendance_dtr_btr WHERE ReplacedEmployeeID = ? OR RelieverEmployeeID = ?',
+      [employeeId, employeeId]
+    )
+    const [employeeResult] = await connection.execute<any>(
+      'DELETE FROM employee WHERE EmployeeID = ?',
+      [employeeId]
+    )
+    if (!employeeResult.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+
+    await connection.commit()
+    return { success: true, deletedEmployeeId: employeeId, deletedBtrRows: Number(btrResult.affectedRows || 0) }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
 export async function getEmployeeDocuments(event: any) {
   const session = requireSession(event)
   void session.sub

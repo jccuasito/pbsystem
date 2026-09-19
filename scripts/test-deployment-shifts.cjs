@@ -28,7 +28,7 @@ test('deployment shows agency shifts without site links, resets dependent select
   }))
   try {
     await state.openNewDeployment()
-    Object.assign(state.form.value, { EmployeeID: '7', ClientRateID: '1', SiteID: '1', ShiftCodeID: '7' })
+    Object.assign(state.form.value, { EmployeeID: '7', ClientRateID: '1', SiteID: '1', ShiftCodeID: '7', StartDate: '2026-09-19' })
     assert.equal(state.availableShifts.value.length, 1)
     assert.equal(state.availableShifts.value[0].ShiftCodeID, 7)
     assert.equal(state.canSave.value, true)

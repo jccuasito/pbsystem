@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import RateMoneyFields from './RateMoneyFields.vue'
-import { emptyRateAmounts, rateFormFields as rateMoneyFields } from '../shared/utils/rateFields'
+import { emptyRateAmounts, rateFormFields as rateMoneyFields } from '~~/shared/utils/rateFields'
 
 const items = ref<any[]>([]); const clients = ref<any[]>([]); const agencyPositions = ref<any[]>([]); const regions = ref<any[]>([]); const payrollRates = ref<any[]>([]); const billingRates = ref<any[]>([])
 const form = ref<any>({ ClientID: '', AgencyPositionID: '', PayrollRateID: '', BillingRateID: '', Status: 'Active' }); const editing = ref<any>(null); const open = ref(false); const busy = ref(false); const loading = ref(true); const error = ref(''); const inlinePayroll = ref(false); const inlineBilling = ref(false); const inlineRegionID = ref(''); const inlinePayrollAmounts = ref(emptyRateAmounts()); const inlineBillingAmounts = ref(emptyRateAmounts())

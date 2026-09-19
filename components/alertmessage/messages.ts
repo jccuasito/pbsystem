@@ -25,4 +25,9 @@ export const alertMessages = {
   dtrEmployeeAddFailed: (message?: string): AlertMessage => ({
     title: 'Unable to add employee', message: message || 'The employee could not be added. Please try again.', tone: 'error',
   }),
+  employeePermanentDelete: (): AlertMessage => ({
+    title: 'Are you sure you want to delete this employee?',
+    message: 'All records and transactions related to this employee will be permanently deleted, including attendance, DTR/BTR entries, deployments, payroll, deductions, loans, billing details, and employee documents. This action cannot be undone.',
+    tone: 'error',
+  }),
 }

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
+import { alertMessages } from '../../../components/alertmessage/messages'
 
 const emit = defineEmits<{ (event: 'navigate', view: 'employees-documents'): void }>()
 
@@ -15,8 +16,12 @@ const error = ref('')
 const formError = ref('')
 const modalOpen = ref(false)
 const transferOpen = ref(false)
+const deleteOpen = ref(false)
 const editing = ref<any>(null)
 const transferring = ref<any>(null)
+const deleting = ref<any>(null)
+const deleteBusy = ref(false)
+const deleteError = ref('')
 const transferBusy = ref(false)
 const transferError = ref('')
 const transferClientRates = ref<any[]>([])
@@ -31,6 +36,7 @@ const shiftSetupError = ref('')
 const createNewShiftCode = ref(false)
 const filters = ref({ agencyId: '', positionId: '' })
 const search = ref('')
+const deleteWarning = alertMessages.employeePermanentDelete()
 
 const form = ref({
   AgencyPositionID: '',
@@ -113,6 +119,35 @@ async function deactivate(item: any) {
     await load()
   } catch (cause: any) {
     error.value = cause.data?.statusMessage || 'Unable to deactivate employee.'
+  }
+}
+
+function openDelete(item: any) {
+  deleting.value = item
+  deleteError.value = ''
+  deleteOpen.value = true
+}
+
+function closeDelete() {
+  if (deleteBusy.value) return
+  deleteOpen.value = false
+  deleting.value = null
+  deleteError.value = ''
+}
+
+async function confirmDelete() {
+  if (!deleting.value || deleteBusy.value) return
+  deleteBusy.value = true
+  deleteError.value = ''
+  try {
+    await $fetch(`/api/employees/${deleting.value.EmployeeID}/permanent`, { method: 'DELETE' })
+    deleteOpen.value = false
+    deleting.value = null
+    await load()
+  } catch (cause: any) {
+    deleteError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to permanently delete employee.'
+  } finally {
+    deleteBusy.value = false
   }
 }
 
@@ -341,7 +376,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
             <td>{{ format(item.SiteName) }}</td>
             <td><span class="status" :class="`status--${String(item.DeploymentStatus || 'unassigned').toLowerCase()}`">{{ item.DeploymentStatus }}</span></td>
             <td><span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span></td>
-            <td class="row-actions"><button @click="reset(item); modalOpen = true">Edit</button><button :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">Transfer</button><button :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></td>
+            <td class="row-actions"><button @click="reset(item); modalOpen = true">Edit</button><button :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">Transfer</button><button :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button><button class="delete-action" @click="openDelete(item)">Delete</button></td>
           </tr>
         </tbody>
       </table>
@@ -457,9 +492,29 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
         </form>
       </div>
     </Teleport>
+
+    <Teleport to="body">
+      <div v-if="deleteOpen" class="backdrop">
+        <section class="modal delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-employee-title" aria-describedby="delete-employee-note">
+          <div class="delete-modal__icon" aria-hidden="true">!</div>
+          <h2 id="delete-employee-title">{{ deleteWarning.title }}</h2>
+          <p v-if="deleting" class="delete-modal__employee">
+            {{ formatEmployeeName(deleting) }} <span>({{ formatEmployeeId(deleting.EmployeeID) }})</span>
+          </p>
+          <p id="delete-employee-note" class="delete-modal__note">
+            <strong>Take note:</strong> {{ deleteWarning.message }}
+          </p>
+          <p v-if="deleteError" class="error" role="alert">{{ deleteError }}</p>
+          <footer>
+            <button type="button" :disabled="deleteBusy" @click="closeDelete">No</button>
+            <button type="button" class="danger" :disabled="deleteBusy" @click="confirmDelete">{{ deleteBusy ? 'Deleting...' : 'Yes' }}</button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
   </main>
 </template>
 
 <style scoped>
-.employees-page{padding:32px;max-width:1400px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.filters{display:grid;grid-template-columns:minmax(280px,1fr) minmax(180px,220px) minmax(180px,220px);gap:14px;margin:0 0 16px}.filters label{display:grid;min-width:0;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters input,.filters select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff;font:inherit}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}.row-actions button{border:1px solid #cfd8e6;border-radius:7px;background:#fff;padding:7px 9px;color:#24415f;font-weight:700;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.transfer-subtitle{margin:-5px 0 0;color:#405675;font-weight:700}.transfer-note{margin:0;padding:10px 12px;border-radius:8px;background:#eff6ff;color:#315887;font-size:.85rem;line-height:1.4}.rate-picker{position:relative}.rate-picker input{padding-right:86px}.rate-picker small{color:#637287;font-weight:600}.rate-search-button{position:absolute;right:6px;top:27px;border:0;border-radius:6px;background:#2349e6;color:#fff;padding:7px 11px;font-weight:800;cursor:pointer}.rate-picker__results{position:absolute;z-index:4;top:100%;left:0;right:0;max-height:270px;overflow:auto;border:1px solid #bfcee4;border-radius:8px;background:#fff;box-shadow:0 12px 26px rgba(15,23,42,.16)}.rate-picker__results button{display:grid;width:100%;gap:3px;padding:10px 12px;border:0;border-bottom:1px solid #edf1f6;background:#fff;text-align:left;cursor:pointer;color:#1d3557}.rate-picker__results button:hover{background:#eff6ff}.rate-picker__results span{font-size:.8rem;color:#61708a}.rate-picker__results p{margin:0;padding:12px;color:#66758b;font-weight:600}.shift-missing{display:grid;gap:5px;padding:12px;border:1px solid #f5c978;border-radius:9px;background:#fff9ed;color:#80530b;font-size:.85rem}.shift-missing span{color:#8a6a30}.shift-missing button{justify-self:start;border:0;border-radius:7px;background:#f59e0b;color:#fff;padding:7px 10px;font-weight:800;cursor:pointer}.shift-choice{display:flex;gap:8px;flex-wrap:wrap}.shift-choice button{border:1px solid #cfd8e6;border-radius:7px;background:#fff;padding:8px 10px;font-weight:700;cursor:pointer}.shift-choice button.active{border-color:#2349e6;background:#eef3ff;color:#2043cc}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:760px){.employees-page{padding:20px}.filters,.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
+.employees-page{padding:32px;max-width:1400px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:#eef3ff;color:#2043cc}.filters{display:grid;grid-template-columns:minmax(280px,1fr) minmax(180px,220px) minmax(180px,220px);gap:14px;margin:0 0 16px}.filters label{display:grid;min-width:0;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters input,.filters select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff;font:inherit}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}.row-actions button{border:1px solid #cfd8e6;border-radius:7px;background:#fff;padding:7px 9px;color:#24415f;font-weight:700;cursor:pointer}.row-actions .delete-action{border-color:#fecaca;color:#b42318;background:#fff7f7}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.transfer-subtitle{margin:-5px 0 0;color:#405675;font-weight:700}.transfer-note{margin:0;padding:10px 12px;border-radius:8px;background:#eff6ff;color:#315887;font-size:.85rem;line-height:1.4}.rate-picker{position:relative}.rate-picker input{padding-right:86px}.rate-picker small{color:#637287;font-weight:600}.rate-search-button{position:absolute;right:6px;top:27px;border:0;border-radius:6px;background:#2349e6;color:#fff;padding:7px 11px;font-weight:800;cursor:pointer}.rate-picker__results{position:absolute;z-index:4;top:100%;left:0;right:0;max-height:270px;overflow:auto;border:1px solid #bfcee4;border-radius:8px;background:#fff;box-shadow:0 12px 26px rgba(15,23,42,.16)}.rate-picker__results button{display:grid;width:100%;gap:3px;padding:10px 12px;border:0;border-bottom:1px solid #edf1f6;background:#fff;text-align:left;cursor:pointer;color:#1d3557}.rate-picker__results button:hover{background:#eff6ff}.rate-picker__results span{font-size:.8rem;color:#61708a}.rate-picker__results p{margin:0;padding:12px;color:#66758b;font-weight:600}.shift-missing{display:grid;gap:5px;padding:12px;border:1px solid #f5c978;border-radius:9px;background:#fff9ed;color:#80530b;font-size:.85rem}.shift-missing span{color:#8a6a30}.shift-missing button{justify-self:start;border:0;border-radius:7px;background:#f59e0b;color:#fff;padding:7px 10px;font-weight:800;cursor:pointer}.shift-choice{display:flex;gap:8px;flex-wrap:wrap}.shift-choice button{border:1px solid #cfd8e6;border-radius:7px;background:#fff;padding:8px 10px;font-weight:700;cursor:pointer}.shift-choice button.active{border-color:#2349e6;background:#eef3ff;color:#2043cc}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}.delete-modal{width:min(100%,540px);justify-items:center;text-align:center;gap:14px}.delete-modal__icon{display:grid;place-items:center;width:50px;height:50px;border-radius:50%;background:#fee2e2;color:#b42318;font-size:1.5rem;font-weight:900}.delete-modal__employee{margin:0;color:#1e3655;font-weight:800}.delete-modal__employee span{color:#64748b;font-weight:700}.delete-modal__note{margin:0;padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7;color:#7f1d1d;font-size:.88rem;line-height:1.55;text-align:left}.delete-modal footer{width:100%}.delete-modal footer button{min-width:90px;border:1px solid #cfd8e6;border-radius:8px;background:#fff;padding:9px 16px;font-weight:800;cursor:pointer}.delete-modal footer .danger{border-color:#dc2626;background:#dc2626;color:#fff}@media(max-width:760px){.employees-page{padding:20px}.filters,.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
 </style>

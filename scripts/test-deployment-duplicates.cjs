@@ -51,3 +51,16 @@ test('deployment form compiles with its warning and alert', () => {
   assert.deepEqual(compileTemplate({source:descriptor.template.content,filename,id:'deployment',compilerOptions:{bindingMetadata:script.bindings}}).errors,[])
   for(const style of descriptor.styles) assert.deepEqual(compileStyle({source:style.content,filename,id:'deployment',scoped:style.scoped}).errors,[])
 })
+test('deployment history formats database dates without timestamps or timezone shifts', () => {
+  const scope = vue.effectScope()
+  const source = parse(fs.readFileSync('app/pages/employees/deployment-history/index.vue','utf8')).descriptor.scriptSetup.content
+  const state = scope.run(() => evaluate(source+'\nmodule.exports={formatDeploymentDate,deploymentPeriod,shiftDisplay};', {
+    require: name => name === 'vue' ? {...vue,onMounted(){}} : name.includes('useRealtimeRefresh') ? {useRealtimeRefresh(){}} : name.includes('utils/employee') ? identities : name.includes('alertmessage/messages') ? messages : name.includes('utils/deployment') ? helpers : {},
+  }))
+  try {
+    assert.equal(state.formatDeploymentDate('2026-09-01T00:00:00.000Z'), 'Sep 1, 2026')
+    assert.equal(state.deploymentPeriod('2026-09-01T00:00:00.000Z', '2027-07-27T00:00:00.000Z'), 'Sep 1, 2026 – Jul 27, 2027')
+    assert.equal(state.deploymentPeriod('2026-09-01', null), 'Sep 1, 2026 – Ongoing')
+    assert.equal(state.shiftDisplay({ShiftCode:'DS0900-1800',ShiftName:'DS0900-1800'}), 'DS0900-1800')
+  } finally { scope.stop() }
+})

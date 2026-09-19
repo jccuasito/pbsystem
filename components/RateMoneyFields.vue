@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { rateFormFields } from '../shared/utils/rateFields'
+import { rateFormFields } from '~~/shared/utils/rateFields'
 defineProps<{ modelValue: Record<string, any> }>()
 const emit = defineEmits<{ 'update:modelValue': [value: Record<string, any>] }>()
 </script>

@@ -185,6 +185,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/employees` → `server/api/employees/index.post.ts`
   - `DELETE /api/employees/[param]` → `server/api/employees/[id].delete.ts`
   - `PUT /api/employees/[param]` → `server/api/employees/[id].put.ts`
+  - `DELETE /api/employees/[param]/permanent` → `server/api/employees/[id]/permanent.delete.ts`
   - `POST /api/employees/[param]/transfer` → `server/api/employees/[id]/transfer.post.ts`
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
   - `POST /api/employees/deployments` → `server/api/employees/deployments/index.post.ts`
@@ -240,11 +241,13 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
+  - `components/alertmessage/messages.ts`
 - API calls and handlers:
   - `GET /api/employees` → `server/api/employees/index.get.ts`
   - `POST /api/employees` → `server/api/employees/index.post.ts`
   - `DELETE /api/employees/[param]` → `server/api/employees/[id].delete.ts`
   - `PUT /api/employees/[param]` → `server/api/employees/[id].put.ts`
+  - `DELETE /api/employees/[param]/permanent` → `server/api/employees/[id]/permanent.delete.ts`
   - `POST /api/employees/[param]/transfer` → `server/api/employees/[id]/transfer.post.ts`
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
   - `POST /api/employees/site-shifts` → `server/api/employees/site-shifts.post.ts`

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { btrAttendanceWarning, btrDate, resolveBtrEmployee, summarizeBtr } from '../../shared/utils/dtrBtr'
-import type { BtrAttendanceDay, BtrEmployee, BtrEntry } from '../../shared/utils/dtrBtr'
-import { btrSheetHeaders, parseBtrSheet } from '../../shared/utils/dtrBtrSheet'
-import type { BtrSheetRow } from '../../shared/utils/dtrBtrSheet'
+import { btrAttendanceWarning, btrDate, resolveBtrEmployee, summarizeBtr } from '~~/shared/utils/dtrBtr'
+import type { BtrAttendanceDay, BtrEmployee, BtrEntry } from '~~/shared/utils/dtrBtr'
+import { btrSheetHeaders, parseBtrSheet } from '~~/shared/utils/dtrBtrSheet'
+import type { BtrSheetRow } from '~~/shared/utils/dtrBtrSheet'
 
 type Dtr={BatchID:number;AgencyName:string;ClientName:string;SiteName:string;PeriodStart:string;PeriodEnd:string}
 type Response={batch:{Status:string;PeriodStart:string;PeriodEnd:string};employees:BtrEmployee[];relievers:BtrEmployee[];attendance:BtrAttendanceDay[];entries:BtrEntry[]}

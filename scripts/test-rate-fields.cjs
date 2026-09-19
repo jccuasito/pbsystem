@@ -42,6 +42,7 @@ function component(filename, exposed, props = {}) {
   const state = evaluate(descriptor.scriptSetup.content+'\nmodule.exports={'+exposed+'};', {
     vue: { ...vue, onMounted() {} },
     '../shared/utils/rateFields': fields,
+    '~~/shared/utils/rateFields': fields,
     '~/composables/useRealtimeRefresh': { useRealtimeRefresh() {} },
   }, { defineProps: () => props, $fetch: async (url, options) => { calls.push({ url, options }); return { items: [], payrollRates: [], billingRates: [] } } })
   return { state, calls }

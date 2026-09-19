@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import RateMoneyFields from './RateMoneyFields.vue'
-import { rateFormFields as moneyFields } from '../shared/utils/rateFields'
+import { rateFormFields as moneyFields } from '~~/shared/utils/rateFields'
 
 const props = defineProps<{ resource: 'payroll-rate' | 'billing-rate'; title: string }>()
 const items = ref<any[]>([]); const agencyPositions = ref<any[]>([]); const regions = ref<any[]>([])
