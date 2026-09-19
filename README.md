@@ -1,5 +1,11 @@
 # Nuxt Minimal Starter
 
+## Project maps
+
+- `docs/CODE_MAP.md` lists every page route with related frontend files, global styles, API handlers, backend utilities, assets, and navigation links.
+- `docs/API_MAP.md` documents endpoint behavior, request/response shapes, and database tables.
+- Regenerate the code map after related code changes with `node scripts/generate-code-map.cjs`.
+
 Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
 
 ## Setup

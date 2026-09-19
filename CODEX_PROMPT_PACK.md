@@ -4,7 +4,7 @@
 1. I-save mo itong file sa root ng project mo bilang `CODEX_PROMPT_PACK.md` (o `docs/CODEX_PROMPT_PACK.md`).
 2. Sa **bawat bagong Codex session**, i-refer/paste mo lang yung **MASTER CONTEXT** section (isang beses lang, hindi na paulit-ulit ang buong explanation) tapos yung specific **PHASE prompt** na gagawin mo.
 3. Isang phase = isang session. Huwag pagsabayin. Kapag tapos na yung backend ng isang module, saka mo lang ikonekta yung frontend page nito — huwag lahat ng module i-wire sa isang tawag.
-4. Habang tumatakbo, palaging papasukin mo sa dulo ng prompt: *"Update `docs/API_MAP.md` with the new endpoints, tables touched, and frontend files wired."* — ito yung mapping/routing na hihingin mo. Sa ganitong paraan, may laging updated na "peta" ka ng system kahit hindi mo na babasahin ulit lahat ng code.
+4. Habang tumatakbo, palaging papasukin mo sa dulo ng prompt: *"Update `docs/API_MAP.md`, then run `node scripts/generate-code-map.cjs` so `docs/CODE_MAP.md` reflects every added, removed, renamed, or rewired file."* — ito yung mapping/routing na hihingin mo. Sa ganitong paraan, may laging updated na "peta" ka ng system kahit hindi mo na babasahin ulit lahat ng code.
 5. Bago mag-code, laging sabihin: *"Scan lang ang mga related files/folders na kailangan mo, huwag i-load lahat ng repo."* — pinipigilan nito na mag-ubos ng malaking context/credits sa pag-scan ng buong project every time.
 
 ---
