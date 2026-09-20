@@ -52,6 +52,28 @@ const validEmployee = {
   ContactNumber: '09171234567',
   DateHired: '2026-09-20',
   Status: 'Active',
+  PermanentUnitHouseNumber: '12-A',
+  PermanentProvince: 'Davao del Sur',
+  PermanentStreet: 'Rizal Street',
+  PermanentCityMunicipality: 'Davao City',
+  PermanentSubdivision: 'Sample Village',
+  PermanentBarangay: 'Barangay 1',
+  PermanentRegion: 'Region XI',
+  PermanentPostalCode: '8000',
+  PresentUnitHouseNumber: '44',
+  PresentProvince: 'Cebu',
+  PresentStreet: 'Osmena Boulevard',
+  PresentCityMunicipality: 'Cebu City',
+  PresentBarangay: 'Capitol Site',
+  PresentRegion: 'Region VII',
+  PresentPostalCode: '6000',
+  BeneficiaryNotApplicable: false,
+  Beneficiary1: 'Maria dela Cruz',
+  Beneficiary1Relationship: 'Spouse',
+  EmergencyName: 'Pedro Santos',
+  EmergencyRelationship: 'Sibling',
+  EmergencyAddress: 'Davao City',
+  EmergencyContactNo: '09181234567',
 }
 
 test('employee create normalizes names and email while preserving a valid numeric contact', async () => {
@@ -64,6 +86,24 @@ test('employee create normalizes names and email while preserving a valid numeri
   assert.equal(values[5], 'JUN')
   assert.equal(values[10], 'juan.test@gmail.com')
   assert.equal(values[11], '09171234567')
+  assert.equal(values[9], '12-A, Rizal Street, Sample Village, Barangay 1, Davao City, Davao del Sur, Region XI, 8000')
+  assert.equal(values[31], 'MARIA DELA CRUZ')
+  assert.equal(values[35], 'PEDRO SANTOS')
+  assert.equal(values[38], '09181234567')
+})
+
+test('employee create rejects unsupported employee photos before writing to the database', async () => {
+  const { api, calls } = harness({ ...validEmployee, PhotoDataUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBA==' })
+  await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /PNG, JPG, or WEBP/.test(error.message))
+  assert.equal(calls.length, 0)
+})
+
+test('employee create rejects invalid emergency contact numbers', async () => {
+  for (const EmergencyContactNo of ['12345', '0918CALLNOW', '1234567890123456']) {
+    const { api, calls } = harness({ ...validEmployee, EmergencyContactNo })
+    await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /7 to 15 digits/.test(error.message))
+    assert.equal(calls.length, 0)
+  }
 })
 
 test('employee create rejects incomplete email addresses', async () => {

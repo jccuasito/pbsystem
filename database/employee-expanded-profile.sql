@@ -1,0 +1,30 @@
+-- Expanded employee contact/profile fields and uploaded photo path.
+-- Run once on an existing pbsystem database before using the updated employee form.
+
+ALTER TABLE employee
+  ADD COLUMN PhotoPath VARCHAR(500) NULL AFTER Nickname,
+  ADD COLUMN PermanentUnitHouseNumber VARCHAR(100) NULL AFTER Address,
+  ADD COLUMN PermanentProvince VARCHAR(150) NULL AFTER PermanentUnitHouseNumber,
+  ADD COLUMN PermanentStreet VARCHAR(255) NULL AFTER PermanentProvince,
+  ADD COLUMN PermanentCityMunicipality VARCHAR(150) NULL AFTER PermanentStreet,
+  ADD COLUMN PermanentSubdivision VARCHAR(150) NULL AFTER PermanentCityMunicipality,
+  ADD COLUMN PermanentBarangay VARCHAR(150) NULL AFTER PermanentSubdivision,
+  ADD COLUMN PermanentRegion VARCHAR(150) NULL AFTER PermanentBarangay,
+  ADD COLUMN PermanentPostalCode VARCHAR(20) NULL AFTER PermanentRegion,
+  ADD COLUMN PresentUnitHouseNumber VARCHAR(100) NULL AFTER PermanentPostalCode,
+  ADD COLUMN PresentProvince VARCHAR(150) NULL AFTER PresentUnitHouseNumber,
+  ADD COLUMN PresentStreet VARCHAR(255) NULL AFTER PresentProvince,
+  ADD COLUMN PresentCityMunicipality VARCHAR(150) NULL AFTER PresentStreet,
+  ADD COLUMN PresentSubdivision VARCHAR(150) NULL AFTER PresentCityMunicipality,
+  ADD COLUMN PresentBarangay VARCHAR(150) NULL AFTER PresentSubdivision,
+  ADD COLUMN PresentRegion VARCHAR(150) NULL AFTER PresentBarangay,
+  ADD COLUMN PresentPostalCode VARCHAR(20) NULL AFTER PresentRegion,
+  ADD COLUMN BeneficiaryNotApplicable TINYINT(1) NOT NULL DEFAULT 0 AFTER PresentPostalCode,
+  ADD COLUMN Beneficiary1 VARCHAR(200) NULL AFTER BeneficiaryNotApplicable,
+  ADD COLUMN Beneficiary1Relationship VARCHAR(50) NULL AFTER Beneficiary1,
+  ADD COLUMN Beneficiary2 VARCHAR(200) NULL AFTER Beneficiary1Relationship,
+  ADD COLUMN Beneficiary2Relationship VARCHAR(50) NULL AFTER Beneficiary2,
+  ADD COLUMN EmergencyName VARCHAR(200) NULL AFTER Beneficiary2Relationship,
+  ADD COLUMN EmergencyRelationship VARCHAR(50) NULL AFTER EmergencyName,
+  ADD COLUMN EmergencyAddress TEXT NULL AFTER EmergencyRelationship,
+  ADD COLUMN EmergencyContactNo VARCHAR(15) NULL AFTER EmergencyAddress;

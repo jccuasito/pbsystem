@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import SearchableSelect from '~~/components/SearchableSelect.vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
@@ -16,7 +16,14 @@ const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
 const formError = ref('')
+const photoError = ref('')
+const photoPickerOpen = ref(false)
+const photoDragActive = ref(false)
+const photoFileInput = ref<HTMLInputElement | null>(null)
+const photoPickerModal = ref<HTMLElement | null>(null)
 const modalOpen = ref(false)
+const employeeFormSnapshot = ref('')
+const discardEmployeeOpen = ref(false)
 const transferOpen = ref(false)
 const deleteOpen = ref(false)
 const editing = ref<any>(null)
@@ -43,6 +50,7 @@ const loadMoreSentinel = ref<HTMLElement | null>(null)
 const isCompactView = ref(false)
 const employeeBatchSize = 50
 const suggestedBirthYear = new Date().getFullYear() - 25
+const relationshipOptions = ['Spouse', 'Child', 'Parent', 'Sibling', 'Grandchild', 'Grandparent', 'Legal Guardian', 'Other Relative', 'Partner', 'Other']
 let employeeObserver: IntersectionObserver | null = null
 let compactViewQuery: MediaQueryList | null = null
 const deleteWarning = alertMessages.employeePermanentDelete()
@@ -54,6 +62,9 @@ const form = ref({
   MiddleName: '',
   LastName: '',
   Nickname: '',
+  PhotoUrl: '',
+  PhotoDataUrl: '',
+  RemovePhoto: false,
   Birthday: '',
   Gender: '',
   CivilStatus: '',
@@ -61,13 +72,40 @@ const form = ref({
   Email: '',
   ContactNumber: '',
   DateHired: '',
-  Status: 'Active'
+  Status: 'Active',
+  PermanentUnitHouseNumber: '',
+  PermanentProvince: '',
+  PermanentStreet: '',
+  PermanentCityMunicipality: '',
+  PermanentSubdivision: '',
+  PermanentBarangay: '',
+  PermanentRegion: '',
+  PermanentPostalCode: '',
+  PresentUnitHouseNumber: '',
+  PresentProvince: '',
+  PresentStreet: '',
+  PresentCityMunicipality: '',
+  PresentSubdivision: '',
+  PresentBarangay: '',
+  PresentRegion: '',
+  PresentPostalCode: '',
+  BeneficiaryNotApplicable: false,
+  Beneficiary1: '',
+  Beneficiary1Relationship: '',
+  Beneficiary2: '',
+  Beneficiary2Relationship: '',
+  EmergencyName: '',
+  EmergencyRelationship: '',
+  EmergencyAddress: '',
+  EmergencyContactNo: ''
 })
 const transferForm = ref({ ClientRateID: '', SiteID: '', SiteShiftID: '', StartDate: '', Remarks: '' })
 const siteShiftForm = ref({ ShiftCodeID: '', ShiftCode: '', ShiftName: '', ShiftType: 'Day', TimeIn: '08:00', TimeOut: '17:00', RegularHours: '8', RegularOTCap: '4' })
 
 function reset(item: any = null) {
   editing.value = item
+  photoPickerOpen.value = false
+  photoDragActive.value = false
   form.value = {
     AgencyPositionID: item?.AgencyPositionID ?? '',
     EmployeeNumber: item?.EmployeeNumber ?? '',
@@ -75,6 +113,9 @@ function reset(item: any = null) {
     MiddleName: String(item?.MiddleName ?? '').toLocaleUpperCase(),
     LastName: String(item?.LastName ?? '').toLocaleUpperCase(),
     Nickname: String(item?.Nickname ?? '').toLocaleUpperCase(),
+    PhotoUrl: item?.PhotoUrl ?? '',
+    PhotoDataUrl: '',
+    RemovePhoto: false,
     Birthday: item?.Birthday?.slice?.(0, 10) ?? item?.Birthday ?? '',
     Gender: item?.Gender ?? '',
     CivilStatus: item?.CivilStatus ?? '',
@@ -82,10 +123,38 @@ function reset(item: any = null) {
     Email: item?.Email ?? '',
     ContactNumber: item?.ContactNumber ?? '',
     DateHired: item?.DateHired?.slice?.(0, 10) ?? item?.DateHired ?? '',
-    Status: item?.Status ?? 'Active'
+    Status: item?.Status ?? 'Active',
+    PermanentUnitHouseNumber: item?.PermanentUnitHouseNumber ?? '',
+    PermanentProvince: item?.PermanentProvince ?? '',
+    PermanentStreet: item?.PermanentStreet ?? '',
+    PermanentCityMunicipality: item?.PermanentCityMunicipality ?? '',
+    PermanentSubdivision: item?.PermanentSubdivision ?? '',
+    PermanentBarangay: item?.PermanentBarangay ?? '',
+    PermanentRegion: item?.PermanentRegion ?? '',
+    PermanentPostalCode: item?.PermanentPostalCode ?? '',
+    PresentUnitHouseNumber: item?.PresentUnitHouseNumber ?? '',
+    PresentProvince: item?.PresentProvince ?? '',
+    PresentStreet: item?.PresentStreet ?? '',
+    PresentCityMunicipality: item?.PresentCityMunicipality ?? '',
+    PresentSubdivision: item?.PresentSubdivision ?? '',
+    PresentBarangay: item?.PresentBarangay ?? '',
+    PresentRegion: item?.PresentRegion ?? '',
+    PresentPostalCode: item?.PresentPostalCode ?? '',
+    BeneficiaryNotApplicable: Number(item?.BeneficiaryNotApplicable || 0) === 1,
+    Beneficiary1: String(item?.Beneficiary1 ?? '').toLocaleUpperCase(),
+    Beneficiary1Relationship: item?.Beneficiary1Relationship ?? '',
+    Beneficiary2: String(item?.Beneficiary2 ?? '').toLocaleUpperCase(),
+    Beneficiary2Relationship: item?.Beneficiary2Relationship ?? '',
+    EmergencyName: String(item?.EmergencyName ?? '').toLocaleUpperCase(),
+    EmergencyRelationship: item?.EmergencyRelationship ?? '',
+    EmergencyAddress: item?.EmergencyAddress ?? '',
+    EmergencyContactNo: item?.EmergencyContactNo ?? ''
   }
+  employeeFormSnapshot.value = JSON.stringify(form.value)
+  discardEmployeeOpen.value = false
   error.value = ''
   formError.value = ''
+  photoError.value = ''
 }
 
 async function load(silent = false) {
@@ -104,6 +173,10 @@ async function load(silent = false) {
 }
 
 async function save() {
+  if (photoError.value) {
+    formError.value = photoError.value
+    return
+  }
   busy.value = true
   formError.value = ''
   try {
@@ -168,6 +241,34 @@ function displayEmployeeName(item: any) {
   return formatEmployeeName(item).toLocaleUpperCase()
 }
 
+function employeeInitials(item: any) {
+  return [item?.FirstName, item?.LastName].filter(Boolean).map((value) => String(value).charAt(0).toLocaleUpperCase()).join('').slice(0, 2) || 'E'
+}
+
+const photoPreview = computed(() => form.value.PhotoDataUrl || (!form.value.RemovePhoto ? form.value.PhotoUrl : ''))
+const employeeFormDirty = computed(() => JSON.stringify(form.value) !== employeeFormSnapshot.value)
+
+function requestCloseEmployeeModal() {
+  if (busy.value) return
+  photoPickerOpen.value = false
+  if (employeeFormDirty.value) {
+    discardEmployeeOpen.value = true
+    return
+  }
+  modalOpen.value = false
+}
+
+function keepEditingEmployee() {
+  discardEmployeeOpen.value = false
+}
+
+function discardEmployeeChanges() {
+  discardEmployeeOpen.value = false
+  photoPickerOpen.value = false
+  modalOpen.value = false
+  reset()
+}
+
 const availableTransferSites = computed(() => {
   const rate = transferClientRates.value.find((item) => String(item.ClientRateID) === String(transferForm.value.ClientRateID))
   return rate ? transferSites.value.filter((item) => String(item.ClientID) === String(rate.ClientID)) : []
@@ -225,11 +326,87 @@ function handleCompactViewChange(event: MediaQueryListEvent) {
   isCompactView.value = event.matches
 }
 
-function uppercaseNameField(field: 'FirstName' | 'MiddleName' | 'LastName' | 'Nickname', event: Event) {
+function uppercaseNameField(field: 'FirstName' | 'MiddleName' | 'LastName' | 'Nickname' | 'Beneficiary1' | 'Beneficiary2' | 'EmergencyName', event: Event) {
   const input = event.target as HTMLInputElement
   const uppercased = input.value.toLocaleUpperCase()
   input.value = uppercased
   form.value[field] = uppercased
+}
+
+function applyEmployeePhoto(file: File | null | undefined, input?: HTMLInputElement) {
+  photoError.value = ''
+  if (!file) return
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    photoError.value = 'Use a PNG, JPG, or WEBP image.'
+    if (input) input.value = ''
+    return
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    photoError.value = 'Employee photo must be 2MB or smaller.'
+    if (input) input.value = ''
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    form.value.PhotoDataUrl = String(reader.result || '')
+    form.value.RemovePhoto = false
+    photoPickerOpen.value = false
+    if (input) input.value = ''
+  }
+  reader.onerror = () => { photoError.value = 'Unable to read the selected photo.' }
+  reader.readAsDataURL(file)
+}
+
+function selectEmployeePhoto(event: Event) {
+  const input = event.target as HTMLInputElement
+  applyEmployeePhoto(input.files?.[0], input)
+}
+
+async function openPhotoPicker() {
+  photoError.value = ''
+  photoDragActive.value = false
+  photoPickerOpen.value = true
+  await nextTick()
+  photoPickerModal.value?.focus()
+}
+
+function openPhotoFileDialog() {
+  photoFileInput.value?.click()
+}
+
+function dropEmployeePhoto(event: DragEvent) {
+  photoDragActive.value = false
+  applyEmployeePhoto(event.dataTransfer?.files?.[0])
+}
+
+function pasteEmployeePhoto(event: ClipboardEvent) {
+  const file = Array.from(event.clipboardData?.items || [])
+    .find(item => item.kind === 'file' && item.type.startsWith('image/'))
+    ?.getAsFile()
+  if (!file) return
+  event.preventDefault()
+  applyEmployeePhoto(file)
+}
+
+function removeSelectedPhoto() {
+  form.value.PhotoDataUrl = ''
+  form.value.RemovePhoto = true
+  photoError.value = ''
+}
+
+function copyPermanentAddress(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  if (!checked) return
+  Object.assign(form.value, {
+    PresentUnitHouseNumber: form.value.PermanentUnitHouseNumber,
+    PresentProvince: form.value.PermanentProvince,
+    PresentStreet: form.value.PermanentStreet,
+    PresentCityMunicipality: form.value.PermanentCityMunicipality,
+    PresentSubdivision: form.value.PermanentSubdivision,
+    PresentBarangay: form.value.PermanentBarangay,
+    PresentRegion: form.value.PermanentRegion,
+    PresentPostalCode: form.value.PermanentPostalCode
+  })
 }
 
 function sanitizeContactNumber(event: Event) {
@@ -237,6 +414,13 @@ function sanitizeContactNumber(event: Event) {
   const sanitized = input.value.replace(/\D/g, '').slice(0, 11)
   input.value = sanitized
   form.value.ContactNumber = sanitized
+}
+
+function sanitizeEmergencyContactNumber(event: Event) {
+  const input = event.target as HTMLInputElement
+  const sanitized = input.value.replace(/\D/g, '').slice(0, 15)
+  input.value = sanitized
+  form.value.EmergencyContactNo = sanitized
 }
 
 function normalizeEmail() {
@@ -452,7 +636,13 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           <tr v-for="item in visibleItems" :key="item.EmployeeID">
             <td class="employee-id" data-label="Employee ID">{{ formatEmployeeId(item.EmployeeID) }}</td>
             <td data-label="Employee No.">{{ formatEmployeeNumber(item.EmployeeNumber) }}</td>
-            <td class="employee-name" data-label="Name">{{ displayEmployeeName(item) }}</td>
+            <td class="employee-name" data-label="Name">
+              <div class="employee-identity">
+                <img v-if="item.PhotoUrl" :src="item.PhotoUrl" :alt="`${displayEmployeeName(item)} photo`" />
+                <span v-else class="employee-avatar-fallback" aria-hidden="true">{{ employeeInitials(item) }}</span>
+                <span>{{ displayEmployeeName(item) }}</span>
+              </div>
+            </td>
             <td data-label="Agency">{{ format(item.AgencyName) }}</td>
             <td data-label="Position">{{ format(item.PositionName) }}</td>
             <td data-label="Current Site">{{ format(item.SiteName) }}</td>
@@ -482,6 +672,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       <p v-else-if="!filteredItems.length" class="mobile-list-message">No employees found.</p>
       <article v-for="item in visibleItems" :key="item.EmployeeID" class="employee-card">
         <header class="employee-card__head">
+          <img v-if="item.PhotoUrl" class="employee-card__photo" :src="item.PhotoUrl" :alt="`${displayEmployeeName(item)} photo`" />
+          <span v-else class="employee-card__photo employee-avatar-fallback" aria-hidden="true">{{ employeeInitials(item) }}</span>
           <div class="employee-card__identity">
             <strong>{{ displayEmployeeName(item) }}</strong>
             <span>{{ formatEmployeeId(item.EmployeeID) }} · {{ formatEmployeeNumber(item.EmployeeNumber) }}</span>
@@ -526,52 +718,133 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
     </div>
 
     <Teleport to="body">
-      <div v-if="modalOpen" class="backdrop" @click.self="!busy && (modalOpen = false)">
-        <form class="modal" @submit.prevent="save">
-          <button class="close" type="button" aria-label="Close employee form" @click="modalOpen = false">×</button>
+      <div v-if="modalOpen" class="backdrop">
+        <form class="modal employee-modal" @submit.prevent="save">
+          <button class="close" type="button" aria-label="Close employee form" @click="requestCloseEmployeeModal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
           <h2>{{ editing ? 'Edit employee' : 'Add employee' }}</h2>
 
-          <label>Employee number <small>Optional badge/reference</small><input v-model="form.EmployeeNumber" placeholder="Assign later if unavailable" /></label>
-          <SearchableSelect
-            v-model="form.AgencyPositionID"
-            label="Agency position"
-            placeholder="Search agency or position"
-            empty-text="No matching agency position."
-            :options="agencyPositionOptions"
-            required
-          />
-          <div class="grid">
-            <label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label>
-            <label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label>
-          </div>
-          <div class="grid">
-            <label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label>
-            <label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label>
-          </div>
-          <div class="grid">
-            <ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="today()" :initial-year="suggestedBirthYear" />
-            <ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" />
-          </div>
-          <div class="grid">
-            <label>Gender<input v-model="form.Gender" /></label>
-            <label>Civil status<input v-model="form.CivilStatus" /></label>
-          </div>
-          <label>Address<textarea v-model="form.Address" rows="3" /></label>
-          <div class="grid">
-            <label>Email
-              <input v-model="form.Email" type="email" autocomplete="email" inputmode="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]+" placeholder="name@example.com" @blur="normalizeEmail" />
-              <small>Use a complete email address, e.g. name@gmail.com.</small>
-            </label>
-            <label>Contact number
-              <input :value="form.ContactNumber" type="text" autocomplete="tel" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" placeholder="11-digit contact number" @input="sanitizeContactNumber" />
-              <small>Numbers only, exactly 11 digits.</small>
-            </label>
-          </div>
-          <label>Status<select v-model="form.Status"><option>Active</option><option>Inactive</option></select></label>
+          <section class="employee-form-section employee-form-section--photo">
+            <div class="employee-form-section__heading">
+              <div><span>PROFILE PHOTO</span><h3>Employee picture</h3></div>
+              <small>PNG, JPG, or WEBP up to 2MB</small>
+            </div>
+            <div class="employee-photo-editor">
+              <img v-if="photoPreview" :src="photoPreview" alt="Employee photo preview" />
+              <span v-else class="employee-photo-placeholder" aria-hidden="true">{{ form.FirstName || form.LastName ? employeeInitials(form) : 'PHOTO' }}</span>
+              <div class="employee-photo-actions">
+                <button type="button" class="photo-upload-button" @click="openPhotoPicker">Choose photo</button>
+                <button v-if="photoPreview" type="button" class="photo-remove-button" @click="removeSelectedPhoto">Remove photo</button>
+                <small class="photo-upload-hint">Upload, drag and drop, or paste an image inside the photo window.</small>
+                <p v-if="photoError" class="error" role="alert">{{ photoError }}</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="employee-form-section">
+            <div class="employee-form-section__heading"><div><span>BASIC INFORMATION</span><h3>Employee details</h3></div></div>
+            <div class="employee-core-grid">
+              <label class="employee-core-field"><span>Employee number</span><input v-model="form.EmployeeNumber" placeholder="Assign later if unavailable" /><small>Optional badge/reference</small></label>
+              <div class="employee-core-field employee-core-field--search"><SearchableSelect v-model="form.AgencyPositionID" label="Agency position" placeholder="Search agency or position" empty-text="No matching agency position." :options="agencyPositionOptions" required /><small>Required for rates and deployments.</small></div>
+              <label class="employee-core-field"><span>Status</span><select v-model="form.Status"><option>Active</option><option>Inactive</option></select><small>Employee record availability.</small></label>
+            </div>
+            <div class="grid"><label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label><label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label></div>
+            <div class="grid"><label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label><label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label></div>
+            <div class="grid"><ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="today()" :initial-year="suggestedBirthYear" /><ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" /></div>
+            <div class="grid"><label>Gender<input v-model="form.Gender" /></label><label>Civil status<input v-model="form.CivilStatus" /></label></div>
+            <div class="grid">
+              <label>Email<input v-model="form.Email" type="email" autocomplete="email" inputmode="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]+" placeholder="name@example.com" @blur="normalizeEmail" /><small>Use a complete email address, e.g. name@gmail.com.</small></label>
+              <label>Contact number<input :value="form.ContactNumber" type="text" autocomplete="tel" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" placeholder="11-digit contact number" @input="sanitizeContactNumber" /><small>Numbers only, exactly 11 digits.</small></label>
+            </div>
+          </section>
+
+          <section class="employee-form-section">
+            <div class="employee-form-section__heading"><div><span>PERMANENT ADDRESS</span><h3>Permanent residence</h3></div></div>
+            <div class="grid"><label>Unit/House number<input v-model="form.PermanentUnitHouseNumber" /></label><label>Province<input v-model="form.PermanentProvince" /></label></div>
+            <div class="grid"><label>Street<input v-model="form.PermanentStreet" /></label><label>City/Municipality<input v-model="form.PermanentCityMunicipality" /></label></div>
+            <div class="grid"><label>Subdivision<input v-model="form.PermanentSubdivision" /></label><label>Barangay<input v-model="form.PermanentBarangay" /></label></div>
+            <div class="grid"><label>Region<input v-model="form.PermanentRegion" /></label><label>Postal code<input v-model="form.PermanentPostalCode" inputmode="numeric" /></label></div>
+          </section>
+
+          <section class="employee-form-section">
+            <div class="employee-form-section__heading"><div><span>PRESENT ADDRESS</span><h3>Current residence</h3></div><label class="checkbox-row"><input type="checkbox" @change="copyPermanentAddress" /> Same as permanent address</label></div>
+            <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" /></label><label>Province<input v-model="form.PresentProvince" /></label></div>
+            <div class="grid"><label>Street<input v-model="form.PresentStreet" /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" /></label></div>
+            <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" /></label><label>Barangay<input v-model="form.PresentBarangay" /></label></div>
+            <div class="grid"><label>Region<input v-model="form.PresentRegion" /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" /></label></div>
+          </section>
+
+          <section class="employee-form-section">
+            <div class="employee-form-section__heading"><div><span>BENEFICIARY INFORMATION</span><h3>Designated beneficiaries</h3></div><label class="checkbox-row"><input v-model="form.BeneficiaryNotApplicable" type="checkbox" /> Not applicable</label></div>
+            <div class="grid" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }"><label>Beneficiary 1<input v-model="form.Beneficiary1" :disabled="form.BeneficiaryNotApplicable" @input="uppercaseNameField('Beneficiary1', $event)" /></label><label>Relationship<select v-model="form.Beneficiary1Relationship" :disabled="form.BeneficiaryNotApplicable"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+            <div class="grid" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }"><label>Beneficiary 2<input v-model="form.Beneficiary2" :disabled="form.BeneficiaryNotApplicable" @input="uppercaseNameField('Beneficiary2', $event)" /></label><label>Relationship<select v-model="form.Beneficiary2Relationship" :disabled="form.BeneficiaryNotApplicable"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+          </section>
+
+          <section class="employee-form-section">
+            <div class="employee-form-section__heading"><div><span>EMERGENCY CONTACT</span><h3>Person to contact in an emergency</h3></div></div>
+            <div class="grid"><label>Full name<input v-model="form.EmergencyName" @input="uppercaseNameField('EmergencyName', $event)" /></label><label>Relationship<select v-model="form.EmergencyRelationship"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+            <label>Emergency contact number<input :value="form.EmergencyContactNo" type="text" inputmode="numeric" maxlength="15" pattern="[0-9]{7,15}" placeholder="7 to 15 digits" @input="sanitizeEmergencyContactNumber" /><small>Numbers only; mobile and telephone numbers are accepted.</small></label>
+            <label>Emergency address<textarea v-model="form.EmergencyAddress" rows="3" placeholder="Complete address" /></label>
+          </section>
 
           <p v-if="formError" class="error">{{ formError }}</p>
-          <footer><button class="cancel-button" type="button" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving...' : 'Save employee' }}</button></footer>
+          <footer><button class="cancel-button" type="button" @click="requestCloseEmployeeModal">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving...' : 'Save employee' }}</button></footer>
         </form>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="photoPickerOpen" class="backdrop photo-picker-backdrop">
+        <section ref="photoPickerModal" class="photo-picker-modal" role="dialog" aria-modal="true" aria-labelledby="photo-picker-title" tabindex="-1" @paste="pasteEmployeePhoto">
+          <button class="photo-picker-close" type="button" aria-label="Close photo picker" @click="photoPickerOpen = false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+          <div class="photo-picker-heading">
+            <span>PROFILE PHOTO</span>
+            <h2 id="photo-picker-title">Upload employee picture</h2>
+            <p>Drag an image here or select a file from your device.</p>
+          </div>
+
+          <div
+            class="photo-drop-zone"
+            :class="{ 'is-dragging': photoDragActive }"
+            tabindex="0"
+            @click="openPhotoFileDialog"
+            @keydown.enter.prevent="openPhotoFileDialog"
+            @keydown.space.prevent="openPhotoFileDialog"
+            @dragenter.prevent="photoDragActive = true"
+            @dragover.prevent="photoDragActive = true"
+            @dragleave.prevent="photoDragActive = false"
+            @drop.prevent="dropEmployeePhoto"
+          >
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 10h32v28H8z"/><path d="m11 34 9-10 6 6 5-6 6 10"/><circle cx="31" cy="18" r="3"/></svg>
+            <div><strong>Drag an image here</strong><span>or <button type="button" @click.stop="openPhotoFileDialog">upload a file</button></span></div>
+            <input ref="photoFileInput" type="file" accept="image/png,image/jpeg,image/webp" tabindex="-1" @click.stop @change="selectEmployeePhoto" />
+          </div>
+
+          <small class="photo-picker-hint">PNG, JPG, or WEBP up to 2MB. You may also press Ctrl+V while this window is open.</small>
+          <p v-if="photoError" class="photo-picker-error" role="alert">{{ photoError }}</p>
+          <footer class="photo-picker-footer">
+            <button type="button" @click="photoPickerOpen = false">Cancel</button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="discardEmployeeOpen" class="backdrop discard-changes-backdrop">
+        <section class="discard-changes-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-employee-title" aria-describedby="discard-employee-description">
+          <div class="discard-changes-icon" aria-hidden="true">!</div>
+          <div>
+            <h2 id="discard-employee-title">Discard unsaved changes?</h2>
+            <p id="discard-employee-description">The employee information you entered has not been saved yet.</p>
+          </div>
+          <footer>
+            <button type="button" class="keep-editing-button" @click="keepEditingEmployee">Keep editing</button>
+            <button type="button" class="discard-button" @click="discardEmployeeChanges">Discard changes</button>
+          </footer>
+        </section>
       </div>
     </Teleport>
 
@@ -676,6 +949,573 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </style>
 
 <style scoped>
+.employee-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.employee-identity img,
+.employee-avatar-fallback,
+.employee-card__photo {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.employee-avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: #e8efff;
+  color: #244bb0;
+  font-size: .68rem;
+  font-weight: 900;
+}
+
+.employee-card__identity {
+  flex: 1 1 auto;
+}
+
+.employee-card__photo {
+  width: 42px;
+  height: 42px;
+}
+
+.employee-modal {
+  width: min(100%, 980px);
+  gap: 16px;
+  padding: 30px;
+  background: #f7f9fc;
+}
+
+.employee-modal > h2 {
+  padding-right: 42px;
+}
+
+.employee-form-section {
+  display: grid;
+  gap: 13px;
+  padding: 18px;
+  border: 1px solid #dce4ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(30, 54, 85, .035);
+}
+
+.employee-form-section__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.employee-form-section__heading span {
+  color: #3767ba;
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
+
+.employee-form-section__heading h3 {
+  margin: 2px 0 0;
+  color: #1d304d;
+  font-size: 1rem;
+}
+
+.employee-form-section__heading > small {
+  color: #738196;
+  font-size: .74rem;
+  font-weight: 650;
+}
+
+.employee-photo-editor {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.employee-photo-editor > img,
+.employee-photo-placeholder {
+  width: 92px;
+  height: 92px;
+  border: 2px solid #d6e1ef;
+  border-radius: 18px;
+  object-fit: cover;
+  background: #eef3fb;
+}
+
+.employee-photo-placeholder {
+  display: grid;
+  place-items: center;
+  color: #46658d;
+  font-size: .78rem;
+  font-weight: 900;
+}
+
+.employee-photo-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.photo-upload-button,
+.photo-remove-button {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid #c9d5e5;
+  border-radius: 9px;
+  padding: 8px 13px;
+  background: #fff;
+  color: #29486e;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.photo-upload-button {
+  border-color: #2e63d4;
+  background: #2e63d4;
+  color: #fff !important;
+}
+
+.photo-upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.photo-remove-button {
+  color: #b42318;
+}
+
+.employee-photo-actions .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.photo-upload-hint {
+  flex-basis: 100%;
+  color: #6d7c90;
+  font-size: .73rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.photo-picker-backdrop {
+  z-index: 380;
+  background: rgba(15, 23, 42, .64);
+}
+
+.photo-picker-modal {
+  position: relative;
+  display: grid;
+  width: min(100%, 680px);
+  gap: 18px;
+  padding: 26px;
+  border: 1px solid #d6e1ef;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, .28);
+  color: #14233c;
+  font-family: Inter, system-ui, sans-serif;
+  outline: none;
+}
+
+.photo-picker-heading {
+  display: grid;
+  gap: 4px;
+  padding-right: 46px;
+}
+
+.photo-picker-heading > span {
+  color: #3767ba;
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
+
+.photo-picker-modal h2 {
+  margin: 0;
+  color: #14233c;
+  font-size: 1.3rem;
+}
+
+.photo-picker-heading > p {
+  margin: 0;
+  color: #64748b;
+  font-size: .88rem;
+  line-height: 1.5;
+}
+
+.photo-picker-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #53657d;
+  cursor: pointer;
+}
+
+.photo-picker-close:hover {
+  background: #edf3fa;
+  color: #17375f;
+}
+
+.photo-picker-close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.photo-drop-zone {
+  display: flex;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  border: 2px dashed #b8c9e1;
+  border-radius: 14px;
+  background: #f7faff;
+  color: #29486e;
+  outline: none;
+  cursor: pointer;
+  transition: border-color .16s ease, background-color .16s ease, transform .16s ease;
+}
+
+.photo-drop-zone:hover,
+.photo-drop-zone:focus-visible,
+.photo-drop-zone.is-dragging {
+  border-color: #2e63d4;
+  background: #eef4ff;
+}
+
+.photo-drop-zone.is-dragging {
+  transform: scale(1.01);
+}
+
+.photo-drop-zone svg {
+  width: 52px;
+  height: 52px;
+  fill: none;
+  stroke: #2e63d4;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.photo-drop-zone > div {
+  display: grid;
+  gap: 8px;
+  font-size: .92rem;
+}
+
+.photo-drop-zone strong {
+  font-size: 1rem;
+}
+
+.photo-drop-zone span {
+  color: #6d7c90;
+}
+
+.photo-drop-zone button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #2458c4;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.photo-drop-zone input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.photo-picker-hint {
+  color: #6d7c90;
+  font-size: .75rem;
+  text-align: center;
+}
+
+.photo-picker-error {
+  margin: 0 !important;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fff7f7;
+  color: #b42318 !important;
+  font-size: .8rem;
+}
+
+.photo-picker-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.photo-picker-footer button {
+  min-height: 40px;
+  border: 1px solid #c5d0df;
+  border-radius: 9px;
+  padding: 8px 16px;
+  background: #f8fafc;
+  color: #334e6f;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.photo-picker-footer button:hover {
+  border-color: #94a8c2;
+  background: #eef3f8;
+}
+
+.discard-changes-backdrop {
+  z-index: 420;
+}
+
+.discard-changes-modal {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  width: min(100%, 500px);
+  gap: 14px;
+  padding: 24px;
+  border: 1px solid #d7e1ee;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .28);
+  color: #14233c;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.discard-changes-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff3cd;
+  color: #9a6700;
+  font-size: 1.15rem;
+  font-weight: 900;
+}
+
+.discard-changes-modal h2 {
+  margin: 1px 0 6px;
+  font-size: 1.15rem;
+}
+
+.discard-changes-modal p {
+  margin: 0;
+  color: #64748b;
+  font-size: .88rem;
+  line-height: 1.5;
+}
+
+.discard-changes-modal footer {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.discard-changes-modal footer button {
+  min-height: 41px;
+  border: 1px solid #c8d3e1;
+  border-radius: 9px;
+  padding: 8px 15px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.keep-editing-button {
+  background: #fff;
+  color: #334e6f;
+}
+
+.discard-button {
+  border-color: #dc2626 !important;
+  background: #dc2626;
+  color: #fff;
+}
+
+.employee-core-grid {
+  display: grid;
+  grid-template-columns: minmax(170px, .9fr) minmax(280px, 1.35fr) minmax(150px, .65fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.employee-core-field {
+  min-width: 0;
+}
+
+.employee-core-field--search {
+  display: grid;
+  gap: 6px;
+}
+
+.employee-core-field > small {
+  color: #7a8799;
+  font-size: .72rem;
+  font-weight: 600;
+}
+
+.employee-modal input,
+.employee-modal select {
+  min-height: 44px;
+}
+
+.checkbox-row {
+  display: inline-flex !important;
+  grid-auto-flow: column;
+  align-items: center;
+  width: auto;
+  color: #435873 !important;
+  font-size: .76rem !important;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  width: 17px !important;
+  min-height: 17px !important;
+  margin: 0;
+  accent-color: #2857d7;
+}
+
+.fields-disabled {
+  opacity: .58;
+}
+
+.employee-modal > footer {
+  position: sticky;
+  z-index: 3;
+  bottom: -30px;
+  margin: 0 -30px -30px;
+  padding: 15px 30px;
+  border-top: 1px solid #dce4ef;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 -8px 20px rgba(30, 54, 85, .07);
+  backdrop-filter: blur(8px);
+}
+
+@media (max-width: 760px) {
+  .employee-modal {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    padding: 22px 14px;
+    border-radius: 16px;
+  }
+
+  .employee-form-section {
+    padding: 14px;
+  }
+
+  .employee-form-section__heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .employee-photo-editor {
+    align-items: flex-start;
+  }
+
+  .employee-photo-editor > img,
+  .employee-photo-placeholder {
+    width: 74px;
+    height: 74px;
+  }
+
+  .employee-photo-actions {
+    align-items: stretch;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .employee-core-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .employee-modal > footer {
+    bottom: -22px;
+    margin: 0 -14px -22px;
+    padding: 12px 14px;
+  }
+
+  .employee-modal > .employee-form-section:last-of-type {
+    margin-bottom: 76px;
+  }
+
+  .photo-picker-backdrop {
+    padding: 10px;
+  }
+
+  .photo-picker-modal {
+    width: 100%;
+    gap: 14px;
+    padding: 22px 16px;
+    border-radius: 16px;
+  }
+
+  .photo-drop-zone {
+    min-height: 210px;
+    flex-direction: column;
+    gap: 12px;
+    padding: 24px 16px;
+    text-align: center;
+  }
+
+  .discard-changes-modal {
+    grid-template-columns: 1fr;
+    padding: 20px;
+  }
+
+  .discard-changes-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .discard-changes-modal footer {
+    grid-column: 1;
+    flex-direction: column-reverse;
+  }
+
+  .discard-changes-modal footer button {
+    width: 100%;
+  }
+}
+</style>
+
+<style scoped>
 .modal {
   font-family: Inter, system-ui, sans-serif;
 }
@@ -727,6 +1567,15 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 .modal .close:hover {
   background: #edf3fa;
   color: #17375f;
+}
+
+.modal .close svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 .employee-table-wrap {

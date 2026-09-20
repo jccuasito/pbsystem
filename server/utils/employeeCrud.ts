@@ -1,4 +1,7 @@
 import { createError, getQuery, getRouterParam, readBody } from 'h3'
+import crypto from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { alertMessages, DEPLOYMENT_ALREADY_EXISTS } from '../../components/alertmessage/messages'
@@ -15,7 +18,15 @@ type SectionConfig = {
 
 const quotedPosition = "`position`"
 const positionJoin = `INNER JOIN ${quotedPosition} p ON p.PositionID = ap.PositionID`
-const employeeFields = ['AgencyPositionID', 'EmployeeNumber', 'FirstName', 'MiddleName', 'LastName', 'Nickname', 'Birthday', 'Gender', 'CivilStatus', 'Address', 'Email', 'ContactNumber', 'DateHired', 'Status']
+const employeeFields = [
+  'AgencyPositionID', 'EmployeeNumber', 'FirstName', 'MiddleName', 'LastName', 'Nickname', 'Birthday', 'Gender', 'CivilStatus', 'Address', 'Email', 'ContactNumber', 'DateHired', 'Status',
+  'PermanentUnitHouseNumber', 'PermanentProvince', 'PermanentStreet', 'PermanentCityMunicipality', 'PermanentSubdivision', 'PermanentBarangay', 'PermanentRegion', 'PermanentPostalCode',
+  'PresentUnitHouseNumber', 'PresentProvince', 'PresentStreet', 'PresentCityMunicipality', 'PresentSubdivision', 'PresentBarangay', 'PresentRegion', 'PresentPostalCode',
+  'BeneficiaryNotApplicable', 'Beneficiary1', 'Beneficiary1Relationship', 'Beneficiary2', 'Beneficiary2Relationship',
+  'EmergencyName', 'EmergencyRelationship', 'EmergencyAddress', 'EmergencyContactNo'
+]
+const employeePhotoTypes: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
+const employeePhotoMaxBytes = 2 * 1024 * 1024
 
 const sectionConfigs: Record<EmployeeSection, SectionConfig> = {
   profile: { table: 'employee_profile', id: 'ProfileID', label: 'Profile', single: true, fields: ['EmployeeID', 'Height', 'Weight', 'PostalCode', 'PaymentMethod', 'EntryDate'] },
@@ -121,6 +132,74 @@ function parseContactNumber(value: unknown) {
   return parsed
 }
 
+function parseEmergencyContactNumber(value: unknown) {
+  const parsed = parseText(value)
+  if (parsed === null) return null
+  if (typeof parsed !== 'string' || !/^\d{7,15}$/.test(parsed)) {
+    throw createError({ statusCode: 400, statusMessage: 'Emergency contact number must contain 7 to 15 digits.' })
+  }
+  return parsed
+}
+
+function parseBooleanFlag(value: unknown) {
+  return value === true || value === 1 || value === '1' || value === 'true' ? 1 : 0
+}
+
+function structuredAddress(body: Record<string, unknown>, prefix: 'Permanent' | 'Present') {
+  return [
+    body[`${prefix}UnitHouseNumber`],
+    body[`${prefix}Street`],
+    body[`${prefix}Subdivision`],
+    body[`${prefix}Barangay`],
+    body[`${prefix}CityMunicipality`],
+    body[`${prefix}Province`],
+    body[`${prefix}Region`],
+    body[`${prefix}PostalCode`]
+  ].map(parseText).filter(Boolean).join(', ')
+}
+
+function parseEmployeePhoto(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value !== 'string') throw createError({ statusCode: 400, statusMessage: 'Employee photo is invalid.' })
+  const match = value.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/)
+  if (!match) throw createError({ statusCode: 400, statusMessage: 'Employee photo must be a PNG, JPG, or WEBP image.' })
+  const buffer = Buffer.from(match[2], 'base64')
+  if (!buffer.length || buffer.length > employeePhotoMaxBytes) {
+    throw createError({ statusCode: 400, statusMessage: 'Employee photo must be 2MB or smaller.' })
+  }
+  return { buffer, extension: employeePhotoTypes[match[1]] }
+}
+
+function employeePhotoFile(photoPath: unknown) {
+  const value = String(photoPath || '')
+  if (!/^\/uploads\/employees\/[a-zA-Z0-9._-]+$/.test(value)) return null
+  return path.join(process.cwd(), 'public', ...value.split('/').filter(Boolean))
+}
+
+async function removeEmployeePhoto(photoPath: unknown) {
+  const file = employeePhotoFile(photoPath)
+  if (!file) return
+  await fs.unlink(file).catch((error: any) => {
+    if (error?.code !== 'ENOENT') throw error
+  })
+}
+
+async function saveEmployeePhoto(employeeId: number, photo: NonNullable<ReturnType<typeof parseEmployeePhoto>>) {
+  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'employees')
+  await fs.mkdir(uploadDir, { recursive: true })
+  const filename = `employee-${employeeId}-${crypto.randomBytes(6).toString('hex')}.${photo.extension}`
+  const absolutePath = path.join(uploadDir, filename)
+  const publicPath = `/uploads/employees/${filename}`
+  await fs.writeFile(absolutePath, photo.buffer)
+  try {
+    await pool.execute('UPDATE employee SET PhotoPath = ? WHERE EmployeeID = ?', [publicPath, employeeId])
+    return publicPath
+  } catch (error) {
+    await fs.unlink(absolutePath).catch(() => undefined)
+    throw error
+  }
+}
+
 function parseStatus(value: unknown, fallback = 'Active') {
   if (value === null || value === undefined || value === '') return fallback
   if (value === 'Active' || value === 'Inactive') return value
@@ -144,6 +223,8 @@ function employeeWriteError(error: any) {
 }
 
 function employeeValues(body: Record<string, unknown>) {
+  const permanentAddress = structuredAddress(body, 'Permanent')
+  const beneficiaryNotApplicable = parseBooleanFlag(body.BeneficiaryNotApplicable)
   return [
     parseInteger(body.AgencyPositionID, 'AgencyPositionID'),
     parseText(body.EmployeeNumber),
@@ -154,11 +235,36 @@ function employeeValues(body: Record<string, unknown>) {
     parseDate(body.Birthday),
     parseText(body.Gender),
     parseText(body.CivilStatus),
-    parseText(body.Address),
+    parseText(permanentAddress || body.Address),
     parseEmail(body.Email),
     parseContactNumber(body.ContactNumber),
     parseDate(body.DateHired),
-    parseStatus(body.Status)
+    parseStatus(body.Status),
+    parseText(body.PermanentUnitHouseNumber),
+    parseText(body.PermanentProvince),
+    parseText(body.PermanentStreet),
+    parseText(body.PermanentCityMunicipality),
+    parseText(body.PermanentSubdivision),
+    parseText(body.PermanentBarangay),
+    parseText(body.PermanentRegion),
+    parseText(body.PermanentPostalCode),
+    parseText(body.PresentUnitHouseNumber),
+    parseText(body.PresentProvince),
+    parseText(body.PresentStreet),
+    parseText(body.PresentCityMunicipality),
+    parseText(body.PresentSubdivision),
+    parseText(body.PresentBarangay),
+    parseText(body.PresentRegion),
+    parseText(body.PresentPostalCode),
+    beneficiaryNotApplicable,
+    beneficiaryNotApplicable ? null : parseUppercaseText(body.Beneficiary1),
+    beneficiaryNotApplicable ? null : parseText(body.Beneficiary1Relationship),
+    beneficiaryNotApplicable ? null : parseUppercaseText(body.Beneficiary2),
+    beneficiaryNotApplicable ? null : parseText(body.Beneficiary2Relationship),
+    parseUppercaseText(body.EmergencyName),
+    parseText(body.EmergencyRelationship),
+    parseText(body.EmergencyAddress),
+    parseEmergencyContactNumber(body.EmergencyContactNo)
   ]
 }
 
@@ -196,7 +302,11 @@ function employeeListSql(filters: string[]) {
   return [
     'SELECT',
     '  e.EmployeeID, e.AgencyPositionID, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName, e.Nickname, e.Birthday,',
-    '  e.Gender, e.CivilStatus, e.Address, e.Email, e.ContactNumber, e.DateHired, e.Status,',
+    '  e.Gender, e.CivilStatus, e.Address, e.Email, e.ContactNumber, e.DateHired, e.Status, e.PhotoPath AS PhotoUrl,',
+    '  e.PermanentUnitHouseNumber, e.PermanentProvince, e.PermanentStreet, e.PermanentCityMunicipality, e.PermanentSubdivision, e.PermanentBarangay, e.PermanentRegion, e.PermanentPostalCode,',
+    '  e.PresentUnitHouseNumber, e.PresentProvince, e.PresentStreet, e.PresentCityMunicipality, e.PresentSubdivision, e.PresentBarangay, e.PresentRegion, e.PresentPostalCode,',
+    '  e.BeneficiaryNotApplicable, e.Beneficiary1, e.Beneficiary1Relationship, e.Beneficiary2, e.Beneficiary2Relationship,',
+    '  e.EmergencyName, e.EmergencyRelationship, e.EmergencyAddress, e.EmergencyContactNo,',
     '  ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName,',
     '  ld.DeploymentID AS CurrentDeploymentID,',
     '  ld.DeploymentType AS CurrentDeploymentType,',
@@ -351,10 +461,19 @@ export async function listEmployees(event: any) {
 export async function createEmployee(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
+  const photo = parseEmployeePhoto(body.PhotoDataUrl)
   const values = employeeValues(body)
   if (!values[0] || !values[2] || !values[4]) throw createError({ statusCode: 400, statusMessage: 'Agency position, first name, and last name are required.' })
   try {
     const [result] = await pool.execute<any>(`INSERT INTO employee (${employeeFields.join(', ')}, CreatedBy) VALUES (${employeeFields.map(() => '?').join(', ')}, ?)`, [...values, session.sub] as any[])
+    if (photo) {
+      try {
+        await saveEmployeePhoto(result.insertId, photo)
+      } catch (error) {
+        await pool.execute('DELETE FROM employee WHERE EmployeeID = ?', [result.insertId]).catch(() => undefined)
+        throw error
+      }
+    }
     return { id: result.insertId }
   } catch (error) {
     throw employeeWriteError(error)
@@ -365,9 +484,20 @@ export async function updateEmployee(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
   const employeeId = parseInteger(body.id, 'id') as number
+  const photo = parseEmployeePhoto(body.PhotoDataUrl)
+  const removePhoto = parseBooleanFlag(body.RemovePhoto) === 1
   try {
+    const [[existing]] = await pool.execute<any[]>('SELECT PhotoPath FROM employee WHERE EmployeeID = ? LIMIT 1', [employeeId])
+    if (!existing) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     const [result] = await pool.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body), session.sub, employeeId] as any[])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+    if (photo) {
+      await saveEmployeePhoto(employeeId, photo)
+      await removeEmployeePhoto(existing.PhotoPath).catch(() => undefined)
+    } else if (removePhoto && existing.PhotoPath) {
+      await pool.execute('UPDATE employee SET PhotoPath = NULL WHERE EmployeeID = ?', [employeeId])
+      await removeEmployeePhoto(existing.PhotoPath).catch(() => undefined)
+    }
     return { success: true }
   } catch (error) {
     throw employeeWriteError(error)
@@ -393,7 +523,7 @@ export async function permanentlyDeleteEmployee(event: any) {
   try {
     await connection.beginTransaction()
     const [[employee]] = await connection.execute<any[]>(
-      'SELECT EmployeeID FROM employee WHERE EmployeeID = ? FOR UPDATE',
+      'SELECT EmployeeID, PhotoPath FROM employee WHERE EmployeeID = ? FOR UPDATE',
       [employeeId]
     )
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
@@ -411,6 +541,7 @@ export async function permanentlyDeleteEmployee(event: any) {
     if (!employeeResult.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
 
     await connection.commit()
+    await removeEmployeePhoto(employee.PhotoPath).catch(() => undefined)
     return { success: true, deletedEmployeeId: employeeId, deletedBtrRows: Number(btrResult.affectedRows || 0) }
   } catch (error) {
     await connection.rollback()

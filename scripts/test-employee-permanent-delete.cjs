@@ -24,7 +24,7 @@ function backend({ found = true, failEmployeeDelete = false } = {}) {
     release() { calls.push('release') },
     async execute(sql, args) {
       calls.push({ sql, args })
-      if (sql.startsWith('SELECT EmployeeID FROM employee')) return [found ? [{ EmployeeID: args[0] }] : []]
+      if (sql.startsWith('SELECT EmployeeID, PhotoPath FROM employee')) return [found ? [{ EmployeeID: args[0], PhotoPath: null }] : []]
       if (sql.startsWith('DELETE FROM attendance_dtr_btr')) return [{ affectedRows: 3 }]
       if (sql.startsWith('DELETE FROM employee')) {
         if (failEmployeeDelete) throw new Error('delete failed')
@@ -81,7 +81,7 @@ function frontend(fetch) {
   const descriptor = parse(fs.readFileSync('app/pages/employees/index.vue', 'utf8')).descriptor
   const scope = vue.effectScope()
   const state = scope.run(() => evaluate(
-    `${descriptor.scriptSetup.content}\nmodule.exports={openDelete,closeDelete,confirmDelete,deleteOpen,deleting,deleteBusy,deleteError,deleteWarning};`,
+    `${descriptor.scriptSetup.content}\nmodule.exports={openDelete,closeDelete,confirmDelete,deleteOpen,deleting,deleteBusy,deleteError,deleteWarning,reset,requestCloseEmployeeModal,keepEditingEmployee,discardEmployeeChanges,modalOpen,discardEmployeeOpen,form};`,
     {
       defineEmits: () => () => {},
       $fetch: fetch,
@@ -148,10 +148,48 @@ test('failed permanent delete stays open and displays the server error', async (
   }
 })
 
-test('employee page compiles with the permanent-delete warning modal', () => {
+test('employee form only closes explicitly and protects unsaved changes', () => {
+  const harness = frontend(async () => ({ items: [], agencies: [], positions: [], agencyPositions: [] }))
+  try {
+    harness.state.reset()
+    harness.state.modalOpen.value = true
+    harness.state.requestCloseEmployeeModal()
+    assert.equal(harness.state.modalOpen.value, false)
+    assert.equal(harness.state.discardEmployeeOpen.value, false)
+
+    harness.state.reset()
+    harness.state.modalOpen.value = true
+    harness.state.form.value.FirstName = 'JUAN'
+    harness.state.requestCloseEmployeeModal()
+    assert.equal(harness.state.modalOpen.value, true)
+    assert.equal(harness.state.discardEmployeeOpen.value, true)
+
+    harness.state.keepEditingEmployee()
+    assert.equal(harness.state.modalOpen.value, true)
+    assert.equal(harness.state.discardEmployeeOpen.value, false)
+
+    harness.state.requestCloseEmployeeModal()
+    harness.state.discardEmployeeChanges()
+    assert.equal(harness.state.modalOpen.value, false)
+    assert.equal(harness.state.discardEmployeeOpen.value, false)
+    assert.equal(harness.state.form.value.FirstName, '')
+  } finally {
+    harness.close()
+  }
+})
+
+test('employee page compiles with guarded employee and themed image-picker modals', () => {
   const filename = 'app/pages/employees/index.vue'
-  const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
+  const source = fs.readFileSync(filename, 'utf8')
+  const { descriptor, errors } = parse(source, { filename })
   assert.deepEqual(errors, [])
+  assert.match(source, /class="photo-picker-modal"/)
+  assert.match(source, /Drag an image here/)
+  assert.match(source, /Discard unsaved changes\?/)
+  assert.match(source, /requestCloseEmployeeModal/)
+  assert.doesNotMatch(source, /v-if="modalOpen" class="backdrop" @click\.self/)
+  assert.doesNotMatch(source, />Paste image(?: from clipboard)?</)
+  assert.ok(source.indexOf('Emergency contact number') < source.indexOf('Emergency address'))
   const script = compileScript(descriptor, { id: 'employee-delete' })
   assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename, id: 'employee-delete', compilerOptions: { bindingMetadata: script.bindings } }).errors, [])
   for (const style of descriptor.styles) assert.deepEqual(compileStyle({ source: style.content, filename, id: 'employee-delete', scoped: style.scoped }).errors, [])
