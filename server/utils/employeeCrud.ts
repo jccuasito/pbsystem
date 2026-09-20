@@ -98,6 +98,29 @@ function parseText(value: unknown) {
   return trimmed.length ? trimmed : null
 }
 
+function parseUppercaseText(value: unknown) {
+  const parsed = parseText(value)
+  return typeof parsed === 'string' ? parsed.toLocaleUpperCase() : parsed
+}
+
+function parseEmail(value: unknown) {
+  const parsed = parseText(value)
+  if (parsed === null) return null
+  if (typeof parsed !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parsed)) {
+    throw createError({ statusCode: 400, statusMessage: 'Email must be a complete address such as name@gmail.com.' })
+  }
+  return parsed.toLocaleLowerCase()
+}
+
+function parseContactNumber(value: unknown) {
+  const parsed = parseText(value)
+  if (parsed === null) return null
+  if (typeof parsed !== 'string' || !/^\d{11}$/.test(parsed)) {
+    throw createError({ statusCode: 400, statusMessage: 'Contact number must contain exactly 11 digits.' })
+  }
+  return parsed
+}
+
 function parseStatus(value: unknown, fallback = 'Active') {
   if (value === null || value === undefined || value === '') return fallback
   if (value === 'Active' || value === 'Inactive') return value
@@ -124,16 +147,16 @@ function employeeValues(body: Record<string, unknown>) {
   return [
     parseInteger(body.AgencyPositionID, 'AgencyPositionID'),
     parseText(body.EmployeeNumber),
-    parseText(body.FirstName),
-    parseText(body.MiddleName),
-    parseText(body.LastName),
-    parseText(body.Nickname),
+    parseUppercaseText(body.FirstName),
+    parseUppercaseText(body.MiddleName),
+    parseUppercaseText(body.LastName),
+    parseUppercaseText(body.Nickname),
     parseDate(body.Birthday),
     parseText(body.Gender),
     parseText(body.CivilStatus),
     parseText(body.Address),
-    parseText(body.Email),
-    parseText(body.ContactNumber),
+    parseEmail(body.Email),
+    parseContactNumber(body.ContactNumber),
     parseDate(body.DateHired),
     parseStatus(body.Status)
   ]

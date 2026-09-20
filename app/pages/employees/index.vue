@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import ModernDateField from '~~/components/ModernDateField.vue'
+import SearchableSelect from '~~/components/SearchableSelect.vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 import { alertMessages } from '../../../components/alertmessage/messages'
@@ -40,6 +42,7 @@ const visibleEmployeeCount = ref(50)
 const loadMoreSentinel = ref<HTMLElement | null>(null)
 const isCompactView = ref(false)
 const employeeBatchSize = 50
+const suggestedBirthYear = new Date().getFullYear() - 25
 let employeeObserver: IntersectionObserver | null = null
 let compactViewQuery: MediaQueryList | null = null
 const deleteWarning = alertMessages.employeePermanentDelete()
@@ -68,10 +71,10 @@ function reset(item: any = null) {
   form.value = {
     AgencyPositionID: item?.AgencyPositionID ?? '',
     EmployeeNumber: item?.EmployeeNumber ?? '',
-    FirstName: item?.FirstName ?? '',
-    MiddleName: item?.MiddleName ?? '',
-    LastName: item?.LastName ?? '',
-    Nickname: item?.Nickname ?? '',
+    FirstName: String(item?.FirstName ?? '').toLocaleUpperCase(),
+    MiddleName: String(item?.MiddleName ?? '').toLocaleUpperCase(),
+    LastName: String(item?.LastName ?? '').toLocaleUpperCase(),
+    Nickname: String(item?.Nickname ?? '').toLocaleUpperCase(),
     Birthday: item?.Birthday?.slice?.(0, 10) ?? item?.Birthday ?? '',
     Gender: item?.Gender ?? '',
     CivilStatus: item?.CivilStatus ?? '',
@@ -161,6 +164,10 @@ function format(value: any) {
   return value === null || value === undefined || value === '' ? '\u2014' : value
 }
 
+function displayEmployeeName(item: any) {
+  return formatEmployeeName(item).toLocaleUpperCase()
+}
+
 const availableTransferSites = computed(() => {
   const rate = transferClientRates.value.find((item) => String(item.ClientRateID) === String(transferForm.value.ClientRateID))
   return rate ? transferSites.value.filter((item) => String(item.ClientID) === String(rate.ClientID)) : []
@@ -193,6 +200,12 @@ const availablePositions = computed(() => {
   })
 })
 
+const agencyPositionOptions = computed(() => agencyPositions.value.map((item) => ({
+  value: item.AgencyPositionID,
+  label: `${item.AgencyName} — ${item.PositionName}`,
+  search: `${item.AgencyName} ${item.PositionName}`
+})))
+
 const filteredItems = computed(() => {
   const query = search.value.trim().toLowerCase()
   if (!query) return items.value
@@ -210,6 +223,24 @@ function loadMoreEmployees() {
 
 function handleCompactViewChange(event: MediaQueryListEvent) {
   isCompactView.value = event.matches
+}
+
+function uppercaseNameField(field: 'FirstName' | 'MiddleName' | 'LastName' | 'Nickname', event: Event) {
+  const input = event.target as HTMLInputElement
+  const uppercased = input.value.toLocaleUpperCase()
+  input.value = uppercased
+  form.value[field] = uppercased
+}
+
+function sanitizeContactNumber(event: Event) {
+  const input = event.target as HTMLInputElement
+  const sanitized = input.value.replace(/\D/g, '').slice(0, 11)
+  input.value = sanitized
+  form.value.ContactNumber = sanitized
+}
+
+function normalizeEmail() {
+  form.value.Email = String(form.value.Email || '').trim().toLocaleLowerCase()
 }
 
 watch([search, () => filters.value.agencyId, () => filters.value.positionId], () => {
@@ -389,7 +420,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
-    <div class="table-wrap employee-table-wrap">
+    <div v-if="!isCompactView" class="table-wrap employee-table-wrap">
       <table class="employee-table">
         <colgroup>
           <col class="col-id" />
@@ -421,7 +452,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           <tr v-for="item in visibleItems" :key="item.EmployeeID">
             <td class="employee-id" data-label="Employee ID">{{ formatEmployeeId(item.EmployeeID) }}</td>
             <td data-label="Employee No.">{{ formatEmployeeNumber(item.EmployeeNumber) }}</td>
-            <td class="employee-name" data-label="Name">{{ formatEmployeeName(item) }}</td>
+            <td class="employee-name" data-label="Name">{{ displayEmployeeName(item) }}</td>
             <td data-label="Agency">{{ format(item.AgencyName) }}</td>
             <td data-label="Position">{{ format(item.PositionName) }}</td>
             <td data-label="Current Site">{{ format(item.SiteName) }}</td>
@@ -446,13 +477,13 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       </table>
     </div>
 
-    <section class="mobile-employee-list" aria-label="Employee list">
+    <section v-else class="mobile-employee-list" aria-label="Employee list">
       <p v-if="loading" class="mobile-list-message">Loading...</p>
       <p v-else-if="!filteredItems.length" class="mobile-list-message">No employees found.</p>
       <article v-for="item in visibleItems" :key="item.EmployeeID" class="employee-card">
         <header class="employee-card__head">
           <div class="employee-card__identity">
-            <strong>{{ formatEmployeeName(item) }}</strong>
+            <strong>{{ displayEmployeeName(item) }}</strong>
             <span>{{ formatEmployeeId(item.EmployeeID) }} · {{ formatEmployeeNumber(item.EmployeeNumber) }}</span>
           </div>
           <span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span>
@@ -497,22 +528,29 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
     <Teleport to="body">
       <div v-if="modalOpen" class="backdrop" @click.self="!busy && (modalOpen = false)">
         <form class="modal" @submit.prevent="save">
-          <button class="close" type="button" @click="modalOpen = false">x</button>
+          <button class="close" type="button" aria-label="Close employee form" @click="modalOpen = false">×</button>
           <h2>{{ editing ? 'Edit employee' : 'Add employee' }}</h2>
 
           <label>Employee number <small>Optional badge/reference</small><input v-model="form.EmployeeNumber" placeholder="Assign later if unavailable" /></label>
-          <label>Agency position<select v-model="form.AgencyPositionID" required><option value="">Select agency position</option><option v-for="item in agencyPositions" :key="item.AgencyPositionID" :value="item.AgencyPositionID">{{ item.AgencyName }} - {{ item.PositionName }}</option></select></label>
+          <SearchableSelect
+            v-model="form.AgencyPositionID"
+            label="Agency position"
+            placeholder="Search agency or position"
+            empty-text="No matching agency position."
+            :options="agencyPositionOptions"
+            required
+          />
           <div class="grid">
-            <label>First name<input v-model="form.FirstName" required /></label>
-            <label>Middle name<input v-model="form.MiddleName" /></label>
+            <label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label>
+            <label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label>
           </div>
           <div class="grid">
-            <label>Last name<input v-model="form.LastName" required /></label>
-            <label>Nickname<input v-model="form.Nickname" /></label>
+            <label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label>
+            <label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label>
           </div>
           <div class="grid">
-            <label>Birthday<input v-model="form.Birthday" type="date" /></label>
-            <label>Date hired<input v-model="form.DateHired" type="date" /></label>
+            <ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="today()" :initial-year="suggestedBirthYear" />
+            <ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" />
           </div>
           <div class="grid">
             <label>Gender<input v-model="form.Gender" /></label>
@@ -520,13 +558,19 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           </div>
           <label>Address<textarea v-model="form.Address" rows="3" /></label>
           <div class="grid">
-            <label>Email<input v-model="form.Email" type="email" /></label>
-            <label>Contact number<input v-model="form.ContactNumber" /></label>
+            <label>Email
+              <input v-model="form.Email" type="email" autocomplete="email" inputmode="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]+" placeholder="name@example.com" @blur="normalizeEmail" />
+              <small>Use a complete email address, e.g. name@gmail.com.</small>
+            </label>
+            <label>Contact number
+              <input :value="form.ContactNumber" type="text" autocomplete="tel" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" placeholder="11-digit contact number" @input="sanitizeContactNumber" />
+              <small>Numbers only, exactly 11 digits.</small>
+            </label>
           </div>
           <label>Status<select v-model="form.Status"><option>Active</option><option>Inactive</option></select></label>
 
           <p v-if="formError" class="error">{{ formError }}</p>
-          <footer><button type="button" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving...' : 'Save' }}</button></footer>
+          <footer><button class="cancel-button" type="button" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving...' : 'Save employee' }}</button></footer>
         </form>
       </div>
     </Teleport>
@@ -632,6 +676,59 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </style>
 
 <style scoped>
+.modal {
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.modal h2 {
+  color: #14233c;
+  font-size: 1.55rem;
+  line-height: 1.2;
+}
+
+.modal label small {
+  color: #7a8799;
+  font-size: .72rem;
+  font-weight: 600;
+}
+
+.modal footer > button {
+  min-height: 42px;
+  border: 1px solid #cfd8e6;
+  border-radius: 9px;
+  padding: 9px 17px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.modal footer > .cancel-button {
+  border-color: #c5d0df;
+  background: #f8fafc;
+  color: #334e6f;
+}
+
+.modal footer > .cancel-button:hover {
+  border-color: #94a8c2;
+  background: #eef3f8;
+}
+
+.modal .close {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 9px;
+  color: #53657d;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 1.35rem;
+}
+
+.modal .close:hover {
+  background: #edf3fa;
+  color: #17375f;
+}
+
 .employee-table-wrap {
   overflow: hidden;
 }

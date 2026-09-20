@@ -145,6 +145,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
   - `components/ClientRateCrud.vue`
+  - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/RateCrud.vue`
   - `components/RateMoneyFields.vue`
@@ -242,6 +243,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
   - `components/alertmessage/messages.ts`
+  - `components/ModernDateField.vue`
+  - `components/SearchableSelect.vue`
 - API calls and handlers:
   - `GET /api/employees` → `server/api/employees/index.get.ts`
   - `POST /api/employees` → `server/api/employees/index.post.ts`
