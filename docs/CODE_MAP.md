@@ -194,6 +194,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/employees/documents` → `server/api/employees/documents.get.ts`
   - `POST /api/employees/documents` → `server/api/employees/documents.post.ts`
   - `PUT /api/employees/documents` → `server/api/employees/documents.put.ts`
+  - `POST /api/employees/duplicates` → `server/api/employees/duplicates.post.ts`
   - `POST /api/employees/site-shifts` → `server/api/employees/site-shifts.post.ts`
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -253,6 +254,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `DELETE /api/employees/[param]/permanent` → `server/api/employees/[id]/permanent.delete.ts`
   - `POST /api/employees/[param]/transfer` → `server/api/employees/[id]/transfer.post.ts`
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
+  - `POST /api/employees/duplicates` → `server/api/employees/duplicates.post.ts`
   - `POST /api/employees/site-shifts` → `server/api/employees/site-shifts.post.ts`
   - `GET /api/organization/site-shift` → `server/api/organization/[resource].get.ts`
 - Related backend utilities:

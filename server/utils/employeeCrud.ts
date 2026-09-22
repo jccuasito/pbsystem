@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
-import { alertMessages, DEPLOYMENT_ALREADY_EXISTS } from '../../components/alertmessage/messages'
+import { alertMessages, DEPLOYMENT_ALREADY_EXISTS, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../components/alertmessage/messages'
 
 type EmployeeSection = 'profile' | 'government' | 'education' | 'license' | 'training' | 'clearance' | 'bank' | 'insurance'
 
@@ -268,6 +268,149 @@ function employeeValues(body: Record<string, unknown>) {
   ]
 }
 
+type EmployeeDuplicateMatch = {
+  EmployeeID: number
+  EmployeeCode: string
+  EmployeeName: string
+  AgencyName: string
+  PositionName: string
+  Status: string
+  MatchReasons: string[]
+}
+
+function normalizedComparison(value: unknown) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLocaleUpperCase()
+}
+
+async function employeeDuplicateReview(body: Record<string, unknown>, excludeEmployeeId?: number | null) {
+  const employeeNumber = normalizedComparison(parseText(body.EmployeeNumber))
+  const email = normalizedComparison(parseEmail(body.Email))
+  const contactNumber = normalizedComparison(parseContactNumber(body.ContactNumber))
+  const firstName = normalizedComparison(parseUppercaseText(body.FirstName))
+  const middleName = normalizedComparison(parseUppercaseText(body.MiddleName))
+  const lastName = normalizedComparison(parseUppercaseText(body.LastName))
+  const birthday = parseDate(body.Birthday)
+  const clauses: string[] = []
+  const values: unknown[] = []
+
+  if (employeeNumber) {
+    clauses.push('UPPER(TRIM(COALESCE(e.EmployeeNumber, \'\'))) = ?')
+    values.push(employeeNumber)
+  }
+  if (email) {
+    clauses.push('UPPER(TRIM(COALESCE(e.Email, \'\'))) = ?')
+    values.push(email)
+  }
+  if (contactNumber) {
+    clauses.push('TRIM(COALESCE(e.ContactNumber, \'\')) = ?')
+    values.push(contactNumber)
+  }
+  if (firstName && lastName) {
+    clauses.push('(UPPER(TRIM(COALESCE(e.FirstName, \'\'))) = ? AND UPPER(TRIM(COALESCE(e.LastName, \'\'))) = ?)')
+    values.push(firstName, lastName)
+  }
+  if (lastName) {
+    clauses.push('UPPER(TRIM(COALESCE(e.LastName, \'\'))) = ?')
+    values.push(lastName)
+  }
+  if (firstName) {
+    clauses.push('UPPER(TRIM(COALESCE(e.FirstName, \'\'))) = ?')
+    values.push(firstName)
+  }
+  if (!clauses.length) return { exactMatches: [] as EmployeeDuplicateMatch[], similarMatches: [] as EmployeeDuplicateMatch[] }
+
+  const filters = [`(${clauses.join(' OR ')})`]
+  if (excludeEmployeeId) {
+    filters.push('e.EmployeeID <> ?')
+    values.push(excludeEmployeeId)
+  }
+  const [rows] = await pool.execute<any[]>(
+    [
+      'SELECT e.EmployeeID, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName,',
+      "  DATE_FORMAT(e.Birthday, '%Y-%m-%d') AS Birthday, e.Email, e.ContactNumber, e.Status,",
+      '  a.AgencyName, p.PositionName',
+      'FROM employee e',
+      'INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID',
+      'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
+      positionJoin,
+      `WHERE ${filters.join(' AND ')}`,
+      'ORDER BY e.Status = \'Active\' DESC, e.LastName, e.FirstName, e.EmployeeID',
+      'LIMIT 12'
+    ].join('\n'),
+    values as any[]
+  )
+
+  const exactMatches: EmployeeDuplicateMatch[] = []
+  const similarMatches: EmployeeDuplicateMatch[] = []
+  for (const row of rows) {
+    const rowEmployeeNumber = normalizedComparison(row.EmployeeNumber)
+    const rowEmail = normalizedComparison(row.Email)
+    const rowContactNumber = normalizedComparison(row.ContactNumber)
+    const rowFirstName = normalizedComparison(row.FirstName)
+    const rowMiddleName = normalizedComparison(row.MiddleName)
+    const rowLastName = normalizedComparison(row.LastName)
+    const reasons: string[] = []
+    let exact = false
+
+    if (employeeNumber && rowEmployeeNumber === employeeNumber) {
+      reasons.push('Same employee number')
+      exact = true
+    }
+    if (email && rowEmail === email) {
+      reasons.push('Same email address')
+      exact = true
+    }
+    if (contactNumber && rowContactNumber === contactNumber) {
+      reasons.push('Same contact number')
+      exact = true
+    }
+    const sameFullName = rowFirstName === firstName && rowMiddleName === middleName && rowLastName === lastName
+    if (sameFullName && birthday && row.Birthday === birthday) {
+      reasons.push('Same full name and birthday')
+      exact = true
+    } else if (rowFirstName === firstName && rowLastName === lastName) {
+      reasons.push('Same first and last name')
+    } else {
+      if (lastName && rowLastName === lastName) reasons.push('Same last name')
+      if (firstName && rowFirstName === firstName) reasons.push('Same first name')
+    }
+    if (!reasons.length) continue
+
+    const match: EmployeeDuplicateMatch = {
+      EmployeeID: Number(row.EmployeeID),
+      EmployeeCode: `EMP-${String(row.EmployeeID).padStart(4, '0')}`,
+      EmployeeName: [row.FirstName, row.MiddleName, row.LastName].filter(Boolean).join(' ').toLocaleUpperCase(),
+      AgencyName: String(row.AgencyName || ''),
+      PositionName: String(row.PositionName || ''),
+      Status: String(row.Status || ''),
+      MatchReasons: reasons
+    }
+    if (exact) exactMatches.push(match)
+    else similarMatches.push(match)
+  }
+
+  return { exactMatches, similarMatches }
+}
+
+function assertEmployeeIsNotDuplicate(review: Awaited<ReturnType<typeof employeeDuplicateReview>>, confirmPossibleDuplicate: boolean) {
+  if (review.exactMatches.length) {
+    const alert = alertMessages.employeeDuplicate()
+    throw createError({
+      statusCode: 409,
+      statusMessage: alert.message,
+      data: { code: EMPLOYEE_DUPLICATE, matches: review.exactMatches }
+    })
+  }
+  if (review.similarMatches.length && !confirmPossibleDuplicate) {
+    const alert = alertMessages.employeeSimilar()
+    throw createError({
+      statusCode: 409,
+      statusMessage: alert.message,
+      data: { code: EMPLOYEE_SIMILAR, matches: review.similarMatches }
+    })
+  }
+}
+
 function sectionConfig(section: string) {
   const config = sectionConfigs[section as EmployeeSection]
   if (!config) throw createError({ statusCode: 404, statusMessage: 'Employee section not found.' })
@@ -458,6 +601,14 @@ export async function listEmployees(event: any) {
   return { items: items[0], ...lookups }
 }
 
+export async function findEmployeeDuplicates(event: any) {
+  const session = requireSession(event)
+  void session.sub
+  const body = await readBody<Record<string, unknown>>(event) || {}
+  const employeeId = body.id ? parseInteger(body.id, 'id') as number : null
+  return employeeDuplicateReview(body, employeeId)
+}
+
 export async function createEmployee(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
@@ -465,6 +616,8 @@ export async function createEmployee(event: any) {
   const values = employeeValues(body)
   if (!values[0] || !values[2] || !values[4]) throw createError({ statusCode: 400, statusMessage: 'Agency position, first name, and last name are required.' })
   try {
+    const duplicateReview = await employeeDuplicateReview(body)
+    assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
     const [result] = await pool.execute<any>(`INSERT INTO employee (${employeeFields.join(', ')}, CreatedBy) VALUES (${employeeFields.map(() => '?').join(', ')}, ?)`, [...values, session.sub] as any[])
     if (photo) {
       try {
@@ -489,6 +642,8 @@ export async function updateEmployee(event: any) {
   try {
     const [[existing]] = await pool.execute<any[]>('SELECT PhotoPath FROM employee WHERE EmployeeID = ? LIMIT 1', [employeeId])
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+    const duplicateReview = await employeeDuplicateReview(body, employeeId)
+    assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
     const [result] = await pool.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body), session.sub, employeeId] as any[])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     if (photo) {

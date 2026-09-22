@@ -4,7 +4,7 @@ import ModernDateField from '~~/components/ModernDateField.vue'
 import SearchableSelect from '~~/components/SearchableSelect.vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
-import { alertMessages } from '../../../components/alertmessage/messages'
+import { alertMessages, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../../components/alertmessage/messages'
 
 const emit = defineEmits<{ (event: 'navigate', view: 'employees-documents'): void }>()
 
@@ -24,6 +24,11 @@ const photoPickerModal = ref<HTMLElement | null>(null)
 const modalOpen = ref(false)
 const employeeFormSnapshot = ref('')
 const discardEmployeeOpen = ref(false)
+const sameAsPermanentAddress = ref(false)
+const showBeneficiary2 = ref(false)
+const duplicateReviewOpen = ref(false)
+const duplicateReviewKind = ref<'exact' | 'similar'>('similar')
+const duplicateMatches = ref<any[]>([])
 const transferOpen = ref(false)
 const deleteOpen = ref(false)
 const editing = ref<any>(null)
@@ -54,6 +59,7 @@ const relationshipOptions = ['Spouse', 'Child', 'Parent', 'Sibling', 'Grandchild
 let employeeObserver: IntersectionObserver | null = null
 let compactViewQuery: MediaQueryList | null = null
 const deleteWarning = alertMessages.employeePermanentDelete()
+const unsavedChangesWarning = alertMessages.employeeUnsavedChanges()
 
 const form = ref({
   AgencyPositionID: '',
@@ -150,8 +156,12 @@ function reset(item: any = null) {
     EmergencyAddress: item?.EmergencyAddress ?? '',
     EmergencyContactNo: item?.EmergencyContactNo ?? ''
   }
+  sameAsPermanentAddress.value = permanentAddressHasValues() && presentAddressMatchesPermanent()
+  showBeneficiary2.value = Boolean(form.value.Beneficiary2 || form.value.Beneficiary2Relationship)
   employeeFormSnapshot.value = JSON.stringify(form.value)
   discardEmployeeOpen.value = false
+  duplicateReviewOpen.value = false
+  duplicateMatches.value = []
   error.value = ''
   formError.value = ''
   photoError.value = ''
@@ -172,7 +182,8 @@ async function load(silent = false) {
   }
 }
 
-async function save() {
+async function save(confirmPossibleDuplicate = false) {
+  if (busy.value) return
   if (photoError.value) {
     formError.value = photoError.value
     return
@@ -180,18 +191,53 @@ async function save() {
   busy.value = true
   formError.value = ''
   try {
+    if (!confirmPossibleDuplicate) {
+      const duplicateReview: any = await $fetch('/api/employees/duplicates', {
+        method: 'POST',
+        body: { ...form.value, id: editing.value?.EmployeeID }
+      })
+      if (duplicateReview.exactMatches?.length || duplicateReview.similarMatches?.length) {
+        duplicateReviewKind.value = duplicateReview.exactMatches?.length ? 'exact' : 'similar'
+        duplicateMatches.value = duplicateReview.exactMatches?.length ? duplicateReview.exactMatches : duplicateReview.similarMatches
+        duplicateReviewOpen.value = true
+        return
+      }
+    }
     await $fetch(editing.value ? `/api/employees/${editing.value.EmployeeID}` : '/api/employees', {
       method: editing.value ? 'PUT' : 'POST',
-      body: editing.value ? { id: editing.value.EmployeeID, ...form.value } : form.value
+      body: editing.value
+        ? { id: editing.value.EmployeeID, ...form.value, ConfirmPossibleDuplicate: confirmPossibleDuplicate }
+        : { ...form.value, ConfirmPossibleDuplicate: confirmPossibleDuplicate }
     })
+    duplicateReviewOpen.value = false
     modalOpen.value = false
     reset()
     await load()
   } catch (cause: any) {
-    formError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to save employee.'
+    const duplicateData = cause.data?.data || cause.data
+    if (duplicateData?.code === EMPLOYEE_DUPLICATE && duplicateData.matches?.length) {
+      duplicateReviewKind.value = 'exact'
+      duplicateMatches.value = duplicateData.matches
+      duplicateReviewOpen.value = true
+    } else if (duplicateData?.code === EMPLOYEE_SIMILAR && duplicateData.matches?.length) {
+      duplicateReviewKind.value = 'similar'
+      duplicateMatches.value = duplicateData.matches
+      duplicateReviewOpen.value = true
+    } else {
+      formError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to save employee.'
+    }
   } finally {
     busy.value = false
   }
+}
+
+function reviewEmployeeDetails() {
+  duplicateReviewOpen.value = false
+}
+
+async function confirmSimilarEmployee() {
+  duplicateReviewOpen.value = false
+  await save(true)
 }
 
 async function deactivate(item: any) {
@@ -247,6 +293,7 @@ function employeeInitials(item: any) {
 
 const photoPreview = computed(() => form.value.PhotoDataUrl || (!form.value.RemovePhoto ? form.value.PhotoUrl : ''))
 const employeeFormDirty = computed(() => JSON.stringify(form.value) !== employeeFormSnapshot.value)
+const duplicateReviewMessage = computed(() => duplicateReviewKind.value === 'exact' ? alertMessages.employeeDuplicate() : alertMessages.employeeSimilar())
 
 function requestCloseEmployeeModal() {
   if (busy.value) return
@@ -394,9 +441,31 @@ function removeSelectedPhoto() {
   photoError.value = ''
 }
 
-function copyPermanentAddress(event: Event) {
-  const checked = (event.target as HTMLInputElement).checked
-  if (!checked) return
+function permanentAddressHasValues() {
+  return [
+    form.value.PermanentUnitHouseNumber,
+    form.value.PermanentProvince,
+    form.value.PermanentStreet,
+    form.value.PermanentCityMunicipality,
+    form.value.PermanentSubdivision,
+    form.value.PermanentBarangay,
+    form.value.PermanentRegion,
+    form.value.PermanentPostalCode
+  ].some(value => String(value || '').trim())
+}
+
+function presentAddressMatchesPermanent() {
+  return form.value.PresentUnitHouseNumber === form.value.PermanentUnitHouseNumber
+    && form.value.PresentProvince === form.value.PermanentProvince
+    && form.value.PresentStreet === form.value.PermanentStreet
+    && form.value.PresentCityMunicipality === form.value.PermanentCityMunicipality
+    && form.value.PresentSubdivision === form.value.PermanentSubdivision
+    && form.value.PresentBarangay === form.value.PermanentBarangay
+    && form.value.PresentRegion === form.value.PermanentRegion
+    && form.value.PresentPostalCode === form.value.PermanentPostalCode
+}
+
+function syncPresentAddress() {
   Object.assign(form.value, {
     PresentUnitHouseNumber: form.value.PermanentUnitHouseNumber,
     PresentProvince: form.value.PermanentProvince,
@@ -407,6 +476,42 @@ function copyPermanentAddress(event: Event) {
     PresentRegion: form.value.PermanentRegion,
     PresentPostalCode: form.value.PermanentPostalCode
   })
+}
+
+function clearPresentAddress() {
+  Object.assign(form.value, {
+    PresentUnitHouseNumber: '',
+    PresentProvince: '',
+    PresentStreet: '',
+    PresentCityMunicipality: '',
+    PresentSubdivision: '',
+    PresentBarangay: '',
+    PresentRegion: '',
+    PresentPostalCode: ''
+  })
+}
+
+function toggleSameAsPermanentAddress(event: Event) {
+  sameAsPermanentAddress.value = (event.target as HTMLInputElement).checked
+  if (sameAsPermanentAddress.value) syncPresentAddress()
+  else clearPresentAddress()
+}
+
+function addBeneficiary() {
+  showBeneficiary2.value = true
+}
+
+function removeBeneficiary2() {
+  form.value.Beneficiary2 = ''
+  form.value.Beneficiary2Relationship = ''
+  showBeneficiary2.value = false
+}
+
+function toggleBeneficiaryNotApplicable() {
+  if (!form.value.BeneficiaryNotApplicable) return
+  form.value.Beneficiary1 = ''
+  form.value.Beneficiary1Relationship = ''
+  removeBeneficiary2()
 }
 
 function sanitizeContactNumber(event: Event) {
@@ -439,6 +544,19 @@ watch(loadMoreSentinel, (next, previous) => {
 watch(() => filters.value.agencyId, () => {
   filters.value.positionId = ''
   void load()
+})
+
+watch(() => [
+  form.value.PermanentUnitHouseNumber,
+  form.value.PermanentProvince,
+  form.value.PermanentStreet,
+  form.value.PermanentCityMunicipality,
+  form.value.PermanentSubdivision,
+  form.value.PermanentBarangay,
+  form.value.PermanentRegion,
+  form.value.PermanentPostalCode
+], () => {
+  if (sameAsPermanentAddress.value) syncPresentAddress()
 })
 
 function today() {
@@ -719,7 +837,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <Teleport to="body">
       <div v-if="modalOpen" class="backdrop">
-        <form class="modal employee-modal" @submit.prevent="save">
+        <form class="modal employee-modal" @submit.prevent="save()">
           <button class="close" type="button" aria-label="Close employee form" @click="requestCloseEmployeeModal">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
           </button>
@@ -768,17 +886,28 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           </section>
 
           <section class="employee-form-section">
-            <div class="employee-form-section__heading"><div><span>PRESENT ADDRESS</span><h3>Current residence</h3></div><label class="checkbox-row"><input type="checkbox" @change="copyPermanentAddress" /> Same as permanent address</label></div>
-            <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" /></label><label>Province<input v-model="form.PresentProvince" /></label></div>
-            <div class="grid"><label>Street<input v-model="form.PresentStreet" /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" /></label></div>
-            <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" /></label><label>Barangay<input v-model="form.PresentBarangay" /></label></div>
-            <div class="grid"><label>Region<input v-model="form.PresentRegion" /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" /></label></div>
+            <div class="employee-form-section__heading"><div><span>PRESENT ADDRESS</span><h3>Current residence</h3></div><label class="checkbox-row"><input type="checkbox" :checked="sameAsPermanentAddress" @change="toggleSameAsPermanentAddress" /> Same as permanent address</label></div>
+            <div class="present-address-fields" :class="{ 'fields-disabled': sameAsPermanentAddress }">
+              <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" :disabled="sameAsPermanentAddress" /></label><label>Province<input v-model="form.PresentProvince" :disabled="sameAsPermanentAddress" /></label></div>
+              <div class="grid"><label>Street<input v-model="form.PresentStreet" :disabled="sameAsPermanentAddress" /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" :disabled="sameAsPermanentAddress" /></label></div>
+              <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" :disabled="sameAsPermanentAddress" /></label><label>Barangay<input v-model="form.PresentBarangay" :disabled="sameAsPermanentAddress" /></label></div>
+              <div class="grid"><label>Region<input v-model="form.PresentRegion" :disabled="sameAsPermanentAddress" /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" :disabled="sameAsPermanentAddress" /></label></div>
+            </div>
           </section>
 
           <section class="employee-form-section">
-            <div class="employee-form-section__heading"><div><span>BENEFICIARY INFORMATION</span><h3>Designated beneficiaries</h3></div><label class="checkbox-row"><input v-model="form.BeneficiaryNotApplicable" type="checkbox" /> Not applicable</label></div>
+            <div class="employee-form-section__heading"><div><span>BENEFICIARY INFORMATION</span><h3>Designated beneficiaries</h3></div><label class="checkbox-row"><input v-model="form.BeneficiaryNotApplicable" type="checkbox" @change="toggleBeneficiaryNotApplicable" /> Not applicable</label></div>
             <div class="grid" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }"><label>Beneficiary 1<input v-model="form.Beneficiary1" :disabled="form.BeneficiaryNotApplicable" @input="uppercaseNameField('Beneficiary1', $event)" /></label><label>Relationship<select v-model="form.Beneficiary1Relationship" :disabled="form.BeneficiaryNotApplicable"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
-            <div class="grid" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }"><label>Beneficiary 2<input v-model="form.Beneficiary2" :disabled="form.BeneficiaryNotApplicable" @input="uppercaseNameField('Beneficiary2', $event)" /></label><label>Relationship<select v-model="form.Beneficiary2Relationship" :disabled="form.BeneficiaryNotApplicable"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+            <div v-if="showBeneficiary2" class="beneficiary-row" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }">
+              <div class="grid"><label>Beneficiary 2<input v-model="form.Beneficiary2" :disabled="form.BeneficiaryNotApplicable" @input="uppercaseNameField('Beneficiary2', $event)" /></label><label>Relationship<select v-model="form.Beneficiary2Relationship" :disabled="form.BeneficiaryNotApplicable"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+              <button type="button" class="remove-beneficiary-button" :disabled="form.BeneficiaryNotApplicable" aria-label="Remove beneficiary 2" @click="removeBeneficiary2">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 5v5m4-5v5" /></svg>
+              </button>
+            </div>
+            <button v-else-if="!form.BeneficiaryNotApplicable" type="button" class="add-beneficiary-button" @click="addBeneficiary">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+              Add beneficiary
+            </button>
           </section>
 
           <section class="employee-form-section">
@@ -837,12 +966,36 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
         <section class="discard-changes-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-employee-title" aria-describedby="discard-employee-description">
           <div class="discard-changes-icon" aria-hidden="true">!</div>
           <div>
-            <h2 id="discard-employee-title">Discard unsaved changes?</h2>
-            <p id="discard-employee-description">The employee information you entered has not been saved yet.</p>
+            <h2 id="discard-employee-title">{{ unsavedChangesWarning.title }}</h2>
+            <p id="discard-employee-description">{{ unsavedChangesWarning.message }}</p>
           </div>
           <footer>
             <button type="button" class="keep-editing-button" @click="keepEditingEmployee">Keep editing</button>
             <button type="button" class="discard-button" @click="discardEmployeeChanges">Discard changes</button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="duplicateReviewOpen" class="backdrop duplicate-review-backdrop">
+        <section class="duplicate-review-modal" role="alertdialog" aria-modal="true" aria-labelledby="duplicate-review-title">
+          <div class="duplicate-review-icon" aria-hidden="true">!</div>
+          <div class="duplicate-review-copy">
+            <span>EMPLOYEE CHECK</span>
+            <h2 id="duplicate-review-title">{{ duplicateReviewMessage.title }}</h2>
+            <p>{{ duplicateReviewMessage.message }}</p>
+          </div>
+          <ul class="duplicate-match-list">
+            <li v-for="match in duplicateMatches" :key="match.EmployeeID">
+              <strong>{{ match.EmployeeCode }} · {{ match.EmployeeName }}</strong>
+              <span>{{ match.AgencyName }} · {{ match.PositionName }}</span>
+              <small>{{ match.MatchReasons.join(' · ') }}</small>
+            </li>
+          </ul>
+          <footer>
+            <button type="button" class="review-details-button" @click="reviewEmployeeDetails">Review details</button>
+            <button v-if="duplicateReviewKind === 'similar'" type="button" class="save-anyway-button" :disabled="busy" @click="confirmSimilarEmployee">{{ busy ? 'Saving...' : 'Save anyway' }}</button>
           </footer>
         </section>
       </div>
@@ -1415,6 +1568,184 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
   opacity: .58;
 }
 
+.present-address-fields {
+  display: grid;
+  gap: 13px;
+  transition: opacity .16s ease;
+}
+
+.beneficiary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.remove-beneficiary-button,
+.add-beneficiary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  border: 1px solid #c9d5e5;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #29486e;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.add-beneficiary-button {
+  justify-self: start;
+  padding: 8px 14px;
+  border-color: #aac0e5;
+  background: #eef4ff;
+  color: #244d91;
+}
+
+.remove-beneficiary-button {
+  width: 42px;
+  padding: 0;
+  color: #b42318;
+}
+
+.remove-beneficiary-button svg,
+.add-beneficiary-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.add-beneficiary-button:hover {
+  border-color: #7699d5;
+  background: #e1ecff;
+}
+
+.remove-beneficiary-button:hover {
+  border-color: #f1aaaa;
+  background: #fff5f5;
+}
+
+.duplicate-review-backdrop {
+  z-index: 430;
+}
+
+.duplicate-review-modal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  width: min(100%, 620px);
+  gap: 14px;
+  padding: 24px;
+  border: 1px solid #d7e1ee;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .28);
+  color: #14233c;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.duplicate-review-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff3cd;
+  color: #9a6700;
+  font-size: 1.15rem;
+  font-weight: 900;
+}
+
+.duplicate-review-copy > span {
+  color: #3767ba;
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
+
+.duplicate-review-copy h2 {
+  margin: 3px 0 7px;
+  font-size: 1.2rem;
+}
+
+.duplicate-review-copy p {
+  margin: 0;
+  color: #64748b;
+  font-size: .86rem;
+  line-height: 1.5;
+}
+
+.duplicate-match-list {
+  display: grid;
+  grid-column: 1 / -1;
+  max-height: 250px;
+  gap: 8px;
+  margin: 2px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.duplicate-match-list li {
+  display: grid;
+  gap: 3px;
+  padding: 12px 13px;
+  border: 1px solid #dce4ef;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.duplicate-match-list strong {
+  color: #17375f;
+  font-size: .86rem;
+}
+
+.duplicate-match-list span,
+.duplicate-match-list small {
+  color: #64748b;
+  font-size: .76rem;
+}
+
+.duplicate-match-list small {
+  color: #9a6700;
+  font-weight: 750;
+}
+
+.duplicate-review-modal footer {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.duplicate-review-modal footer button {
+  min-height: 41px;
+  border: 1px solid #c8d3e1;
+  border-radius: 9px;
+  padding: 8px 15px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.review-details-button {
+  background: #fff;
+  color: #334e6f;
+}
+
+.save-anyway-button {
+  border-color: #2349e6 !important;
+  background: #2349e6;
+  color: #fff;
+}
+
 .employee-modal > footer {
   position: sticky;
   z-index: 3;
@@ -1510,6 +1841,35 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
   }
 
   .discard-changes-modal footer button {
+    width: 100%;
+  }
+
+  .beneficiary-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .remove-beneficiary-button {
+    width: 100%;
+  }
+
+  .duplicate-review-modal {
+    grid-template-columns: 1fr;
+    max-height: calc(100dvh - 20px);
+    padding: 20px;
+    overflow: auto;
+  }
+
+  .duplicate-review-icon,
+  .duplicate-review-modal footer,
+  .duplicate-match-list {
+    grid-column: 1;
+  }
+
+  .duplicate-review-modal footer {
+    flex-direction: column-reverse;
+  }
+
+  .duplicate-review-modal footer button {
     width: 100%;
   }
 }

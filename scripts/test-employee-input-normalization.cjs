@@ -10,7 +10,7 @@ function evaluate(source, globals = {}) {
   return module.exports
 }
 
-function harness(body) {
+function harness(body, duplicateRows = []) {
   const calls = []
   const alertMessages = evaluate(fs.readFileSync('components/alertmessage/messages.ts', 'utf8'))
   const api = evaluate(fs.readFileSync('server/utils/employeeCrud.ts', 'utf8'), {
@@ -25,6 +25,7 @@ function harness(body) {
         ? {
             execute: async (sql, values) => {
               calls.push({ sql, values: Array.from(values || []) })
+              if (sql.includes('FROM employee e') && sql.includes('LIMIT 12')) return [duplicateRows]
               return [{ insertId: 12, affectedRows: 1 }]
             },
           }
@@ -79,7 +80,7 @@ const validEmployee = {
 test('employee create normalizes names and email while preserving a valid numeric contact', async () => {
   const { api, calls } = harness(validEmployee)
   assert.deepEqual(JSON.parse(JSON.stringify(await api.createEmployee({}))), { id: 12 })
-  const values = calls[0].values
+  const values = calls.find(call => call.sql.startsWith('INSERT INTO employee')).values
   assert.equal(values[2], 'JUAN')
   assert.equal(values[3], 'SANTOS')
   assert.equal(values[4], 'DELA CRUZ')
@@ -118,4 +119,46 @@ test('employee create rejects letters or contact numbers that are not exactly 11
     await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /exactly 11 digits/.test(error.message))
     assert.equal(calls.length, 0)
   }
+})
+
+test('employee create blocks exact duplicates and reports the existing record', async () => {
+  const duplicate = {
+    EmployeeID: 8,
+    EmployeeNumber: 'DJA-0001',
+    FirstName: 'JUAN',
+    MiddleName: 'SANTOS',
+    LastName: 'DELA CRUZ',
+    Birthday: '1995-05-08',
+    Email: 'juan.test@gmail.com',
+    ContactNumber: '09171234567',
+    Status: 'Active',
+    AgencyName: 'DJA Security Services INC.',
+    PositionName: 'Security Guard'
+  }
+  const { api, calls } = harness(validEmployee, [duplicate])
+  await assert.rejects(api.createEmployee({}), error => error.statusCode === 409 && error.data?.code === 'EMPLOYEE_DUPLICATE')
+  assert.equal(calls.some(call => call.sql.startsWith('INSERT INTO employee')), false)
+})
+
+test('employee create requires confirmation for similar names and permits an intentional save', async () => {
+  const similar = {
+    EmployeeID: 9,
+    EmployeeNumber: null,
+    FirstName: 'PEDRO',
+    MiddleName: null,
+    LastName: 'DELA CRUZ',
+    Birthday: '1990-01-02',
+    Email: null,
+    ContactNumber: null,
+    Status: 'Active',
+    AgencyName: 'DJA Security Services INC.',
+    PositionName: 'Security Guard'
+  }
+  const blocked = harness(validEmployee, [similar])
+  await assert.rejects(blocked.api.createEmployee({}), error => error.statusCode === 409 && error.data?.code === 'EMPLOYEE_SIMILAR')
+  assert.equal(blocked.calls.some(call => call.sql.startsWith('INSERT INTO employee')), false)
+
+  const allowed = harness({ ...validEmployee, ConfirmPossibleDuplicate: true }, [similar])
+  assert.deepEqual(JSON.parse(JSON.stringify(await allowed.api.createEmployee({}))), { id: 12 })
+  assert.equal(allowed.calls.filter(call => call.sql.startsWith('INSERT INTO employee')).length, 1)
 })

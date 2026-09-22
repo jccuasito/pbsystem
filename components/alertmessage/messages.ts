@@ -3,6 +3,8 @@ export type AlertMessage = { title: string; message: string; tone: 'info' | 'suc
 // Pure data: shared by Vue screens and server validation. Keep new alert copy here.
 export const DTR_EMPLOYEE_ALREADY_ADDED = 'DTR_EMPLOYEE_ALREADY_ADDED'
 export const DEPLOYMENT_ALREADY_EXISTS = 'DEPLOYMENT_ALREADY_EXISTS'
+export const EMPLOYEE_DUPLICATE = 'EMPLOYEE_DUPLICATE'
+export const EMPLOYEE_SIMILAR = 'EMPLOYEE_SIMILAR'
 export const alertMessages = {
   deploymentPositionMismatch: (): AlertMessage => ({
     title: 'Position does not match',
@@ -29,5 +31,20 @@ export const alertMessages = {
     title: 'Are you sure you want to delete this employee?',
     message: 'All records and transactions related to this employee will be permanently deleted, including attendance, DTR/BTR entries, deployments, payroll, deductions, loans, billing details, and employee documents. This action cannot be undone.',
     tone: 'error',
+  }),
+  employeeUnsavedChanges: (): AlertMessage => ({
+    title: 'Discard unsaved changes?',
+    message: 'The employee information you entered has not been saved yet.',
+    tone: 'info',
+  }),
+  employeeDuplicate: (): AlertMessage => ({
+    title: 'This employee may already exist',
+    message: 'The matching employee information cannot be saved again. Review the entry and use the existing employee record.',
+    tone: 'error',
+  }),
+  employeeSimilar: (): AlertMessage => ({
+    title: 'A similar employee was found',
+    message: 'Review these possible matches before saving a new employee.',
+    tone: 'info',
   }),
 }

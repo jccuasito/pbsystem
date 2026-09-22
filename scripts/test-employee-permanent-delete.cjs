@@ -81,7 +81,7 @@ function frontend(fetch) {
   const descriptor = parse(fs.readFileSync('app/pages/employees/index.vue', 'utf8')).descriptor
   const scope = vue.effectScope()
   const state = scope.run(() => evaluate(
-    `${descriptor.scriptSetup.content}\nmodule.exports={openDelete,closeDelete,confirmDelete,deleteOpen,deleting,deleteBusy,deleteError,deleteWarning,reset,requestCloseEmployeeModal,keepEditingEmployee,discardEmployeeChanges,modalOpen,discardEmployeeOpen,form};`,
+    `${descriptor.scriptSetup.content}\nmodule.exports={openDelete,closeDelete,confirmDelete,deleteOpen,deleting,deleteBusy,deleteError,deleteWarning,reset,requestCloseEmployeeModal,keepEditingEmployee,discardEmployeeChanges,modalOpen,discardEmployeeOpen,form,sameAsPermanentAddress,showBeneficiary2,toggleSameAsPermanentAddress,addBeneficiary,removeBeneficiary2};`,
     {
       defineEmits: () => () => {},
       $fetch: fetch,
@@ -178,6 +178,48 @@ test('employee form only closes explicitly and protects unsaved changes', () => 
   }
 })
 
+test('same-address state is restored, kept in sync, and cleared when unchecked', () => {
+  const harness = frontend(async () => ({ items: [], agencies: [], positions: [], agencyPositions: [] }))
+  try {
+    harness.state.reset({
+      PermanentStreet: 'Rizal Street',
+      PermanentCityMunicipality: 'Davao City',
+      PresentStreet: 'Rizal Street',
+      PresentCityMunicipality: 'Davao City'
+    })
+    assert.equal(harness.state.sameAsPermanentAddress.value, true)
+
+    harness.state.toggleSameAsPermanentAddress({ target: { checked: false } })
+    assert.equal(harness.state.sameAsPermanentAddress.value, false)
+    assert.equal(harness.state.form.value.PresentStreet, '')
+    assert.equal(harness.state.form.value.PresentCityMunicipality, '')
+
+    harness.state.toggleSameAsPermanentAddress({ target: { checked: true } })
+    assert.equal(harness.state.form.value.PresentStreet, 'Rizal Street')
+    assert.equal(harness.state.form.value.PresentCityMunicipality, 'Davao City')
+  } finally {
+    harness.close()
+  }
+})
+
+test('second beneficiary is added on demand and removed cleanly', () => {
+  const harness = frontend(async () => ({ items: [], agencies: [], positions: [], agencyPositions: [] }))
+  try {
+    harness.state.reset()
+    assert.equal(harness.state.showBeneficiary2.value, false)
+    harness.state.addBeneficiary()
+    assert.equal(harness.state.showBeneficiary2.value, true)
+    harness.state.form.value.Beneficiary2 = 'MARIA CRUZ'
+    harness.state.form.value.Beneficiary2Relationship = 'Spouse'
+    harness.state.removeBeneficiary2()
+    assert.equal(harness.state.showBeneficiary2.value, false)
+    assert.equal(harness.state.form.value.Beneficiary2, '')
+    assert.equal(harness.state.form.value.Beneficiary2Relationship, '')
+  } finally {
+    harness.close()
+  }
+})
+
 test('employee page compiles with guarded employee and themed image-picker modals', () => {
   const filename = 'app/pages/employees/index.vue'
   const source = fs.readFileSync(filename, 'utf8')
@@ -185,7 +227,10 @@ test('employee page compiles with guarded employee and themed image-picker modal
   assert.deepEqual(errors, [])
   assert.match(source, /class="photo-picker-modal"/)
   assert.match(source, /Drag an image here/)
-  assert.match(source, /Discard unsaved changes\?/)
+  assert.match(source, /employeeUnsavedChanges\(\)/)
+  assert.match(source, /Add beneficiary/)
+  assert.match(source, /employeeDuplicate\(\)/)
+  assert.match(source, /Save anyway/)
   assert.match(source, /requestCloseEmployeeModal/)
   assert.doesNotMatch(source, /v-if="modalOpen" class="backdrop" @click\.self/)
   assert.doesNotMatch(source, />Paste image(?: from clipboard)?</)
