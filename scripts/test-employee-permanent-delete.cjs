@@ -81,7 +81,7 @@ function frontend(fetch) {
   const descriptor = parse(fs.readFileSync('app/pages/employees/index.vue', 'utf8')).descriptor
   const scope = vue.effectScope()
   const state = scope.run(() => evaluate(
-    `${descriptor.scriptSetup.content}\nmodule.exports={openDelete,closeDelete,confirmDelete,deleteOpen,deleting,deleteBusy,deleteError,deleteWarning,reset,requestCloseEmployeeModal,keepEditingEmployee,discardEmployeeChanges,modalOpen,discardEmployeeOpen,form,sameAsPermanentAddress,showBeneficiary2,toggleSameAsPermanentAddress,addBeneficiary,removeBeneficiary2};`,
+    `${descriptor.scriptSetup.content}\nmodule.exports={openDelete,closeDelete,confirmDelete,deleteOpen,deleting,deleteBusy,deleteError,deleteWarning,reset,requestCloseEmployeeModal,keepEditingEmployee,discardEmployeeChanges,modalOpen,discardEmployeeOpen,form,sameAsPermanentAddress,beneficiaries,toggleSameAsPermanentAddress,addBeneficiary,removeBeneficiary,incompleteEmployeeFields};`,
     {
       defineEmits: () => () => {},
       $fetch: fetch,
@@ -202,19 +202,19 @@ test('same-address state is restored, kept in sync, and cleared when unchecked',
   }
 })
 
-test('second beneficiary is added on demand and removed cleanly', () => {
+test('beneficiaries are added and removed dynamically without a two-person limit', () => {
   const harness = frontend(async () => ({ items: [], agencies: [], positions: [], agencyPositions: [] }))
   try {
     harness.state.reset()
-    assert.equal(harness.state.showBeneficiary2.value, false)
+    assert.equal(harness.state.beneficiaries.value.length, 0)
     harness.state.addBeneficiary()
-    assert.equal(harness.state.showBeneficiary2.value, true)
-    harness.state.form.value.Beneficiary2 = 'MARIA CRUZ'
-    harness.state.form.value.Beneficiary2Relationship = 'Spouse'
-    harness.state.removeBeneficiary2()
-    assert.equal(harness.state.showBeneficiary2.value, false)
-    assert.equal(harness.state.form.value.Beneficiary2, '')
-    assert.equal(harness.state.form.value.Beneficiary2Relationship, '')
+    harness.state.addBeneficiary()
+    harness.state.addBeneficiary()
+    assert.equal(harness.state.beneficiaries.value.length, 3)
+    harness.state.beneficiaries.value[1] = { Name: 'MARIA CRUZ', Relationship: 'Spouse' }
+    harness.state.removeBeneficiary(1)
+    assert.equal(harness.state.beneficiaries.value.length, 2)
+    assert.equal(harness.state.beneficiaries.value.some(entry => entry.Name === 'MARIA CRUZ'), false)
   } finally {
     harness.close()
   }
@@ -229,6 +229,8 @@ test('employee page compiles with guarded employee and themed image-picker modal
   assert.match(source, /Drag an image here/)
   assert.match(source, /employeeUnsavedChanges\(\)/)
   assert.match(source, /Add beneficiary/)
+  assert.match(source, /v-for="\(beneficiary, index\) in beneficiaries"/)
+  assert.match(source, /employeeIncomplete/)
   assert.match(source, /employeeDuplicate\(\)/)
   assert.match(source, /Save anyway/)
   assert.match(source, /requestCloseEmployeeModal/)

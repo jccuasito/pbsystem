@@ -25,7 +25,9 @@ const modalOpen = ref(false)
 const employeeFormSnapshot = ref('')
 const discardEmployeeOpen = ref(false)
 const sameAsPermanentAddress = ref(false)
-const showBeneficiary2 = ref(false)
+type BeneficiaryEntry = { Name: string; Relationship: string }
+const beneficiaries = ref<BeneficiaryEntry[]>([])
+const missingEmployeeFields = ref<string[]>([])
 const duplicateReviewOpen = ref(false)
 const duplicateReviewKind = ref<'exact' | 'similar'>('similar')
 const duplicateMatches = ref<any[]>([])
@@ -96,10 +98,6 @@ const form = ref({
   PresentRegion: '',
   PresentPostalCode: '',
   BeneficiaryNotApplicable: false,
-  Beneficiary1: '',
-  Beneficiary1Relationship: '',
-  Beneficiary2: '',
-  Beneficiary2Relationship: '',
   EmergencyName: '',
   EmergencyRelationship: '',
   EmergencyAddress: '',
@@ -107,6 +105,30 @@ const form = ref({
 })
 const transferForm = ref({ ClientRateID: '', SiteID: '', SiteShiftID: '', StartDate: '', Remarks: '' })
 const siteShiftForm = ref({ ShiftCodeID: '', ShiftCode: '', ShiftName: '', ShiftType: 'Day', TimeIn: '08:00', TimeOut: '17:00', RegularHours: '8', RegularOTCap: '4' })
+
+function beneficiariesFromEmployee(item: any): BeneficiaryEntry[] {
+  let parsed: any = item?.Beneficiaries
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed) } catch { parsed = [] }
+  }
+  if (!Array.isArray(parsed)) {
+    parsed = [
+      { Name: item?.Beneficiary1, Relationship: item?.Beneficiary1Relationship },
+      { Name: item?.Beneficiary2, Relationship: item?.Beneficiary2Relationship },
+    ]
+  }
+  return parsed
+    .map((entry: any) => ({ Name: String(entry?.Name || '').toLocaleUpperCase(), Relationship: String(entry?.Relationship || '') }))
+    .filter((entry: BeneficiaryEntry) => entry.Name || entry.Relationship)
+}
+
+function employeeDraftSnapshot() {
+  return JSON.stringify({ form: form.value, beneficiaries: beneficiaries.value })
+}
+
+function employeePayload(confirmPossibleDuplicate = false) {
+  return { ...form.value, Beneficiaries: beneficiaries.value, ConfirmPossibleDuplicate: confirmPossibleDuplicate }
+}
 
 function reset(item: any = null) {
   editing.value = item
@@ -147,18 +169,15 @@ function reset(item: any = null) {
     PresentRegion: item?.PresentRegion ?? '',
     PresentPostalCode: item?.PresentPostalCode ?? '',
     BeneficiaryNotApplicable: Number(item?.BeneficiaryNotApplicable || 0) === 1,
-    Beneficiary1: String(item?.Beneficiary1 ?? '').toLocaleUpperCase(),
-    Beneficiary1Relationship: item?.Beneficiary1Relationship ?? '',
-    Beneficiary2: String(item?.Beneficiary2 ?? '').toLocaleUpperCase(),
-    Beneficiary2Relationship: item?.Beneficiary2Relationship ?? '',
     EmergencyName: String(item?.EmergencyName ?? '').toLocaleUpperCase(),
     EmergencyRelationship: item?.EmergencyRelationship ?? '',
     EmergencyAddress: item?.EmergencyAddress ?? '',
     EmergencyContactNo: item?.EmergencyContactNo ?? ''
   }
+  beneficiaries.value = form.value.BeneficiaryNotApplicable ? [] : beneficiariesFromEmployee(item)
   sameAsPermanentAddress.value = permanentAddressHasValues() && presentAddressMatchesPermanent()
-  showBeneficiary2.value = Boolean(form.value.Beneficiary2 || form.value.Beneficiary2Relationship)
-  employeeFormSnapshot.value = JSON.stringify(form.value)
+  employeeFormSnapshot.value = employeeDraftSnapshot()
+  missingEmployeeFields.value = []
   discardEmployeeOpen.value = false
   duplicateReviewOpen.value = false
   duplicateMatches.value = []
@@ -184,6 +203,11 @@ async function load(silent = false) {
 
 async function save(confirmPossibleDuplicate = false) {
   if (busy.value) return
+  missingEmployeeFields.value = incompleteEmployeeFields()
+  if (missingEmployeeFields.value.length) {
+    formError.value = alertMessages.employeeIncomplete(missingEmployeeFields.value).message
+    return
+  }
   if (photoError.value) {
     formError.value = photoError.value
     return
@@ -194,7 +218,7 @@ async function save(confirmPossibleDuplicate = false) {
     if (!confirmPossibleDuplicate) {
       const duplicateReview: any = await $fetch('/api/employees/duplicates', {
         method: 'POST',
-        body: { ...form.value, id: editing.value?.EmployeeID }
+        body: { ...employeePayload(), id: editing.value?.EmployeeID }
       })
       if (duplicateReview.exactMatches?.length || duplicateReview.similarMatches?.length) {
         duplicateReviewKind.value = duplicateReview.exactMatches?.length ? 'exact' : 'similar'
@@ -206,8 +230,8 @@ async function save(confirmPossibleDuplicate = false) {
     await $fetch(editing.value ? `/api/employees/${editing.value.EmployeeID}` : '/api/employees', {
       method: editing.value ? 'PUT' : 'POST',
       body: editing.value
-        ? { id: editing.value.EmployeeID, ...form.value, ConfirmPossibleDuplicate: confirmPossibleDuplicate }
-        : { ...form.value, ConfirmPossibleDuplicate: confirmPossibleDuplicate }
+        ? { id: editing.value.EmployeeID, ...employeePayload(confirmPossibleDuplicate) }
+        : employeePayload(confirmPossibleDuplicate)
     })
     duplicateReviewOpen.value = false
     modalOpen.value = false
@@ -292,7 +316,7 @@ function employeeInitials(item: any) {
 }
 
 const photoPreview = computed(() => form.value.PhotoDataUrl || (!form.value.RemovePhoto ? form.value.PhotoUrl : ''))
-const employeeFormDirty = computed(() => JSON.stringify(form.value) !== employeeFormSnapshot.value)
+const employeeFormDirty = computed(() => employeeDraftSnapshot() !== employeeFormSnapshot.value)
 const duplicateReviewMessage = computed(() => duplicateReviewKind.value === 'exact' ? alertMessages.employeeDuplicate() : alertMessages.employeeSimilar())
 
 function requestCloseEmployeeModal() {
@@ -373,7 +397,7 @@ function handleCompactViewChange(event: MediaQueryListEvent) {
   isCompactView.value = event.matches
 }
 
-function uppercaseNameField(field: 'FirstName' | 'MiddleName' | 'LastName' | 'Nickname' | 'Beneficiary1' | 'Beneficiary2' | 'EmergencyName', event: Event) {
+function uppercaseNameField(field: 'FirstName' | 'MiddleName' | 'LastName' | 'Nickname' | 'EmergencyName', event: Event) {
   const input = event.target as HTMLInputElement
   const uppercased = input.value.toLocaleUpperCase()
   input.value = uppercased
@@ -498,20 +522,50 @@ function toggleSameAsPermanentAddress(event: Event) {
 }
 
 function addBeneficiary() {
-  showBeneficiary2.value = true
+  beneficiaries.value.push({ Name: '', Relationship: '' })
 }
 
-function removeBeneficiary2() {
-  form.value.Beneficiary2 = ''
-  form.value.Beneficiary2Relationship = ''
-  showBeneficiary2.value = false
+function removeBeneficiary(index: number) {
+  beneficiaries.value.splice(index, 1)
+}
+
+function uppercaseBeneficiary(index: number, event: Event) {
+  const input = event.target as HTMLInputElement
+  const uppercased = input.value.toLocaleUpperCase()
+  input.value = uppercased
+  if (beneficiaries.value[index]) beneficiaries.value[index].Name = uppercased
 }
 
 function toggleBeneficiaryNotApplicable() {
   if (!form.value.BeneficiaryNotApplicable) return
-  form.value.Beneficiary1 = ''
-  form.value.Beneficiary1Relationship = ''
-  removeBeneficiary2()
+  beneficiaries.value = []
+}
+
+function incompleteEmployeeFields() {
+  const required: Array<[keyof typeof form.value, string]> = [
+    ['AgencyPositionID', 'Agency position'], ['FirstName', 'First name'], ['LastName', 'Last name'],
+    ['Birthday', 'Birthday'], ['DateHired', 'Date hired'], ['Gender', 'Gender'], ['CivilStatus', 'Civil status'],
+    ['Email', 'Email'], ['ContactNumber', 'Contact number'],
+    ['PermanentUnitHouseNumber', 'Permanent unit/house number'], ['PermanentProvince', 'Permanent province'],
+    ['PermanentStreet', 'Permanent street'], ['PermanentCityMunicipality', 'Permanent city/municipality'],
+    ['PermanentSubdivision', 'Permanent subdivision'], ['PermanentBarangay', 'Permanent barangay'],
+    ['PermanentRegion', 'Permanent region'], ['PermanentPostalCode', 'Permanent postal code'],
+    ['PresentUnitHouseNumber', 'Present unit/house number'], ['PresentProvince', 'Present province'],
+    ['PresentStreet', 'Present street'], ['PresentCityMunicipality', 'Present city/municipality'],
+    ['PresentSubdivision', 'Present subdivision'], ['PresentBarangay', 'Present barangay'],
+    ['PresentRegion', 'Present region'], ['PresentPostalCode', 'Present postal code'],
+    ['EmergencyName', 'Emergency contact name'], ['EmergencyRelationship', 'Emergency relationship'],
+    ['EmergencyContactNo', 'Emergency contact number'], ['EmergencyAddress', 'Emergency address'],
+  ]
+  const missing = required.filter(([key]) => !String(form.value[key] ?? '').trim()).map(([, label]) => label)
+  if (!form.value.BeneficiaryNotApplicable) {
+    if (!beneficiaries.value.length) missing.push('At least one beneficiary')
+    beneficiaries.value.forEach((entry, index) => {
+      if (!entry.Name.trim()) missing.push(`Beneficiary ${index + 1} name`)
+      if (!entry.Relationship.trim()) missing.push(`Beneficiary ${index + 1} relationship`)
+    })
+  }
+  return missing
 }
 
 function sanitizeContactNumber(event: Event) {
@@ -869,42 +923,43 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
             </div>
             <div class="grid"><label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label><label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label></div>
             <div class="grid"><label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label><label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label></div>
-            <div class="grid"><ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="today()" :initial-year="suggestedBirthYear" /><ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" /></div>
-            <div class="grid"><label>Gender<input v-model="form.Gender" /></label><label>Civil status<input v-model="form.CivilStatus" /></label></div>
+            <div class="grid"><ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="today()" :initial-year="suggestedBirthYear" required /><ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" required /></div>
+            <div class="grid"><label>Gender<input v-model="form.Gender" required /></label><label>Civil status<input v-model="form.CivilStatus" required /></label></div>
             <div class="grid">
-              <label>Email<input v-model="form.Email" type="email" autocomplete="email" inputmode="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]+" placeholder="name@example.com" @blur="normalizeEmail" /><small>Use a complete email address, e.g. name@gmail.com.</small></label>
-              <label>Contact number<input :value="form.ContactNumber" type="text" autocomplete="tel" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" placeholder="11-digit contact number" @input="sanitizeContactNumber" /><small>Numbers only, exactly 11 digits.</small></label>
+              <label>Email<input v-model="form.Email" type="email" autocomplete="email" inputmode="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]+" placeholder="name@example.com" required @blur="normalizeEmail" /><small>Use a complete email address, e.g. name@gmail.com.</small></label>
+              <label>Contact number<input :value="form.ContactNumber" type="text" autocomplete="tel" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" placeholder="11-digit contact number" required @input="sanitizeContactNumber" /><small>Numbers only, exactly 11 digits.</small></label>
             </div>
           </section>
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>PERMANENT ADDRESS</span><h3>Permanent residence</h3></div></div>
-            <div class="grid"><label>Unit/House number<input v-model="form.PermanentUnitHouseNumber" /></label><label>Province<input v-model="form.PermanentProvince" /></label></div>
-            <div class="grid"><label>Street<input v-model="form.PermanentStreet" /></label><label>City/Municipality<input v-model="form.PermanentCityMunicipality" /></label></div>
-            <div class="grid"><label>Subdivision<input v-model="form.PermanentSubdivision" /></label><label>Barangay<input v-model="form.PermanentBarangay" /></label></div>
-            <div class="grid"><label>Region<input v-model="form.PermanentRegion" /></label><label>Postal code<input v-model="form.PermanentPostalCode" inputmode="numeric" /></label></div>
+            <div class="grid"><label>Unit/House number<input v-model="form.PermanentUnitHouseNumber" required /></label><label>Province<input v-model="form.PermanentProvince" required /></label></div>
+            <div class="grid"><label>Street<input v-model="form.PermanentStreet" required /></label><label>City/Municipality<input v-model="form.PermanentCityMunicipality" required /></label></div>
+            <div class="grid"><label>Subdivision<input v-model="form.PermanentSubdivision" required /></label><label>Barangay<input v-model="form.PermanentBarangay" required /></label></div>
+            <div class="grid"><label>Region<input v-model="form.PermanentRegion" required /></label><label>Postal code<input v-model="form.PermanentPostalCode" inputmode="numeric" required /></label></div>
           </section>
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>PRESENT ADDRESS</span><h3>Current residence</h3></div><label class="checkbox-row"><input type="checkbox" :checked="sameAsPermanentAddress" @change="toggleSameAsPermanentAddress" /> Same as permanent address</label></div>
             <div class="present-address-fields" :class="{ 'fields-disabled': sameAsPermanentAddress }">
-              <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" :disabled="sameAsPermanentAddress" /></label><label>Province<input v-model="form.PresentProvince" :disabled="sameAsPermanentAddress" /></label></div>
-              <div class="grid"><label>Street<input v-model="form.PresentStreet" :disabled="sameAsPermanentAddress" /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" :disabled="sameAsPermanentAddress" /></label></div>
-              <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" :disabled="sameAsPermanentAddress" /></label><label>Barangay<input v-model="form.PresentBarangay" :disabled="sameAsPermanentAddress" /></label></div>
-              <div class="grid"><label>Region<input v-model="form.PresentRegion" :disabled="sameAsPermanentAddress" /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" :disabled="sameAsPermanentAddress" /></label></div>
+              <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" :disabled="sameAsPermanentAddress" required /></label><label>Province<input v-model="form.PresentProvince" :disabled="sameAsPermanentAddress" required /></label></div>
+              <div class="grid"><label>Street<input v-model="form.PresentStreet" :disabled="sameAsPermanentAddress" required /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" :disabled="sameAsPermanentAddress" required /></label></div>
+              <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" :disabled="sameAsPermanentAddress" required /></label><label>Barangay<input v-model="form.PresentBarangay" :disabled="sameAsPermanentAddress" required /></label></div>
+              <div class="grid"><label>Region<input v-model="form.PresentRegion" :disabled="sameAsPermanentAddress" required /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" :disabled="sameAsPermanentAddress" required /></label></div>
             </div>
           </section>
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>BENEFICIARY INFORMATION</span><h3>Designated beneficiaries</h3></div><label class="checkbox-row"><input v-model="form.BeneficiaryNotApplicable" type="checkbox" @change="toggleBeneficiaryNotApplicable" /> Not applicable</label></div>
-            <div class="grid" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }"><label>Beneficiary 1<input v-model="form.Beneficiary1" :disabled="form.BeneficiaryNotApplicable" @input="uppercaseNameField('Beneficiary1', $event)" /></label><label>Relationship<select v-model="form.Beneficiary1Relationship" :disabled="form.BeneficiaryNotApplicable"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
-            <div v-if="showBeneficiary2" class="beneficiary-row" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }">
-              <div class="grid"><label>Beneficiary 2<input v-model="form.Beneficiary2" :disabled="form.BeneficiaryNotApplicable" @input="uppercaseNameField('Beneficiary2', $event)" /></label><label>Relationship<select v-model="form.Beneficiary2Relationship" :disabled="form.BeneficiaryNotApplicable"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
-              <button type="button" class="remove-beneficiary-button" :disabled="form.BeneficiaryNotApplicable" aria-label="Remove beneficiary 2" @click="removeBeneficiary2">
+            <div class="beneficiary-list" :class="{ 'fields-disabled': form.BeneficiaryNotApplicable }">
+              <div v-for="(beneficiary, index) in beneficiaries" :key="index" class="beneficiary-row">
+                <div class="grid"><label>Beneficiary {{ index + 1 }}<input v-model="beneficiary.Name" :disabled="form.BeneficiaryNotApplicable" required @input="uppercaseBeneficiary(index, $event)" /></label><label>Relationship<select v-model="beneficiary.Relationship" :disabled="form.BeneficiaryNotApplicable" required><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+                <button type="button" class="remove-beneficiary-button" :disabled="form.BeneficiaryNotApplicable" :aria-label="`Delete beneficiary ${index + 1}`" title="Delete beneficiary" @click="removeBeneficiary(index)">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 5v5m4-5v5" /></svg>
-              </button>
+                </button>
+              </div>
             </div>
-            <button v-else-if="!form.BeneficiaryNotApplicable" type="button" class="add-beneficiary-button" @click="addBeneficiary">
+            <button v-if="!form.BeneficiaryNotApplicable" type="button" class="add-beneficiary-button" @click="addBeneficiary">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
               Add beneficiary
             </button>
@@ -912,9 +967,9 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>EMERGENCY CONTACT</span><h3>Person to contact in an emergency</h3></div></div>
-            <div class="grid"><label>Full name<input v-model="form.EmergencyName" @input="uppercaseNameField('EmergencyName', $event)" /></label><label>Relationship<select v-model="form.EmergencyRelationship"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
-            <label>Emergency contact number<input :value="form.EmergencyContactNo" type="text" inputmode="numeric" maxlength="15" pattern="[0-9]{7,15}" placeholder="7 to 15 digits" @input="sanitizeEmergencyContactNumber" /><small>Numbers only; mobile and telephone numbers are accepted.</small></label>
-            <label>Emergency address<textarea v-model="form.EmergencyAddress" rows="3" placeholder="Complete address" /></label>
+            <div class="grid"><label>Full name<input v-model="form.EmergencyName" required @input="uppercaseNameField('EmergencyName', $event)" /></label><label>Relationship<select v-model="form.EmergencyRelationship" required><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+            <label>Emergency contact number<input :value="form.EmergencyContactNo" type="text" inputmode="numeric" maxlength="15" pattern="[0-9]{7,15}" placeholder="7 to 15 digits" required @input="sanitizeEmergencyContactNumber" /><small>Numbers only; mobile and telephone numbers are accepted.</small></label>
+            <label>Emergency address<textarea v-model="form.EmergencyAddress" rows="3" placeholder="Complete address" required /></label>
           </section>
 
           <p v-if="formError" class="error">{{ formError }}</p>
@@ -1574,6 +1629,12 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
   transition: opacity .16s ease;
 }
 
+.beneficiary-list {
+  display: grid;
+  gap: 12px;
+  transition: opacity .16s ease;
+}
+
 .beneficiary-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1845,11 +1906,11 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
   }
 
   .beneficiary-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .remove-beneficiary-button {
-    width: 100%;
+    width: 42px;
   }
 
   .duplicate-review-modal {

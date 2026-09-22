@@ -22,7 +22,7 @@ const employeeFields = [
   'AgencyPositionID', 'EmployeeNumber', 'FirstName', 'MiddleName', 'LastName', 'Nickname', 'Birthday', 'Gender', 'CivilStatus', 'Address', 'Email', 'ContactNumber', 'DateHired', 'Status',
   'PermanentUnitHouseNumber', 'PermanentProvince', 'PermanentStreet', 'PermanentCityMunicipality', 'PermanentSubdivision', 'PermanentBarangay', 'PermanentRegion', 'PermanentPostalCode',
   'PresentUnitHouseNumber', 'PresentProvince', 'PresentStreet', 'PresentCityMunicipality', 'PresentSubdivision', 'PresentBarangay', 'PresentRegion', 'PresentPostalCode',
-  'BeneficiaryNotApplicable', 'Beneficiary1', 'Beneficiary1Relationship', 'Beneficiary2', 'Beneficiary2Relationship',
+  'BeneficiaryNotApplicable', 'Beneficiary1', 'Beneficiary1Relationship', 'Beneficiary2', 'Beneficiary2Relationship', 'Beneficiaries',
   'EmergencyName', 'EmergencyRelationship', 'EmergencyAddress', 'EmergencyContactNo'
 ]
 const employeePhotoTypes: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
@@ -145,6 +145,63 @@ function parseBooleanFlag(value: unknown) {
   return value === true || value === 1 || value === '1' || value === 'true' ? 1 : 0
 }
 
+type EmployeeBeneficiary = { Name: string; Relationship: string }
+
+function parseBeneficiaries(body: Record<string, unknown>) {
+  if (parseBooleanFlag(body.BeneficiaryNotApplicable)) return [] as EmployeeBeneficiary[]
+  let source: unknown = body.Beneficiaries
+  if (typeof source === 'string') {
+    try { source = JSON.parse(source) } catch { source = [] }
+  }
+  if (!Array.isArray(source)) {
+    source = [
+      { Name: body.Beneficiary1, Relationship: body.Beneficiary1Relationship },
+      { Name: body.Beneficiary2, Relationship: body.Beneficiary2Relationship },
+    ]
+  }
+  return source
+    .map((entry: any) => ({
+      Name: String(parseUppercaseText(entry?.Name) || ''),
+      Relationship: String(parseText(entry?.Relationship) || ''),
+    }))
+    .filter(entry => entry.Name || entry.Relationship)
+}
+
+function validateEmployeeCompleteness(body: Record<string, unknown>) {
+  const required: Array<[string, string]> = [
+    ['AgencyPositionID', 'Agency position'], ['FirstName', 'First name'], ['LastName', 'Last name'],
+    ['Birthday', 'Birthday'], ['DateHired', 'Date hired'], ['Gender', 'Gender'], ['CivilStatus', 'Civil status'],
+    ['Email', 'Email'], ['ContactNumber', 'Contact number'],
+    ['PermanentUnitHouseNumber', 'Permanent unit/house number'], ['PermanentProvince', 'Permanent province'],
+    ['PermanentStreet', 'Permanent street'], ['PermanentCityMunicipality', 'Permanent city/municipality'],
+    ['PermanentSubdivision', 'Permanent subdivision'], ['PermanentBarangay', 'Permanent barangay'],
+    ['PermanentRegion', 'Permanent region'], ['PermanentPostalCode', 'Permanent postal code'],
+    ['PresentUnitHouseNumber', 'Present unit/house number'], ['PresentProvince', 'Present province'],
+    ['PresentStreet', 'Present street'], ['PresentCityMunicipality', 'Present city/municipality'],
+    ['PresentSubdivision', 'Present subdivision'], ['PresentBarangay', 'Present barangay'],
+    ['PresentRegion', 'Present region'], ['PresentPostalCode', 'Present postal code'],
+    ['EmergencyName', 'Emergency contact name'], ['EmergencyRelationship', 'Emergency relationship'],
+    ['EmergencyContactNo', 'Emergency contact number'], ['EmergencyAddress', 'Emergency address'],
+  ]
+  const missing = required.filter(([key]) => !String(body[key] ?? '').trim()).map(([, label]) => label)
+  const beneficiaries = parseBeneficiaries(body)
+  if (!parseBooleanFlag(body.BeneficiaryNotApplicable)) {
+    if (!beneficiaries.length) missing.push('At least one beneficiary')
+    beneficiaries.forEach((entry, index) => {
+      if (!entry.Name) missing.push(`Beneficiary ${index + 1} name`)
+      if (!entry.Relationship) missing.push(`Beneficiary ${index + 1} relationship`)
+    })
+  }
+  if (missing.length) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Complete the required employee details before saving: ${missing.join(', ')}.`,
+      data: { code: 'EMPLOYEE_INCOMPLETE', fields: missing },
+    })
+  }
+  return beneficiaries
+}
+
 function structuredAddress(body: Record<string, unknown>, prefix: 'Permanent' | 'Present') {
   return [
     body[`${prefix}UnitHouseNumber`],
@@ -208,7 +265,11 @@ function parseStatus(value: unknown, fallback = 'Active') {
 
 function employeeWriteError(error: any) {
   if (error?.code === 'ER_DUP_ENTRY') {
-    return createError({ statusCode: 409, statusMessage: 'Employee number is already assigned to another employee.' })
+    const message = String(error?.message || '')
+    const field = message.includes('uq_employee_email') ? 'Email address'
+      : message.includes('uq_employee_contact_number') ? 'Contact number'
+        : 'Employee number'
+    return createError({ statusCode: 409, statusMessage: `${field} is already assigned to another employee.` })
   }
 
   if (error?.code === 'ER_BAD_NULL_ERROR' && String(error?.message || '').includes('EmployeeNumber')) {
@@ -222,7 +283,7 @@ function employeeWriteError(error: any) {
   return error
 }
 
-function employeeValues(body: Record<string, unknown>) {
+function employeeValues(body: Record<string, unknown>, beneficiaries = parseBeneficiaries(body)) {
   const permanentAddress = structuredAddress(body, 'Permanent')
   const beneficiaryNotApplicable = parseBooleanFlag(body.BeneficiaryNotApplicable)
   return [
@@ -257,10 +318,11 @@ function employeeValues(body: Record<string, unknown>) {
     parseText(body.PresentRegion),
     parseText(body.PresentPostalCode),
     beneficiaryNotApplicable,
-    beneficiaryNotApplicable ? null : parseUppercaseText(body.Beneficiary1),
-    beneficiaryNotApplicable ? null : parseText(body.Beneficiary1Relationship),
-    beneficiaryNotApplicable ? null : parseUppercaseText(body.Beneficiary2),
-    beneficiaryNotApplicable ? null : parseText(body.Beneficiary2Relationship),
+    beneficiaryNotApplicable ? null : beneficiaries[0]?.Name || null,
+    beneficiaryNotApplicable ? null : beneficiaries[0]?.Relationship || null,
+    beneficiaryNotApplicable ? null : beneficiaries[1]?.Name || null,
+    beneficiaryNotApplicable ? null : beneficiaries[1]?.Relationship || null,
+    JSON.stringify(beneficiaries),
     parseUppercaseText(body.EmergencyName),
     parseText(body.EmergencyRelationship),
     parseText(body.EmergencyAddress),
@@ -280,6 +342,30 @@ type EmployeeDuplicateMatch = {
 
 function normalizedComparison(value: unknown) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLocaleUpperCase()
+}
+
+function editDistance(left: string, right: string) {
+  if (left === right) return 0
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex++) {
+    const current = [leftIndex]
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex++) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      )
+    }
+    previous.splice(0, previous.length, ...current)
+  }
+  return previous[right.length]
+}
+
+function namesLookSimilar(left: string, right: string) {
+  if (!left || !right) return false
+  const longest = Math.max(left.length, right.length)
+  const allowedDistance = longest >= 8 ? 2 : 1
+  return editDistance(left, right) <= allowedDistance
 }
 
 async function employeeDuplicateReview(body: Record<string, unknown>, excludeEmployeeId?: number | null) {
@@ -308,6 +394,8 @@ async function employeeDuplicateReview(body: Record<string, unknown>, excludeEmp
   if (firstName && lastName) {
     clauses.push('(UPPER(TRIM(COALESCE(e.FirstName, \'\'))) = ? AND UPPER(TRIM(COALESCE(e.LastName, \'\'))) = ?)')
     values.push(firstName, lastName)
+    clauses.push('(SOUNDEX(e.FirstName) = SOUNDEX(?) AND SOUNDEX(e.LastName) = SOUNDEX(?))')
+    values.push(firstName, lastName)
   }
   if (lastName) {
     clauses.push('UPPER(TRIM(COALESCE(e.LastName, \'\'))) = ?')
@@ -334,8 +422,7 @@ async function employeeDuplicateReview(body: Record<string, unknown>, excludeEmp
       'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
       positionJoin,
       `WHERE ${filters.join(' AND ')}`,
-      'ORDER BY e.Status = \'Active\' DESC, e.LastName, e.FirstName, e.EmployeeID',
-      'LIMIT 12'
+      'ORDER BY e.Status = \'Active\' DESC, e.LastName, e.FirstName, e.EmployeeID'
     ].join('\n'),
     values as any[]
   )
@@ -370,6 +457,8 @@ async function employeeDuplicateReview(body: Record<string, unknown>, excludeEmp
       exact = true
     } else if (rowFirstName === firstName && rowLastName === lastName) {
       reasons.push('Same first and last name')
+    } else if (namesLookSimilar(rowFirstName, firstName) && namesLookSimilar(rowLastName, lastName)) {
+      reasons.push('Very similar full name')
     } else {
       if (lastName && rowLastName === lastName) reasons.push('Same last name')
       if (firstName && rowFirstName === firstName) reasons.push('Same first name')
@@ -389,7 +478,7 @@ async function employeeDuplicateReview(body: Record<string, unknown>, excludeEmp
     else similarMatches.push(match)
   }
 
-  return { exactMatches, similarMatches }
+  return { exactMatches: exactMatches.slice(0, 12), similarMatches: similarMatches.slice(0, 12) }
 }
 
 function assertEmployeeIsNotDuplicate(review: Awaited<ReturnType<typeof employeeDuplicateReview>>, confirmPossibleDuplicate: boolean) {
@@ -448,7 +537,7 @@ function employeeListSql(filters: string[]) {
     '  e.Gender, e.CivilStatus, e.Address, e.Email, e.ContactNumber, e.DateHired, e.Status, e.PhotoPath AS PhotoUrl,',
     '  e.PermanentUnitHouseNumber, e.PermanentProvince, e.PermanentStreet, e.PermanentCityMunicipality, e.PermanentSubdivision, e.PermanentBarangay, e.PermanentRegion, e.PermanentPostalCode,',
     '  e.PresentUnitHouseNumber, e.PresentProvince, e.PresentStreet, e.PresentCityMunicipality, e.PresentSubdivision, e.PresentBarangay, e.PresentRegion, e.PresentPostalCode,',
-    '  e.BeneficiaryNotApplicable, e.Beneficiary1, e.Beneficiary1Relationship, e.Beneficiary2, e.Beneficiary2Relationship,',
+    '  e.BeneficiaryNotApplicable, e.Beneficiary1, e.Beneficiary1Relationship, e.Beneficiary2, e.Beneficiary2Relationship, e.Beneficiaries,',
     '  e.EmergencyName, e.EmergencyRelationship, e.EmergencyAddress, e.EmergencyContactNo,',
     '  ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName,',
     '  ld.DeploymentID AS CurrentDeploymentID,',
@@ -612,9 +701,9 @@ export async function findEmployeeDuplicates(event: any) {
 export async function createEmployee(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
+  const beneficiaries = validateEmployeeCompleteness(body)
   const photo = parseEmployeePhoto(body.PhotoDataUrl)
-  const values = employeeValues(body)
-  if (!values[0] || !values[2] || !values[4]) throw createError({ statusCode: 400, statusMessage: 'Agency position, first name, and last name are required.' })
+  const values = employeeValues(body, beneficiaries)
   try {
     const duplicateReview = await employeeDuplicateReview(body)
     assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
@@ -637,6 +726,7 @@ export async function updateEmployee(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
   const employeeId = parseInteger(body.id, 'id') as number
+  const beneficiaries = validateEmployeeCompleteness(body)
   const photo = parseEmployeePhoto(body.PhotoDataUrl)
   const removePhoto = parseBooleanFlag(body.RemovePhoto) === 1
   try {
@@ -644,7 +734,7 @@ export async function updateEmployee(event: any) {
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     const duplicateReview = await employeeDuplicateReview(body, employeeId)
     assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
-    const [result] = await pool.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body), session.sub, employeeId] as any[])
+    const [result] = await pool.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body, beneficiaries), session.sub, employeeId] as any[])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     if (photo) {
       await saveEmployeePhoto(employeeId, photo)

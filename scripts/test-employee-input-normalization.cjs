@@ -25,7 +25,7 @@ function harness(body, duplicateRows = []) {
         ? {
             execute: async (sql, values) => {
               calls.push({ sql, values: Array.from(values || []) })
-              if (sql.includes('FROM employee e') && sql.includes('LIMIT 12')) return [duplicateRows]
+              if (sql.includes('FROM employee e') && sql.includes("DATE_FORMAT(e.Birthday")) return [duplicateRows]
               return [{ insertId: 12, affectedRows: 1 }]
             },
           }
@@ -65,12 +65,16 @@ const validEmployee = {
   PresentProvince: 'Cebu',
   PresentStreet: 'Osmena Boulevard',
   PresentCityMunicipality: 'Cebu City',
+  PresentSubdivision: 'Capitol Village',
   PresentBarangay: 'Capitol Site',
   PresentRegion: 'Region VII',
   PresentPostalCode: '6000',
   BeneficiaryNotApplicable: false,
-  Beneficiary1: 'Maria dela Cruz',
-  Beneficiary1Relationship: 'Spouse',
+  Beneficiaries: [
+    { Name: 'Maria dela Cruz', Relationship: 'Spouse' },
+    { Name: 'Pedro dela Cruz', Relationship: 'Parent' },
+    { Name: 'Ana dela Cruz', Relationship: 'Sibling' },
+  ],
   EmergencyName: 'Pedro Santos',
   EmergencyRelationship: 'Sibling',
   EmergencyAddress: 'Davao City',
@@ -89,8 +93,26 @@ test('employee create normalizes names and email while preserving a valid numeri
   assert.equal(values[11], '09171234567')
   assert.equal(values[9], '12-A, Rizal Street, Sample Village, Barangay 1, Davao City, Davao del Sur, Region XI, 8000')
   assert.equal(values[31], 'MARIA DELA CRUZ')
-  assert.equal(values[35], 'PEDRO SANTOS')
-  assert.equal(values[38], '09181234567')
+  assert.equal(values[33], 'PEDRO DELA CRUZ')
+  assert.deepEqual(JSON.parse(values[35]), [
+    { Name: 'MARIA DELA CRUZ', Relationship: 'Spouse' },
+    { Name: 'PEDRO DELA CRUZ', Relationship: 'Parent' },
+    { Name: 'ANA DELA CRUZ', Relationship: 'Sibling' },
+  ])
+  assert.equal(values[36], 'PEDRO SANTOS')
+  assert.equal(values[39], '09181234567')
+})
+
+test('employee create rejects an incomplete profile before duplicate checking or insertion', async () => {
+  const { api, calls } = harness({ ...validEmployee, PermanentBarangay: '', EmergencyAddress: '' })
+  await assert.rejects(
+    api.createEmployee({}),
+    error => error.statusCode === 400
+      && error.data?.code === 'EMPLOYEE_INCOMPLETE'
+      && error.data.fields.includes('Permanent barangay')
+      && error.data.fields.includes('Emergency address'),
+  )
+  assert.equal(calls.length, 0)
 })
 
 test('employee create rejects unsupported employee photos before writing to the database', async () => {
@@ -138,6 +160,8 @@ test('employee create blocks exact duplicates and reports the existing record', 
   const { api, calls } = harness(validEmployee, [duplicate])
   await assert.rejects(api.createEmployee({}), error => error.statusCode === 409 && error.data?.code === 'EMPLOYEE_DUPLICATE')
   assert.equal(calls.some(call => call.sql.startsWith('INSERT INTO employee')), false)
+  const duplicateQuery = calls.find(call => call.sql.includes('FROM employee e') && call.sql.includes("DATE_FORMAT(e.Birthday"))
+  assert.doesNotMatch(duplicateQuery.sql, /ap\.AgencyID\s*=/)
 })
 
 test('employee create requires confirmation for similar names and permits an intentional save', async () => {
@@ -151,8 +175,8 @@ test('employee create requires confirmation for similar names and permits an int
     Email: null,
     ContactNumber: null,
     Status: 'Active',
-    AgencyName: 'DJA Security Services INC.',
-    PositionName: 'Security Guard'
+    AgencyName: 'Philtob General Services INC.',
+    PositionName: 'Supervisor'
   }
   const blocked = harness(validEmployee, [similar])
   await assert.rejects(blocked.api.createEmployee({}), error => error.statusCode === 409 && error.data?.code === 'EMPLOYEE_SIMILAR')

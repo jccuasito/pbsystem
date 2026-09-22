@@ -47,4 +47,11 @@ export const alertMessages = {
     message: 'Review these possible matches before saving a new employee.',
     tone: 'info',
   }),
+  employeeIncomplete: (fields: string[] = []): AlertMessage => ({
+    title: 'Complete the employee details',
+    message: fields.length
+      ? `Fill in the required information before saving: ${fields.join(', ')}.`
+      : 'Fill in all required employee information before saving.',
+    tone: 'error',
+  }),
 }
