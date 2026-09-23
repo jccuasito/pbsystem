@@ -8,6 +8,7 @@ const props = withDefaults(defineProps<{
   min?: string
   max?: string
   required?: boolean
+  disabled?: boolean
   align?: 'start' | 'end'
   initialYear?: number
 }>(), {
@@ -68,6 +69,7 @@ const calendarDays = computed(() => {
 })
 
 function showPicker() {
+  if (props.disabled) return
   const selected = parseDate(props.modelValue)
   if (selected) {
     viewYear.value = selected.getFullYear()
@@ -109,16 +111,17 @@ watch(() => props.modelValue, (value) => {
   viewYear.value = selected.getFullYear()
   viewMonth.value = selected.getMonth()
 })
+watch(() => props.disabled, (disabled) => { if (disabled) open.value = false })
 </script>
 
 <template>
-  <div class="modern-date-field" :class="`modern-date-field--${align}`" @focusout="leave" @keydown.esc.stop="open = false">
+  <div class="modern-date-field" :class="[`modern-date-field--${align}`, { 'modern-date-field--disabled': disabled }]" @focusout="leave" @keydown.esc.stop="open = false">
     <label :for="id">{{ label }}</label>
-    <button :id="id" class="modern-date-field__trigger" type="button" :aria-expanded="open" aria-haspopup="dialog" @click="open ? open = false : showPicker()">
+    <button :id="id" class="modern-date-field__trigger" type="button" :aria-expanded="open" aria-haspopup="dialog" :disabled="disabled" @click="open ? open = false : showPicker()">
       <span :class="{ placeholder: !formattedValue }">{{ formattedValue || placeholder }}</span>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3M17 3v3M4 9h16"/><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 13h3M13 13h3M8 16h3"/></svg>
     </button>
-    <input class="modern-date-field__native" tabindex="-1" :value="modelValue" :required="required" aria-hidden="true" />
+    <input class="modern-date-field__native" tabindex="-1" :value="modelValue" :required="required" :disabled="disabled" aria-hidden="true" />
 
     <section v-if="open" class="modern-date-field__panel" role="dialog" :aria-label="`${label} calendar`">
       <header>
@@ -162,6 +165,9 @@ watch(() => props.modelValue, (value) => {
 .modern-date-field>label{font:inherit}
 .modern-date-field__trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;box-sizing:border-box;width:100%;min-height:44px;border:1px solid #cfd8e6;border-radius:10px;padding:9px 12px;background:#fff;color:#172033;font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease}
 .modern-date-field__trigger:hover,.modern-date-field__trigger:focus-visible{border-color:#7798d0;box-shadow:0 0 0 3px rgba(35,73,230,.1);outline:0}
+.modern-date-field--disabled{color:#8290a3}
+.modern-date-field--disabled .modern-date-field__trigger{border-color:#d6deea;background:#e9eef5;color:#8290a3;cursor:not-allowed;box-shadow:none}
+.modern-date-field--disabled .modern-date-field__trigger svg{stroke:#91a0b5}
 .modern-date-field__trigger .placeholder{color:#8b97a8;font-weight:600}
 .modern-date-field__trigger svg{width:19px;height:19px;fill:none;stroke:#315173;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .modern-date-field__native{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}

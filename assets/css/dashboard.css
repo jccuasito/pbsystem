@@ -585,6 +585,7 @@
 }
 .dash-page[data-theme="dark"] .dash-workspace-page :is(
   .filters,
+  .history-tabs,
   .table-wrap,
   .employee-list,
   .records-panel,
@@ -646,6 +647,7 @@
   .actions button,
   .action-icon,
   .tabs button,
+  .history-tabs button,
   .record-actions button,
   .employee-list-progress button,
   .secondary,
@@ -654,6 +656,10 @@
   border-color: #3a4c6c;
   background: #182641;
   color: #c8d7ef;
+}
+.dash-page[data-theme="dark"] .dash-workspace-page .history-tabs button.active {
+  background: #294878;
+  color: #f1f6ff;
 }
 .dash-page[data-theme="dark"] .dash-workspace-page :is(.employee-card__head, .employee-card__footer) {
   border-color: var(--line);

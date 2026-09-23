@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import ModernDateField from '../../../../components/ModernDateField.vue'
 import SearchableSelect from '../../../../components/SearchableSelect.vue'
 import SystemAlert from '../../../../components/alertmessage/SystemAlert.vue'
 import { alertMessages, DEPLOYMENT_ALREADY_EXISTS, type AlertMessage } from '../../../../components/alertmessage/messages'
@@ -11,6 +12,7 @@ const items = ref<any[]>([]), dtrAssignments = ref<any[]>([]), agencies = ref<an
 const loading = ref(true), busy = ref(false), error = ref(''), modalOpen = ref(false), detailsOpen = ref(false), rosterOpen = ref(false)
 const selectedEmployee = ref<any | null>(null), selectedRoster = ref<any | null>(null)
 const employeeSearch = ref(''), agencyFilter = ref(''), clientFilter = ref(''), siteFilter = ref(''), cutoffFilter = ref('')
+const historyView = ref<'deployments' | 'dtr'>('deployments')
 const form = ref({ EmployeeID: '', ClientRateID: '', SiteID: '', ShiftCodeID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' })
 const ongoingDeployment = ref(true)
 const deploymentAlert = ref<AlertMessage | null>(null)
@@ -47,14 +49,44 @@ const cutoffOptions = computed(() => {
   for (const row of dtrAssignments.value) { const start = String(row.PeriodStart).slice(0, 10), end = String(row.PeriodEnd).slice(0, 10), key = `${start}|${end}`; if (!values.has(key)) values.set(key, { key, start, end }) }
   return Array.from(values.values()).sort((a, b) => b.start.localeCompare(a.start))
 })
-const deploymentClients = computed(() => { const values = new Map<string, any>(); for (const row of dtrAssignments.value) if (!values.has(String(row.ClientID))) values.set(String(row.ClientID), { ClientID: row.ClientID, ClientName: row.ClientName }); return Array.from(values.values()).sort((a, b) => String(a.ClientName).localeCompare(String(b.ClientName))) })
-const deploymentSites = computed(() => { const values = new Map<string, any>(); for (const row of dtrAssignments.value) { if (clientFilter.value && String(row.ClientID) !== clientFilter.value) continue; if (!values.has(String(row.SiteID))) values.set(String(row.SiteID), { SiteID: row.SiteID, SiteName: row.SiteName }) }; return Array.from(values.values()).sort((a, b) => String(a.SiteName).localeCompare(String(b.SiteName))) })
-const filteredAssignments = computed(() => dtrAssignments.value.filter(row => { const key = `${String(row.PeriodStart).slice(0, 10)}|${String(row.PeriodEnd).slice(0, 10)}`; return (!agencyFilter.value || String(row.AgencyID) === agencyFilter.value) && (!clientFilter.value || String(row.ClientID) === clientFilter.value) && (!siteFilter.value || String(row.SiteID) === siteFilter.value) && (!cutoffFilter.value || key === cutoffFilter.value) }))
+const filterClients = computed(() => {
+  const values = new Map<string, any>()
+  const rows = historyView.value === 'deployments' ? items.value.filter(row => Number(row.IsPermanentSite) === 1) : dtrAssignments.value
+  for (const row of rows) if (!values.has(String(row.ClientID))) values.set(String(row.ClientID), { ClientID: row.ClientID, ClientName: row.ClientName })
+  return Array.from(values.values()).sort((a, b) => String(a.ClientName).localeCompare(String(b.ClientName)))
+})
+const filterSites = computed(() => {
+  const values = new Map<string, any>()
+  const rows = historyView.value === 'deployments' ? items.value.filter(row => Number(row.IsPermanentSite) === 1) : dtrAssignments.value
+  for (const row of rows) {
+    if (clientFilter.value && String(row.ClientID) !== clientFilter.value) continue
+    if (!values.has(String(row.SiteID))) values.set(String(row.SiteID), { SiteID: row.SiteID, SiteName: row.SiteName })
+  }
+  return Array.from(values.values()).sort((a, b) => String(a.SiteName).localeCompare(String(b.SiteName)))
+})
+const filteredAssignments = computed(() => {
+  const query = employeeSearch.value.trim().toLowerCase()
+  return dtrAssignments.value.filter(row => {
+    const key = `${String(row.PeriodStart).slice(0, 10)}|${String(row.PeriodEnd).slice(0, 10)}`
+    const employeeMatches = !query || [row.EmployeeName, row.EmployeeNumber, formatEmployeeId(row.EmployeeID)].some(value => String(value || '').toLowerCase().includes(query))
+    return employeeMatches && (!agencyFilter.value || String(row.AgencyID) === agencyFilter.value) && (!clientFilter.value || String(row.ClientID) === clientFilter.value) && (!siteFilter.value || String(row.SiteID) === siteFilter.value) && (!cutoffFilter.value || key === cutoffFilter.value)
+  })
+})
 const siteRosters = computed(() => {
   const groups = new Map<string, any>(); for (const row of filteredAssignments.value) { const key = String(row.BatchID); if (!groups.has(key)) groups.set(key, { ...row, people: [] }); groups.get(key).people.push(row) }
   return Array.from(groups.values()).map(group => ({ ...group, people: group.people.sort((a: any, b: any) => String(a.EmployeeName).localeCompare(String(b.EmployeeName))), regularCount: group.people.filter((p: any) => p.AttendanceType === 'Regular').length, relieverCount: group.people.filter((p: any) => p.AttendanceType === 'Reliever').length })).sort((a, b) => String(b.PeriodStart).localeCompare(String(a.PeriodStart)) || String(a.SiteName).localeCompare(String(b.SiteName)))
 })
-const filteredEmployees = computed(() => { const query = employeeSearch.value.trim().toLowerCase(); return employeeGroups.value.filter(group => !query || [group.EmployeeName, group.EmployeeNumber, formatEmployeeId(group.EmployeeID)].some(value => String(value || '').toLowerCase().includes(query))) })
+const filteredEmployees = computed(() => {
+  const query = employeeSearch.value.trim().toLowerCase()
+  return employeeGroups.value.filter(group => {
+    const current = group.current || {}
+    const employeeMatches = !query || [group.EmployeeName, group.EmployeeNumber, formatEmployeeId(group.EmployeeID)].some(value => String(value || '').toLowerCase().includes(query))
+    return employeeMatches
+      && (!agencyFilter.value || String(current.AgencyID) === agencyFilter.value)
+      && (!clientFilter.value || String(current.ClientID) === clientFilter.value)
+      && (!siteFilter.value || String(current.SiteID) === siteFilter.value)
+  })
+})
 const selectedEmployeeDtrHistory = computed(() => selectedEmployee.value ? dtrAssignments.value.filter(row => String(row.EmployeeID) === String(selectedEmployee.value.EmployeeID)).sort((a, b) => String(b.PeriodStart).localeCompare(String(a.PeriodStart))) : [])
 const selectedFormEmployee = computed(() => employees.value.find(employee => String(employee.EmployeeID) === String(form.value.EmployeeID)) || null)
 const availableClientRates = computed(() => selectedFormEmployee.value?.AgencyPositionID ? clientRates.value.filter(rate => String(rate.AgencyPositionID) === String(selectedFormEmployee.value.AgencyPositionID) && String(rate.AgencyID) === String(selectedFormEmployee.value.AgencyID)) : [])
@@ -76,9 +108,9 @@ const canSave = computed(() => !busy.value
   && (ongoingDeployment.value || Boolean(form.value.EndDate))
   && (!form.value.EndDate || form.value.EndDate >= form.value.StartDate))
 async function openNewDeployment() { reset(); modalOpen.value = true; lookupLoading.value = true; try { await load(true) } finally { lookupLoading.value = false } }
-const isEmployeeSearch = computed(() => Boolean(employeeSearch.value.trim()))
 watch(agencies, current => { if (agencyFilter.value && !current.some(agency => String(agency.AgencyID) === agencyFilter.value)) agencyFilter.value = '' })
 watch(clientFilter, () => { siteFilter.value = '' })
+watch(historyView, () => { clientFilter.value = ''; siteFilter.value = ''; cutoffFilter.value = historyView.value === 'dtr' ? cutoffOptions.value[0]?.key || '' : '' })
 watch(ongoingDeployment, ongoing => { if (ongoing) form.value.EndDate = '' })
 
 function reset() { form.value = { EmployeeID: '', ClientRateID: '', SiteID: '', ShiftCodeID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' }; ongoingDeployment.value = true; error.value = '' }
@@ -95,6 +127,25 @@ function formatDeploymentDate(value: any) {
 }
 function deploymentPeriod(start: any, end: any) {
   return `${formatDeploymentDate(start)} – ${end ? formatDeploymentDate(end) : 'Ongoing'}`
+}
+function deploymentConflictDescription(conflict: any) {
+  if (!conflict) return ''
+  const site = sites.value.find(item => String(item.SiteID) === String(conflict.SiteID))
+  const rate = clientRates.value.find(item => String(item.ClientRateID) === String(conflict.ClientRateID))
+  const clientName = conflict.ClientName || site?.ClientName || rate?.ClientName
+  const siteName = conflict.SiteName || site?.SiteName
+  const location = [clientName, siteName].filter(Boolean).join(' — ')
+  const period = conflict.StartDate ? deploymentPeriod(conflict.StartDate, conflict.EndDate) : ''
+  if (location && period) return `at ${location} (${period})`
+  if (location) return `at ${location}`
+  if (period) return `for ${period}`
+  return ''
+}
+function showDeploymentConflict(conflict: any) {
+  deploymentAlert.value = alertMessages.deploymentAlreadyExists(
+    formatEmployeeLabel(selectedFormEmployee.value),
+    deploymentConflictDescription(conflict),
+  )
 }
 function shiftDisplay(item: any) {
   const code = String(item.ShiftCode || '').trim()
@@ -133,7 +184,7 @@ async function load(silent = false) { if (!silent) loading.value = true; try { c
 async function save() {
   if (!canSave.value) return
   if (deploymentConflict.value) {
-    deploymentAlert.value = alertMessages.deploymentAlreadyExists(formatEmployeeLabel(selectedFormEmployee.value))
+    showDeploymentConflict(deploymentConflict.value)
     return
   }
   busy.value = true
@@ -141,11 +192,17 @@ async function save() {
   try {
     await $fetch('/api/employees/deployments', { method: 'POST', body: form.value })
     modalOpen.value = false
+    historyView.value = 'deployments'
+    employeeSearch.value = ''
+    agencyFilter.value = ''
+    clientFilter.value = ''
+    siteFilter.value = ''
+    cutoffFilter.value = ''
     reset()
     await load()
   } catch (cause: any) {
     if (cause.data?.data?.code === DEPLOYMENT_ALREADY_EXISTS) {
-      deploymentAlert.value = alertMessages.deploymentAlreadyExists(formatEmployeeLabel(selectedFormEmployee.value))
+      showDeploymentConflict(cause.data?.data?.existingDeployment || deploymentConflict.value)
       await load(true)
     } else error.value = cause.data?.statusMessage || 'Unable to save deployment.'
   } finally { busy.value = false }
@@ -156,11 +213,15 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
 <template>
   <main class="deployments-page">
     <SystemAlert v-model="deploymentAlert" />
-    <header class="page-head"><div><p>EMPLOYEE MANAGEMENT</p><h1>Deployment History</h1><small>Site and client assignments use the selected DTR cutoff.</small></div><button class="primary" @click="openNewDeployment">+ New deployment</button></header>
-    <form class="filters" @submit.prevent><label><span>Employee</span><input v-model="employeeSearch" placeholder="Search employee ID, number, or name" /></label><label><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label><label><span>Client</span><select v-model="clientFilter"><option value="">All clients</option><option v-for="client in deploymentClients" :key="client.ClientID" :value="String(client.ClientID)">{{ client.ClientName }}</option></select></label><label><span>Site</span><select v-model="siteFilter"><option value="">All sites</option><option v-for="site in deploymentSites" :key="site.SiteID" :value="String(site.SiteID)">{{ site.SiteName }}</option></select></label><label><span>Cutoff</span><select v-model="cutoffFilter"><option value="">All cutoffs</option><option v-for="cutoff in cutoffOptions" :key="cutoff.key" :value="cutoff.key">{{ cutoffLabel(cutoff.start, cutoff.end) }}</option></select></label><button class="ghost" type="submit">Search</button></form>
+    <header class="page-head"><div><p>EMPLOYEE MANAGEMENT</p><h1>Deployment History</h1><small>Review saved deployments and cutoff-specific DTR assignments.</small></div><button class="primary" @click="openNewDeployment">+ New deployment</button></header>
+    <nav class="history-tabs" aria-label="Deployment history view">
+      <button type="button" :class="{ active: historyView === 'deployments' }" @click="historyView = 'deployments'">Deployment records</button>
+      <button type="button" :class="{ active: historyView === 'dtr' }" @click="historyView = 'dtr'">DTR cutoff rosters</button>
+    </nav>
+    <form class="filters" @submit.prevent><label><span>Employee</span><input v-model="employeeSearch" placeholder="Search employee ID, number, or name" /></label><label><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label><label><span>Client</span><select v-model="clientFilter"><option value="">All clients</option><option v-for="client in filterClients" :key="client.ClientID" :value="String(client.ClientID)">{{ client.ClientName }}</option></select></label><label><span>Site</span><select v-model="siteFilter"><option value="">All sites</option><option v-for="site in filterSites" :key="site.SiteID" :value="String(site.SiteID)">{{ site.SiteName }}</option></select></label><label v-if="historyView === 'dtr'"><span>Cutoff</span><select v-model="cutoffFilter"><option value="">All cutoffs</option><option v-for="cutoff in cutoffOptions" :key="cutoff.key" :value="cutoff.key">{{ cutoffLabel(cutoff.start, cutoff.end) }}</option></select></label><button class="ghost" type="submit">Search</button></form>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <section v-if="!isEmployeeSearch"><p class="view-note">{{ cutoffFilter ? 'Showing the DTR roster for the selected cutoff.' : 'Showing all saved DTR cutoffs.' }}</p><div class="table-wrap"><table><thead><tr><th>Client</th><th>Site / area</th><th>Agency</th><th>Cutoff</th><th>Assigned</th><th>Regular</th><th>Reliever</th><th>DTR status</th><th>People</th></tr></thead><tbody><tr v-if="loading"><td colspan="9">Loading...</td></tr><tr v-else-if="!siteRosters.length"><td colspan="9">No DTR assignments found for this search and cutoff.</td></tr><tr v-for="roster in siteRosters" :key="roster.BatchID"><td>{{ roster.ClientName }}</td><td><strong>{{ roster.SiteName }}</strong></td><td>{{ roster.AgencyName }}</td><td>{{ cutoffLabel(roster.PeriodStart, roster.PeriodEnd) }}</td><td>{{ roster.people.length }}</td><td><span class="type type--regular">{{ roster.regularCount }}</span></td><td><span class="type type--reliever">{{ roster.relieverCount }}</span></td><td><span class="status">{{ roster.DtrStatus }}</span></td><td><button class="details" type="button" @click="openRoster(roster)">View people ({{ roster.people.length }})</button></td></tr></tbody></table></div></section>
-    <section v-else><p class="view-note">Employee history — search a name to see the person's complete deployment timeline.</p><div class="table-wrap"><table><thead><tr><th>Employee ID</th><th>Employee no.</th><th>Employee name</th><th>Current agency</th><th>Current client</th><th>Current site</th><th>History</th></tr></thead><tbody><tr v-if="loading"><td colspan="7">Loading...</td></tr><tr v-else-if="!filteredEmployees.length"><td colspan="7">No employees found.</td></tr><tr v-for="group in filteredEmployees" :key="group.EmployeeID"><td class="employee-id">{{ formatEmployeeId(group.EmployeeID) }}</td><td>{{ formatEmployeeNumber(group.EmployeeNumber) }}</td><td>{{ formatEmployeeName(group) }}</td><td>{{ display(group.current.AgencyName) }}</td><td>{{ display(group.current.ClientName) }}</td><td>{{ display(group.current.SiteName) }}</td><td><button class="details" type="button" @click="openDetails(group)">Details ({{ group.history.length }})</button></td></tr></tbody></table></div></section>
+    <section v-if="historyView === 'deployments'"><p class="view-note">Showing saved deployment records. Open Details to review the complete timeline.</p><div class="table-wrap"><table><thead><tr><th>Employee ID</th><th>Employee no.</th><th>Employee name</th><th>Agency</th><th>Client</th><th>Site / area</th><th>Period</th><th>Status</th><th>History</th></tr></thead><tbody><tr v-if="loading"><td colspan="9">Loading...</td></tr><tr v-else-if="!filteredEmployees.length"><td colspan="9">No deployment records found.</td></tr><tr v-for="group in filteredEmployees" :key="group.EmployeeID"><td class="employee-id">{{ formatEmployeeId(group.EmployeeID) }}</td><td>{{ formatEmployeeNumber(group.EmployeeNumber) }}</td><td>{{ formatEmployeeName(group) }}</td><td>{{ display(group.current.AgencyName) }}</td><td>{{ display(group.current.ClientName) }}</td><td>{{ display(group.current.SiteName) }}</td><td>{{ deploymentPeriod(group.current.StartDate, group.current.EndDate) }}</td><td><span class="status">{{ historyStatus(group.current, group.history) }}</span></td><td><button class="details" type="button" @click="openDetails(group)">Details ({{ group.history.length }})</button></td></tr></tbody></table></div></section>
+    <section v-else><p class="view-note">{{ cutoffFilter ? 'Showing the DTR roster for the selected cutoff.' : 'Showing all saved DTR cutoffs.' }}</p><div class="table-wrap"><table><thead><tr><th>Client</th><th>Site / area</th><th>Agency</th><th>Cutoff</th><th>Assigned</th><th>Regular</th><th>Reliever</th><th>DTR status</th><th>People</th></tr></thead><tbody><tr v-if="loading"><td colspan="9">Loading...</td></tr><tr v-else-if="!siteRosters.length"><td colspan="9">No DTR assignments found for this search and cutoff.</td></tr><tr v-for="roster in siteRosters" :key="roster.BatchID"><td>{{ roster.ClientName }}</td><td><strong>{{ roster.SiteName }}</strong></td><td>{{ roster.AgencyName }}</td><td>{{ cutoffLabel(roster.PeriodStart, roster.PeriodEnd) }}</td><td>{{ roster.people.length }}</td><td><span class="type type--regular">{{ roster.regularCount }}</span></td><td><span class="type type--reliever">{{ roster.relieverCount }}</span></td><td><span class="status">{{ roster.DtrStatus }}</span></td><td><button class="details" type="button" @click="openRoster(roster)">View people ({{ roster.people.length }})</button></td></tr></tbody></table></div></section>
     <Teleport to="body"><div v-if="modalOpen" class="backdrop" @click.self="!busy && (modalOpen = false)">
       <form class="modal deployment-form" @submit.prevent="save">
         <button class="close" type="button" aria-label="Close new deployment" :disabled="busy" @click="modalOpen = false">×</button>
@@ -190,14 +251,14 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
         <section class="form-section period-section">
           <div class="section-heading"><span class="section-number">3</span><div><h3>Deployment period</h3><p>Enter the first day. Turn off Ongoing only when the last day is already known.</p></div></div>
           <div class="date-range">
-            <label class="date-field"><span>Start date</span><small>First day assigned</small><input v-model="form.StartDate" type="date" required></label>
+            <div class="date-field"><ModernDateField v-model="form.StartDate" label="Start date" placeholder="Select start date" required /><small>First day assigned</small></div>
             <span class="date-arrow" aria-hidden="true">&rarr;</span>
-            <label class="date-field" :class="{ 'date-field--disabled': ongoingDeployment }"><span>End date</span><small>{{ ongoingDeployment ? 'No end date yet' : 'Last day assigned' }}</small><input v-model="form.EndDate" type="date" :min="form.StartDate || undefined" :required="!ongoingDeployment" :disabled="ongoingDeployment"></label>
+            <div class="date-field" :class="{ 'date-field--disabled': ongoingDeployment }"><ModernDateField v-model="form.EndDate" label="End date" placeholder="Select end date" :min="form.StartDate || undefined" :required="!ongoingDeployment" :disabled="ongoingDeployment" align="end" /><small>{{ ongoingDeployment ? 'No end date yet' : 'Last day assigned' }}</small></div>
           </div>
           <label class="ongoing-toggle"><input v-model="ongoingDeployment" type="checkbox"><span><strong>Ongoing deployment</strong><small>Keep this checked if the employee has no confirmed end date.</small></span></label>
         </section>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <div v-if="deploymentConflict" class="deployment-warning" role="status">Already deployed to {{ deploymentConflict.SiteName }} for these dates. Check the existing history or use Transfer to change sites.</div>
+        <div v-if="deploymentConflict" class="deployment-warning" role="status">Existing deployment: {{ deploymentConflict.ClientName ? `${deploymentConflict.ClientName} — ` : '' }}{{ deploymentConflict.SiteName || 'assigned site' }} ({{ deploymentPeriod(deploymentConflict.StartDate, deploymentConflict.EndDate) }}). The selected dates overlap this record. Check the history or use Transfer to change sites.</div>
         <footer><button type="button" :disabled="busy" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="!canSave">{{ busy ? 'Saving...' : 'Save' }}</button></footer>
       </form>
     </div></Teleport>
@@ -247,6 +308,9 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
 
 <style scoped>
 .deployment-form{width:min(100%,920px);font-family:'Plus Jakarta Sans','Inter',system-ui,sans-serif;gap:16px;background:#f8fafc}
+.history-tabs{display:inline-flex;gap:5px;margin:0 0 16px;padding:4px;border:1px solid #d8e1ef;border-radius:11px;background:#eef3fa}
+.history-tabs button{min-height:36px;border:0;border-radius:8px;padding:7px 14px;background:transparent;color:#59708f;font:inherit;font-size:.82rem;font-weight:800;cursor:pointer}
+.history-tabs button.active{background:#fff;color:#2043cc;box-shadow:0 1px 4px rgba(30,55,90,.12)}
 .form-intro{padding:0 34px 2px 0}
 .form-intro p,.history-header p{margin:0 0 5px;font-size:.72rem;font-weight:800;letter-spacing:.09em;color:#2f67c9}
 .form-intro h2{font-size:1.65rem;color:#122a50}
@@ -264,12 +328,9 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
 .deployment-warning{padding:12px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;color:#92400e;font-size:.85rem;line-height:1.5}
 .period-section{background:#f6f9ff;border-color:#cddcf6}
 .date-range{display:grid;grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);align-items:end;gap:10px}
-.date-field{padding:12px;border:1px solid #ccd8eb;border-radius:10px;background:#fff}
-.date-field>span{color:#172b4d;font-size:.85rem}
+.date-field{display:grid;gap:5px;padding:12px;border:1px solid #ccd8eb;border-radius:10px;background:#fff}
 .date-field>small{color:#718096;font-size:.72rem;font-weight:500}
-.date-field input{margin-top:4px;background:#fff;cursor:pointer}
 .date-field--disabled{background:#eef2f7;color:#8290a3}
-.date-field--disabled input{background:#e9eef5;cursor:not-allowed}
 .date-arrow{align-self:center;text-align:center;color:#5271a5;font-size:1.3rem;font-weight:700}
 .ongoing-toggle{display:flex!important;align-items:center;gap:10px;width:max-content;max-width:100%;padding:8px 10px;border-radius:8px;cursor:pointer}
 .deployment-form .ongoing-toggle input{width:18px;min-height:18px;margin:0;accent-color:#2349e6}
@@ -277,5 +338,5 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
 .deployments-page{padding:32px;max-width:1500px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p,.modal>p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0;font-size:1.8rem}.page-head small,.view-note{color:#64748b}.primary,.ghost,.details{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost,.details{background:#eef3ff;color:#2043cc}.filters{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:0 0 16px}.filters label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters input,.filters select{min-height:40px;min-width:180px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff;font:inherit}.filters label:first-child input{min-width:300px}.view-note{margin:0 0 12px;font-size:.9rem}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.employee-id{font-weight:800;color:#1f3fcf}.status,.type{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700;white-space:nowrap}.status{background:#e0e7ff;color:#3730a3}.type--regular{background:#e0e7ff;color:#3730a3}.type--reliever{background:#fef3c7;color:#92400e}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,800px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.4rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}.modal footer button:not(.primary){min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:0 14px;background:#fff;font-weight:700;cursor:pointer}.timeline{display:grid;gap:10px;margin-top:8px}.timeline-item{border:1px solid #dce3ee;border-left:4px solid #5b7df0;border-radius:10px;padding:12px}.timeline-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.timeline-item p{margin:5px 0 0;color:#526174;font-size:.88rem}.history-modal,.roster-modal{width:min(100%,880px)}.roster-summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:#475569;font-weight:700;font-size:.88rem}@media(max-width:760px){.deployments-page{padding:20px}.grid{grid-template-columns:1fr}.page-head,.filters{flex-direction:column;align-items:stretch}.filters input,.filters select,.filters label:first-child input{min-width:0;width:100%}.primary,.ghost{width:100%}}
 .site-status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700;white-space:nowrap}.site-status--permanent{background:#dcfce7;color:#166534}.site-status--cutoff{background:#f1f5f9;color:#475569}
 .history-modal{width:min(100%,820px);gap:8px;font-family:'Plus Jakarta Sans','Inter',system-ui,sans-serif}.history-header{padding-right:34px}.history-header h2{color:#122a50}.history-modal h3{margin:14px 0 0;font-size:1rem}.history-modal .timeline{gap:10px;margin-top:2px}.history-modal .timeline-item{border:1px solid #dce3ee;border-left:4px solid #5b7df0;border-radius:10px;padding:14px}.history-modal .timeline-head{align-items:flex-start}.history-card-meta{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(120px,.7fr);gap:10px 18px;margin-top:12px;color:#526174;font-size:.82rem}.history-card-meta>span{display:flex;align-items:flex-start;gap:7px;flex-wrap:wrap;line-height:1.5}.history-card-meta small{display:block;flex-basis:100%;color:#8290a3;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}.history-modal .timeline-item .deployment-period{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:13px 0 0;padding:10px 12px;border-radius:8px;background:#f1f5fb;color:#1f365c;font-size:.84rem}.deployment-period span{color:#64748b;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}.deployment-period strong{font-size:.88rem}.history-modal .timeline-item .history-remarks{display:grid;margin:10px 0 0;color:#526174;font-size:.82rem}.history-remarks span{color:#8290a3;font-size:.68rem;font-weight:700;text-transform:uppercase}.history-modal .dtr-heading{margin-top:16px}.history-modal .empty-history{margin:0;color:#64748b;font-size:.88rem}
-@media(max-width:760px){.deployment-form{padding:20px}.assignment-grid,.date-range,.history-card-meta{grid-template-columns:1fr}.date-arrow{transform:rotate(90deg)}.ongoing-toggle{width:auto}.history-modal .timeline-item .deployment-period{align-items:flex-start;flex-direction:column;gap:3px}}
+@media(max-width:760px){.deployment-form{padding:20px}.history-tabs{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}.assignment-grid,.date-range,.history-card-meta{grid-template-columns:1fr}.date-arrow{transform:rotate(90deg)}.ongoing-toggle{width:auto}.history-modal .timeline-item .deployment-period{align-items:flex-start;flex-direction:column;gap:3px}}
 </style>

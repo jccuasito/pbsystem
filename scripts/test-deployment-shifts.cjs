@@ -119,7 +119,11 @@ test('MySQL deployment links agency shifts atomically, reuses mappings, and reje
     // Exact repeat, later start inside an open assignment, and a different shift
     // all reject without silently ending the original or creating a site link.
     for (const repeat of [{}, { StartDate: '2026-10-01' }, { ShiftCodeID: 9 }, { StartDate: '2026-09-01', EndDate: '2026-09-19' }]) {
-      await assert.rejects(api.createDeployment({ body: { ...body, ...repeat } }), error => error.statusCode === 409 && error.data.code === messages.DEPLOYMENT_ALREADY_EXISTS)
+      await assert.rejects(api.createDeployment({ body: { ...body, ...repeat } }), error => error.statusCode === 409
+        && error.data.code === messages.DEPLOYMENT_ALREADY_EXISTS
+        && error.data.existingDeployment.DeploymentID
+        && Number(error.data.existingDeployment.SiteID) === 10
+        && String(error.data.existingDeployment.StartDate).slice(0, 10) === '2026-09-19')
     }
     assert.deepEqual((await c.query('SELECT * FROM employee_deployment ORDER BY DeploymentID'))[0], before)
     assert.deepEqual((await c.query('SELECT * FROM site_shift'))[0], linksBefore)

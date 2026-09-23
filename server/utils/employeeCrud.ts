@@ -645,7 +645,7 @@ function deploymentSql(filters: string[]) {
     'SELECT',
     '  ed.DeploymentID, ed.EmployeeID, e.EmployeeNumber, current_ap.AgencyID AS CurrentEmployeeAgencyID,',
     "  CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,",
-    '  a.AgencyName, p.PositionName, c.ClientName, s.SiteName,',
+    '  a.AgencyName, p.PositionName, c.ClientID, c.ClientName, s.SiteName,',
     '  sc.ShiftCode, sc.ShiftName,',
     '  ed.DeploymentType, ed.IsPermanentSite, ed.StartDate, ed.EndDate,',
     "  CASE WHEN ed.EndDate IS NULL OR ed.EndDate >= CURDATE() THEN 'Active' ELSE 'Ended' END AS Status,",
@@ -911,7 +911,8 @@ export async function createDeployment(event: any) {
     // The employee lock serializes repeated/concurrent submissions. Check before
     // changing any site link or deployment; transfers have a separate endpoint.
     const [[conflict]] = await connection.execute<any[]>(
-      `SELECT DeploymentID FROM employee_deployment
+      `SELECT DeploymentID, ClientRateID, SiteID, StartDate, EndDate
+       FROM employee_deployment
        WHERE EmployeeID = ? AND IsPermanentSite = 1
          AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
        LIMIT 1 FOR UPDATE`,
@@ -920,7 +921,11 @@ export async function createDeployment(event: any) {
     if (conflict) throw createError({
       statusCode: 409,
       statusMessage: alertMessages.deploymentAlreadyExists().message,
-      data: { code: DEPLOYMENT_ALREADY_EXISTS, deploymentId: conflict.DeploymentID },
+      data: {
+        code: DEPLOYMENT_ALREADY_EXISTS,
+        deploymentId: conflict.DeploymentID,
+        existingDeployment: conflict,
+      },
     })
 
     const [[clientRate]] = await connection.execute<any[]>(

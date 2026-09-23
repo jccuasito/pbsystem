@@ -11,9 +11,9 @@ export const alertMessages = {
     message: 'Select a client rate matching the agency and position saved in Employee List. Refresh the form if the employee position was recently changed.',
     tone: 'error',
   }),
-  deploymentAlreadyExists: (name = 'This employee'): AlertMessage => ({
+  deploymentAlreadyExists: (name = 'This employee', existingDeployment = ''): AlertMessage => ({
     title: 'Employee already deployed',
-    message: `${name} already has a deployment covering these dates. No new deployment was added and the existing assignment was not changed. Check Deployment History, or use Transfer in Employee List to move the employee to another site.`,
+    message: `${name} already has an existing deployment${existingDeployment ? ` ${existingDeployment}. The selected dates overlap this record.` : ' covering the selected dates.'} No new deployment was added and the existing assignment was not changed. Check Deployment History, or use Transfer in Employee List to move the employee to another site.`,
     tone: 'info',
   }),
   dtrEmployeeAlreadyAdded: (name = 'This employee'): AlertMessage => ({
