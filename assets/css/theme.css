@@ -30,3 +30,18 @@
   --accent: #79a7ff;
   --glow: #14294e;
 }
+
+html[data-theme='dark'] {
+  --navy: #142b5e;
+  --blue: #79a7ff;
+  --paper: #0d1529;
+  --surface: #15203a;
+  --ink: #eef3ff;
+  --muted: #aab7d0;
+  --line: #283652;
+  --soft: #1a315c;
+  --accent: #79a7ff;
+  --glow: #14294e;
+  color-scheme: dark;
+  background: var(--paper);
+}

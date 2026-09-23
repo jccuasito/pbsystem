@@ -27,6 +27,7 @@ const isMobileNavOpen = ref(false)
 const currentUser = ref<any>(null)
 const showLogoutAlert = ref(false)
 const loggingOut = ref(false)
+let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
@@ -90,8 +91,35 @@ onMounted(() => {
 watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'light'))
 watch(isPinned, (value) => localStorage.setItem('dja-sidebar-pinned', value ? 'true' : 'false'))
 watch(() => route.path, () => { isMobileNavOpen.value = false })
+watch(isMobileNavOpen, (isOpen) => {
+  if (!import.meta.client) return
+  if (isOpen) {
+    documentOverflowBeforeDrawer = document.documentElement.style.overflow
+    document.documentElement.style.overflow = 'hidden'
+    return
+  }
+  document.documentElement.style.overflow = documentOverflowBeforeDrawer
+})
+
+useHead(() => ({
+  htmlAttrs: {
+    'data-theme': isDark.value ? 'dark' : 'light'
+  }
+}))
 
 const expanded = computed(() => isPinned.value || isHovering.value || isMobileNavOpen.value)
+
+function closeMobileNav() {
+  isMobileNavOpen.value = false
+}
+
+function toggleMobileNav() {
+  isMobileNavOpen.value = !isMobileNavOpen.value
+}
+
+function handleDashboardKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && isMobileNavOpen.value) closeMobileNav()
+}
 
 /* ---- Icon set: raw SVG markup, rendered via v-html.
    No separate component / auto-import needed — avoids resolution issues. ---- */
@@ -286,6 +314,7 @@ onMounted(async () => {
   updateOnlineStatus()
   window.addEventListener('online', updateOnlineStatus)
   window.addEventListener('offline', updateOnlineStatus)
+  window.addEventListener('keydown', handleDashboardKeydown)
 
   // Fetch dashboard data in parallel with the existing session request.
   const dashboardRefresh = refreshDashboardData()
@@ -325,6 +354,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('online', updateOnlineStatus)
   window.removeEventListener('offline', updateOnlineStatus)
+  window.removeEventListener('keydown', handleDashboardKeydown)
+  document.documentElement.style.overflow = documentOverflowBeforeDrawer
 })
 </script>
 
@@ -332,9 +363,10 @@ onBeforeUnmount(() => {
   <div class="page dash-page" :data-theme="isDark ? 'dark' : 'light'">
     <div class="dash-shell" :class="{ 'is-pinned': isPinned }">
 
-      <div class="dash-backdrop" v-show="isMobileNavOpen" @click="isMobileNavOpen = false"></div>
+      <div class="dash-backdrop" v-show="isMobileNavOpen" @click="closeMobileNav"></div>
 
       <aside
+        id="dashboard-sidebar"
         class="dash-sidebar"
         :class="{ 'is-expanded': expanded, 'is-mobile-open': isMobileNavOpen }"
         @mouseenter="isHovering = true"
@@ -354,6 +386,9 @@ onBeforeUnmount(() => {
           >
             <svg v-if="!isPinned" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v4M8.5 8.5 6 6M15.5 8.5 18 6M6.5 13c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5c0 1.8-.7 2.8-1.2 3.8a2 2 0 0 1-1.8 1.2H9.5a2 2 0 0 1-1.8-1.2C7.2 15.8 6.5 14.8 6.5 13Z"/></svg>
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="17" width="4" height="4" rx="1" fill="currentColor" stroke="none"/><path d="M6.5 13c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5c0 1.8-.7 2.8-1.2 3.8a2 2 0 0 1-1.8 1.2H9.5a2 2 0 0 1-1.8-1.2C7.2 15.8 6.5 14.8 6.5 13Z" fill="rgba(134,194,255,0.3)"/></svg>
+          </button>
+          <button type="button" class="dash-mobile-close" aria-label="Close menu" @click="closeMobileNav">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
           </button>
         </div>
 
@@ -415,6 +450,7 @@ onBeforeUnmount(() => {
           </NuxtLink>
           <button type="button" class="dash-logout" aria-label="Log out" title="Log out" @click="showLogoutAlert = true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            <span class="dash-logout__label">Log out</span>
           </button>
         </div>
       </aside>
@@ -422,7 +458,14 @@ onBeforeUnmount(() => {
       <div class="dash-main">
         <header class="dash-topbar">
           <div class="dash-topbar__left">
-            <button type="button" class="dash-mobile-toggle" aria-label="Open menu" @click="isMobileNavOpen = true">
+            <button
+              type="button"
+              class="dash-mobile-toggle"
+              :aria-label="isMobileNavOpen ? 'Close menu' : 'Open menu'"
+              :aria-expanded="isMobileNavOpen"
+              aria-controls="dashboard-sidebar"
+              @click="toggleMobileNav"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
           </div>
