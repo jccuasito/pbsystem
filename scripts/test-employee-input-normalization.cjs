@@ -89,6 +89,8 @@ test('employee create normalizes names and email while preserving a valid numeri
   assert.equal(values[3], 'SANTOS')
   assert.equal(values[4], 'DELA CRUZ')
   assert.equal(values[5], 'JUN')
+  assert.equal(values[7], 'Male')
+  assert.equal(values[8], 'Single')
   assert.equal(values[10], 'juan.test@gmail.com')
   assert.equal(values[11], '09171234567')
   assert.equal(values[9], '12-A, Rizal Street, Sample Village, Barangay 1, Davao City, Davao del Sur, Region XI, 8000')
@@ -103,14 +105,35 @@ test('employee create normalizes names and email while preserving a valid numeri
   assert.equal(values[39], '09181234567')
 })
 
-test('employee create rejects an incomplete profile before duplicate checking or insertion', async () => {
-  const { api, calls } = harness({ ...validEmployee, PermanentBarangay: '', EmergencyAddress: '' })
+test('employee create accepts Basic Information while follow-up sections are empty', async () => {
+  const followUpFields = {
+    Address: '',
+    PermanentUnitHouseNumber: '', PermanentProvince: '', PermanentStreet: '', PermanentCityMunicipality: '',
+    PermanentSubdivision: '', PermanentBarangay: '', PermanentRegion: '', PermanentPostalCode: '',
+    PresentUnitHouseNumber: '', PresentProvince: '', PresentStreet: '', PresentCityMunicipality: '',
+    PresentSubdivision: '', PresentBarangay: '', PresentRegion: '', PresentPostalCode: '',
+    BeneficiaryNotApplicable: false, Beneficiaries: [],
+    EmergencyName: '', EmergencyRelationship: '', EmergencyAddress: '', EmergencyContactNo: '',
+  }
+  const { api, calls } = harness({ ...validEmployee, ...followUpFields })
+  assert.deepEqual(JSON.parse(JSON.stringify(await api.createEmployee({}))), { id: 12 })
+  const values = calls.find(call => call.sql.startsWith('INSERT INTO employee')).values
+  assert.equal(values[9], null)
+  assert.equal(values[14], null)
+  assert.equal(values[22], null)
+  assert.equal(values[35], '[]')
+  assert.equal(values[36], null)
+  assert.equal(values[39], null)
+})
+
+test('employee create rejects missing Basic Information before duplicate checking or insertion', async () => {
+  const { api, calls } = harness({ ...validEmployee, FirstName: '', Email: '' })
   await assert.rejects(
     api.createEmployee({}),
     error => error.statusCode === 400
       && error.data?.code === 'EMPLOYEE_INCOMPLETE'
-      && error.data.fields.includes('Permanent barangay')
-      && error.data.fields.includes('Emergency address'),
+      && error.data.fields.includes('First name')
+      && error.data.fields.includes('Email'),
   )
   assert.equal(calls.length, 0)
 })
@@ -139,6 +162,20 @@ test('employee create rejects letters or contact numbers that are not exactly 11
   for (const ContactNumber of ['0917ABC1234', '0917123456', '091712345678']) {
     const { api, calls } = harness({ ...validEmployee, ContactNumber })
     await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /exactly 11 digits/.test(error.message))
+    assert.equal(calls.length, 0)
+  }
+})
+
+test('employee create normalizes supported HR choices and rejects unknown choices', async () => {
+  const normalized = harness({ ...validEmployee, Gender: 'FEMALE', CivilStatus: 'MARRIED' })
+  await normalized.api.createEmployee({})
+  const values = normalized.calls.find(call => call.sql.startsWith('INSERT INTO employee')).values
+  assert.equal(values[7], 'Female')
+  assert.equal(values[8], 'Married')
+
+  for (const changes of [{ Gender: 'Unknown' }, { CivilStatus: 'Complicated' }]) {
+    const { api, calls } = harness({ ...validEmployee, ...changes })
+    await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /must be one of/.test(error.message))
     assert.equal(calls.length, 0)
   }
 })

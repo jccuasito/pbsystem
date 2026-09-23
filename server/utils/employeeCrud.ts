@@ -27,6 +27,8 @@ const employeeFields = [
 ]
 const employeePhotoTypes: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
 const employeePhotoMaxBytes = 2 * 1024 * 1024
+const employeeGenderOptions = ['Male', 'Female', 'Non-binary', 'Prefer not to say'] as const
+const employeeCivilStatusOptions = ['Single', 'Married', 'Widowed', 'Separated', 'Divorced', 'Annulled'] as const
 
 const sectionConfigs: Record<EmployeeSection, SectionConfig> = {
   profile: { table: 'employee_profile', id: 'ProfileID', label: 'Profile', single: true, fields: ['EmployeeID', 'Height', 'Weight', 'PostalCode', 'PaymentMethod', 'EntryDate'] },
@@ -114,6 +116,16 @@ function parseUppercaseText(value: unknown) {
   return typeof parsed === 'string' ? parsed.toLocaleUpperCase() : parsed
 }
 
+function parseEmployeeChoice(value: unknown, field: string, options: readonly string[]) {
+  const parsed = parseText(value)
+  if (parsed === null) return null
+  const match = options.find(option => option.toLocaleLowerCase() === String(parsed).toLocaleLowerCase())
+  if (!match) {
+    throw createError({ statusCode: 400, statusMessage: `${field} must be one of: ${options.join(', ')}.` })
+  }
+  return match
+}
+
 function parseEmail(value: unknown) {
   const parsed = parseText(value)
   if (parsed === null) return null
@@ -172,21 +184,10 @@ function validateEmployeeCompleteness(body: Record<string, unknown>) {
     ['AgencyPositionID', 'Agency position'], ['FirstName', 'First name'], ['LastName', 'Last name'],
     ['Birthday', 'Birthday'], ['DateHired', 'Date hired'], ['Gender', 'Gender'], ['CivilStatus', 'Civil status'],
     ['Email', 'Email'], ['ContactNumber', 'Contact number'],
-    ['PermanentUnitHouseNumber', 'Permanent unit/house number'], ['PermanentProvince', 'Permanent province'],
-    ['PermanentStreet', 'Permanent street'], ['PermanentCityMunicipality', 'Permanent city/municipality'],
-    ['PermanentSubdivision', 'Permanent subdivision'], ['PermanentBarangay', 'Permanent barangay'],
-    ['PermanentRegion', 'Permanent region'], ['PermanentPostalCode', 'Permanent postal code'],
-    ['PresentUnitHouseNumber', 'Present unit/house number'], ['PresentProvince', 'Present province'],
-    ['PresentStreet', 'Present street'], ['PresentCityMunicipality', 'Present city/municipality'],
-    ['PresentSubdivision', 'Present subdivision'], ['PresentBarangay', 'Present barangay'],
-    ['PresentRegion', 'Present region'], ['PresentPostalCode', 'Present postal code'],
-    ['EmergencyName', 'Emergency contact name'], ['EmergencyRelationship', 'Emergency relationship'],
-    ['EmergencyContactNo', 'Emergency contact number'], ['EmergencyAddress', 'Emergency address'],
   ]
   const missing = required.filter(([key]) => !String(body[key] ?? '').trim()).map(([, label]) => label)
   const beneficiaries = parseBeneficiaries(body)
   if (!parseBooleanFlag(body.BeneficiaryNotApplicable)) {
-    if (!beneficiaries.length) missing.push('At least one beneficiary')
     beneficiaries.forEach((entry, index) => {
       if (!entry.Name) missing.push(`Beneficiary ${index + 1} name`)
       if (!entry.Relationship) missing.push(`Beneficiary ${index + 1} relationship`)
@@ -294,8 +295,8 @@ function employeeValues(body: Record<string, unknown>, beneficiaries = parseBene
     parseUppercaseText(body.LastName),
     parseUppercaseText(body.Nickname),
     parseDate(body.Birthday),
-    parseText(body.Gender),
-    parseText(body.CivilStatus),
+    parseEmployeeChoice(body.Gender, 'Gender', employeeGenderOptions),
+    parseEmployeeChoice(body.CivilStatus, 'Civil status', employeeCivilStatusOptions),
     parseText(permanentAddress || body.Address),
     parseEmail(body.Email),
     parseContactNumber(body.ContactNumber),

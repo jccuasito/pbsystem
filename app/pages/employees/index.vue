@@ -58,6 +58,8 @@ const isCompactView = ref(false)
 const employeeBatchSize = 50
 const suggestedBirthYear = new Date().getFullYear() - 25
 const relationshipOptions = ['Spouse', 'Child', 'Parent', 'Sibling', 'Grandchild', 'Grandparent', 'Legal Guardian', 'Other Relative', 'Partner', 'Other']
+const genderOptions = ['Male', 'Female', 'Non-binary', 'Prefer not to say']
+const civilStatusOptions = ['Single', 'Married', 'Widowed', 'Separated', 'Divorced', 'Annulled']
 let employeeObserver: IntersectionObserver | null = null
 let compactViewQuery: MediaQueryList | null = null
 const deleteWarning = alertMessages.employeePermanentDelete()
@@ -122,6 +124,12 @@ function beneficiariesFromEmployee(item: any): BeneficiaryEntry[] {
     .filter((entry: BeneficiaryEntry) => entry.Name || entry.Relationship)
 }
 
+function canonicalOption(value: unknown, options: readonly string[]) {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  return options.find(option => option.toLocaleLowerCase() === text.toLocaleLowerCase()) || ''
+}
+
 function employeeDraftSnapshot() {
   return JSON.stringify({ form: form.value, beneficiaries: beneficiaries.value })
 }
@@ -145,8 +153,8 @@ function reset(item: any = null) {
     PhotoDataUrl: '',
     RemovePhoto: false,
     Birthday: item?.Birthday?.slice?.(0, 10) ?? item?.Birthday ?? '',
-    Gender: item?.Gender ?? '',
-    CivilStatus: item?.CivilStatus ?? '',
+    Gender: canonicalOption(item?.Gender, genderOptions),
+    CivilStatus: canonicalOption(item?.CivilStatus, civilStatusOptions),
     Address: item?.Address ?? '',
     Email: item?.Email ?? '',
     ContactNumber: item?.ContactNumber ?? '',
@@ -546,20 +554,9 @@ function incompleteEmployeeFields() {
     ['AgencyPositionID', 'Agency position'], ['FirstName', 'First name'], ['LastName', 'Last name'],
     ['Birthday', 'Birthday'], ['DateHired', 'Date hired'], ['Gender', 'Gender'], ['CivilStatus', 'Civil status'],
     ['Email', 'Email'], ['ContactNumber', 'Contact number'],
-    ['PermanentUnitHouseNumber', 'Permanent unit/house number'], ['PermanentProvince', 'Permanent province'],
-    ['PermanentStreet', 'Permanent street'], ['PermanentCityMunicipality', 'Permanent city/municipality'],
-    ['PermanentSubdivision', 'Permanent subdivision'], ['PermanentBarangay', 'Permanent barangay'],
-    ['PermanentRegion', 'Permanent region'], ['PermanentPostalCode', 'Permanent postal code'],
-    ['PresentUnitHouseNumber', 'Present unit/house number'], ['PresentProvince', 'Present province'],
-    ['PresentStreet', 'Present street'], ['PresentCityMunicipality', 'Present city/municipality'],
-    ['PresentSubdivision', 'Present subdivision'], ['PresentBarangay', 'Present barangay'],
-    ['PresentRegion', 'Present region'], ['PresentPostalCode', 'Present postal code'],
-    ['EmergencyName', 'Emergency contact name'], ['EmergencyRelationship', 'Emergency relationship'],
-    ['EmergencyContactNo', 'Emergency contact number'], ['EmergencyAddress', 'Emergency address'],
   ]
   const missing = required.filter(([key]) => !String(form.value[key] ?? '').trim()).map(([, label]) => label)
   if (!form.value.BeneficiaryNotApplicable) {
-    if (!beneficiaries.value.length) missing.push('At least one beneficiary')
     beneficiaries.value.forEach((entry, index) => {
       if (!entry.Name.trim()) missing.push(`Beneficiary ${index + 1} name`)
       if (!entry.Relationship.trim()) missing.push(`Beneficiary ${index + 1} relationship`)
@@ -917,14 +914,17 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>BASIC INFORMATION</span><h3>Employee details</h3></div></div>
             <div class="employee-core-grid">
-              <label class="employee-core-field"><span>Employee number</span><input v-model="form.EmployeeNumber" placeholder="Assign later if unavailable" /><small>Optional badge/reference</small></label>
+              <label class="employee-core-field"><span>Employee number</span><input v-model="form.EmployeeNumber" placeholder="Enter employee number" /></label>
               <div class="employee-core-field employee-core-field--search"><SearchableSelect v-model="form.AgencyPositionID" label="Agency position" placeholder="Search agency or position" empty-text="No matching agency position." :options="agencyPositionOptions" required /><small>Required for rates and deployments.</small></div>
               <label class="employee-core-field"><span>Status</span><select v-model="form.Status"><option>Active</option><option>Inactive</option></select><small>Employee record availability.</small></label>
             </div>
             <div class="grid"><label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label><label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label></div>
             <div class="grid"><label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label><label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label></div>
             <div class="grid"><ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="today()" :initial-year="suggestedBirthYear" required /><ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" required /></div>
-            <div class="grid"><label>Gender<input v-model="form.Gender" required /></label><label>Civil status<input v-model="form.CivilStatus" required /></label></div>
+            <div class="grid">
+              <label>Gender<select v-model="form.Gender" required><option disabled value="">Select gender</option><option v-for="gender in genderOptions" :key="gender" :value="gender">{{ gender }}</option></select></label>
+              <label>Civil status<select v-model="form.CivilStatus" required><option disabled value="">Select civil status</option><option v-for="civilStatus in civilStatusOptions" :key="civilStatus" :value="civilStatus">{{ civilStatus }}</option></select></label>
+            </div>
             <div class="grid">
               <label>Email<input v-model="form.Email" type="email" autocomplete="email" inputmode="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]+" placeholder="name@example.com" required @blur="normalizeEmail" /><small>Use a complete email address, e.g. name@gmail.com.</small></label>
               <label>Contact number<input :value="form.ContactNumber" type="text" autocomplete="tel" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" placeholder="11-digit contact number" required @input="sanitizeContactNumber" /><small>Numbers only, exactly 11 digits.</small></label>
@@ -933,19 +933,19 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>PERMANENT ADDRESS</span><h3>Permanent residence</h3></div></div>
-            <div class="grid"><label>Unit/House number<input v-model="form.PermanentUnitHouseNumber" required /></label><label>Province<input v-model="form.PermanentProvince" required /></label></div>
-            <div class="grid"><label>Street<input v-model="form.PermanentStreet" required /></label><label>City/Municipality<input v-model="form.PermanentCityMunicipality" required /></label></div>
-            <div class="grid"><label>Subdivision<input v-model="form.PermanentSubdivision" required /></label><label>Barangay<input v-model="form.PermanentBarangay" required /></label></div>
-            <div class="grid"><label>Region<input v-model="form.PermanentRegion" required /></label><label>Postal code<input v-model="form.PermanentPostalCode" inputmode="numeric" required /></label></div>
+            <div class="grid"><label>Unit/House number<input v-model="form.PermanentUnitHouseNumber" /></label><label>Province<input v-model="form.PermanentProvince" /></label></div>
+            <div class="grid"><label>Street<input v-model="form.PermanentStreet" /></label><label>City/Municipality<input v-model="form.PermanentCityMunicipality" /></label></div>
+            <div class="grid"><label>Subdivision<input v-model="form.PermanentSubdivision" /></label><label>Barangay<input v-model="form.PermanentBarangay" /></label></div>
+            <div class="grid"><label>Region<input v-model="form.PermanentRegion" /></label><label>Postal code<input v-model="form.PermanentPostalCode" inputmode="numeric" /></label></div>
           </section>
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>PRESENT ADDRESS</span><h3>Current residence</h3></div><label class="checkbox-row"><input type="checkbox" :checked="sameAsPermanentAddress" @change="toggleSameAsPermanentAddress" /> Same as permanent address</label></div>
             <div class="present-address-fields" :class="{ 'fields-disabled': sameAsPermanentAddress }">
-              <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" :disabled="sameAsPermanentAddress" required /></label><label>Province<input v-model="form.PresentProvince" :disabled="sameAsPermanentAddress" required /></label></div>
-              <div class="grid"><label>Street<input v-model="form.PresentStreet" :disabled="sameAsPermanentAddress" required /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" :disabled="sameAsPermanentAddress" required /></label></div>
-              <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" :disabled="sameAsPermanentAddress" required /></label><label>Barangay<input v-model="form.PresentBarangay" :disabled="sameAsPermanentAddress" required /></label></div>
-              <div class="grid"><label>Region<input v-model="form.PresentRegion" :disabled="sameAsPermanentAddress" required /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" :disabled="sameAsPermanentAddress" required /></label></div>
+              <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" :disabled="sameAsPermanentAddress" /></label><label>Province<input v-model="form.PresentProvince" :disabled="sameAsPermanentAddress" /></label></div>
+              <div class="grid"><label>Street<input v-model="form.PresentStreet" :disabled="sameAsPermanentAddress" /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" :disabled="sameAsPermanentAddress" /></label></div>
+              <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" :disabled="sameAsPermanentAddress" /></label><label>Barangay<input v-model="form.PresentBarangay" :disabled="sameAsPermanentAddress" /></label></div>
+              <div class="grid"><label>Region<input v-model="form.PresentRegion" :disabled="sameAsPermanentAddress" /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" :disabled="sameAsPermanentAddress" /></label></div>
             </div>
           </section>
 
@@ -967,9 +967,9 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>EMERGENCY CONTACT</span><h3>Person to contact in an emergency</h3></div></div>
-            <div class="grid"><label>Full name<input v-model="form.EmergencyName" required @input="uppercaseNameField('EmergencyName', $event)" /></label><label>Relationship<select v-model="form.EmergencyRelationship" required><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
-            <label>Emergency contact number<input :value="form.EmergencyContactNo" type="text" inputmode="numeric" maxlength="15" pattern="[0-9]{7,15}" placeholder="7 to 15 digits" required @input="sanitizeEmergencyContactNumber" /><small>Numbers only; mobile and telephone numbers are accepted.</small></label>
-            <label>Emergency address<textarea v-model="form.EmergencyAddress" rows="3" placeholder="Complete address" required /></label>
+            <div class="grid"><label>Full name<input v-model="form.EmergencyName" @input="uppercaseNameField('EmergencyName', $event)" /></label><label>Relationship<select v-model="form.EmergencyRelationship"><option value="">Select relationship</option><option v-for="relationship in relationshipOptions" :key="relationship">{{ relationship }}</option></select></label></div>
+            <label>Emergency contact number<input :value="form.EmergencyContactNo" type="text" inputmode="numeric" maxlength="15" pattern="[0-9]{7,15}" placeholder="7 to 15 digits" @input="sanitizeEmergencyContactNumber" /><small>Numbers only; mobile and telephone numbers are accepted.</small></label>
+            <label>Emergency address<textarea v-model="form.EmergencyAddress" rows="3" placeholder="Complete address" /></label>
           </section>
 
           <p v-if="formError" class="error">{{ formError }}</p>
@@ -2009,11 +2009,11 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 }
 
 .employee-table .col-id { width: 8%; }
-.employee-table .col-number { width: 9%; }
-.employee-table .col-name { width: 12%; }
-.employee-table .col-agency { width: 16%; }
+.employee-table .col-number { width: 8%; }
+.employee-table .col-name { width: 15%; }
+.employee-table .col-agency { width: 15%; }
 .employee-table .col-position { width: 10%; }
-.employee-table .col-site { width: 10%; }
+.employee-table .col-site { width: 9%; }
 .employee-table .col-deployment { width: 10%; }
 .employee-table .col-status { width: 7%; }
 .employee-table .col-actions { width: 174px; }
@@ -2022,14 +2022,27 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 .employee-table td {
   min-width: 0;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   vertical-align: middle;
 }
 
-.employee-table .employee-id,
-.employee-table .employee-name {
+.employee-table .employee-id {
   color: #17375f;
   font-weight: 800;
+}
+
+.employee-table .employee-name {
+  color: #25364d;
+  font-size: .86rem;
+  font-weight: 700;
+}
+
+.employee-table .employee-identity > span:last-child {
+  min-width: 0;
+  line-height: 1.3;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .employee-table .row-actions {

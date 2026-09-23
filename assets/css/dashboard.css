@@ -634,7 +634,6 @@
 }
 .dash-page[data-theme="dark"] .dash-workspace-page :is(
   .employee-id,
-  .employee-name,
   .employee-card__identity strong,
   .employee-card__agency,
   .code,
