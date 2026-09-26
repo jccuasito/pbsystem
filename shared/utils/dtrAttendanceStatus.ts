@@ -20,7 +20,7 @@ type AttendanceStatusInput = {
   UndertimeHours?: unknown
 }
 
-const nonWorkStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Reliever'])
+const nonWorkStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
 const amount = (value: unknown) => Math.max(0, Number(value) || 0)
 const timestamp = (value: unknown) => value instanceof Date ? value.getTime() : new Date(String(value || '').replace(' ', 'T')).getTime()
 
@@ -43,7 +43,9 @@ export function automaticDtrAttendanceStatus(record: AttendanceStatusInput, regu
   // for classification when actual timestamps are unavailable.
   let worked = Math.max(0, credited - late - amount(record.UndertimeHours))
   const start = timestamp(record.TimeIn), end = timestamp(record.TimeOut)
-  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+  const hasActualTimes = Number.isFinite(start) && Number.isFinite(end) && end > start
+  if ((current === 'Late' || current === 'Half-Day') && !hasActualTimes && credited === 0 && late === 0 && amount(record.UndertimeHours) === 0) return current
+  if (hasActualTimes) {
     const actual = Math.max(0, (end - start) / 3600000 - amount(record.BreakHours))
     worked = credited > 0 ? Math.min(Math.max(0, credited - late), actual) : actual
   }

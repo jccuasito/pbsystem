@@ -36,7 +36,7 @@ async function main() {
           `SELECT AttendanceID
            FROM attendance
            WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate BETWEEN ? AND ?
-             AND AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever')
+             AND AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
            ORDER BY AttendanceDate DESC, AttendanceID DESC
            FOR UPDATE`,
           [

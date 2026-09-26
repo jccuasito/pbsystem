@@ -524,7 +524,7 @@ function latestDeploymentJoin() {
       SELECT * FROM (
         SELECT ed.*, ROW_NUMBER() OVER (PARTITION BY ed.EmployeeID ORDER BY ed.StartDate DESC, ed.DeploymentID DESC) AS rn
         FROM employee_deployment ed
-        WHERE ed.EndDate IS NULL OR ed.EndDate >= CURDATE()
+        WHERE ed.StartDate <= CURDATE() AND (ed.EndDate IS NULL OR ed.EndDate >= CURDATE())
       ) ranked
       WHERE ranked.rn = 1
     ) ld ON ld.EmployeeID = e.EmployeeID
@@ -648,7 +648,7 @@ function deploymentSql(filters: string[]) {
     '  a.AgencyName, p.PositionName, c.ClientID, c.ClientName, s.SiteName,',
     '  sc.ShiftCode, sc.ShiftName,',
     '  ed.DeploymentType, ed.IsPermanentSite, ed.StartDate, ed.EndDate,',
-    "  CASE WHEN ed.EndDate IS NULL OR ed.EndDate >= CURDATE() THEN 'Active' ELSE 'Ended' END AS Status,",
+    "  CASE WHEN ed.StartDate > CURDATE() THEN 'Scheduled' WHEN ed.EndDate IS NULL OR ed.EndDate >= CURDATE() THEN 'Active' ELSE 'Ended' END AS Status,",
     '  ed.ClientRateID, ed.SiteID, ed.SiteShiftID, ed.Remarks, ed.CreatedAt,',
     '  ap.AgencyPositionID, ap.AgencyID, ap.PositionID',
     'FROM employee_deployment ed',

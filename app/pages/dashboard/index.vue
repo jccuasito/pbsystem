@@ -5,6 +5,7 @@ import LogoutAlert from '../../../components/alertmessage/logoutalert.vue'
 import EmployeeListPage from '../employees/index.vue'
 import DeploymentHistoryPage from '../employees/deployment-history/index.vue'
 import EmployeeDocumentsPage from '../employees/documents/index.vue'
+import EmployeeStatusPage from '../employees/status/index.vue'
 import AgencyPage from '../organization/agency/index.vue'
 import PositionPage from '../organization/position/index.vue'
 import ClientPage from '../organization/client/index.vue'
@@ -29,13 +30,13 @@ const showLogoutAlert = ref(false)
 const loggingOut = ref(false)
 let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
-  | 'employees-list' | 'employees-deployments' | 'employees-documents'
+  | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
   | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-client'
   | 'deductions' | 'loans' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
-  'employees-list', 'employees-deployments', 'employees-documents',
+  'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
   'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-client',
@@ -143,6 +144,7 @@ const navGroups = [
     label: 'Employee Management', icon: 'user', key: 'employees',
     children: [
       { label: 'Employee List', to: '/employees', icon: 'user', view: 'employees-list' },
+      { label: 'Employee Status', to: '/employees/status', icon: 'clock', view: 'employees-status' },
       { label: 'Deployment History', to: '/employees/deployment-history', icon: 'chart-bar', view: 'employees-deployments' },
       { label: 'Employee Documents', to: '/employees/documents', icon: 'file-text', view: 'employees-documents' }
     ]
@@ -225,6 +227,7 @@ function returnToDashboard(updateUrl = true) {
 
 const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'employees-list': EmployeeListPage,
+  'employees-status': EmployeeStatusPage,
   'employees-deployments': DeploymentHistoryPage,
   'employees-documents': EmployeeDocumentsPage,
   'organization-agency': AgencyPage,

@@ -5,6 +5,7 @@ import { requireSession } from './auth'
 import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceStatus'
 import { assertDtrBtrReady } from './dtrBtrCrud'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/alertmessage/messages'
+import { attachPendingEmployeeStatuses } from './employeeStatusCrud.ts'
 
 type DtrBody = Record<string, unknown>
 
@@ -195,8 +196,8 @@ const ordinaryWorkedHourColumns = hourColumns.filter(column => ![...holidayHourC
 // Saved zero-hour placeholders (for example Absent, Rest Day, and Reliever)
 // belong in the audit trail, but are not days actually worked.
 const workedHourColumns = hourColumns.filter(column => !['LateHours', 'UndertimeHours', 'BreakHours'].includes(column))
-const attendanceStatuses = ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Holiday', 'Rest Day', 'Reliever'] as const
-const noWorkAttendanceStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Reliever'])
+const attendanceStatuses = ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Vacation Leave', 'Holiday', 'Rest Day', 'Reliever', 'Sick Leave'] as const
+const noWorkAttendanceStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
 
 function normalizeAttendanceStatus(value: unknown) {
   const status = String(value ?? '').trim()
@@ -206,7 +207,7 @@ function normalizeAttendanceStatus(value: unknown) {
 function workedAttendanceCondition(prefix = '') {
   const field = (column: string) => `${prefix}${column}`
   const paidTime = workedHourColumns.map(column => `COALESCE(${field(column)}, 0) > 0`).join(' OR ')
-  return `COALESCE(${field('AttendanceStatus')}, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever')
+  return `COALESCE(${field('AttendanceStatus')}, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
     AND (${paidTime} OR ${field('TimeIn')} IS NOT NULL OR ${field('TimeOut')} IS NOT NULL)`
 }
 
@@ -357,6 +358,7 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
       VALUES (?, ?, ?, ?, 1, ?)
       ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID)`, [batch.BatchID, employee.EmployeeID, employee.DeploymentID, employee.DeploymentType, createdBy])
   }
+  await attachPendingEmployeeStatuses(connection, batch, createdBy)
 }
 
 async function matchingDtrRate(connection: any, employeeId: number, batch: any) {
@@ -509,19 +511,19 @@ export async function listDtrRecords(event: any) {
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id)
-    await syncBatchHolidays(connection, batch, session.sub)
     await syncPermanentSiteEmployees(connection, batch, session.sub)
+    await syncBatchHolidays(connection, batch, session.sub)
     await syncAutomaticAttendanceStatuses(connection, batch)
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
     const [policy, [records], [shifts], [attendanceRows], [dutyRows], [workPositions]] = await Promise.all([sitePolicyForBatch(connection, batch), connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
-      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
+      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, ed.StartDate AS DeploymentStartDate, ed.EndDate AS DeploymentEndDate, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
       LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
-      WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, de.IsPermanentSite, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
+      WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, ed.StartDate, ed.EndDate, de.IsPermanentSite, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
       ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
         at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, at.WorkAgencyPositionID, at.WorkClientRateID, at.WorkPositionName, at.WorkPayrollRegularRate, at.WorkBillingRegularRate, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,

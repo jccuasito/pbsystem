@@ -70,6 +70,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/dtrBtrCrud.ts`
   - `server/utils/dtrCrud.ts`
+  - `server/utils/employeeStatusCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
@@ -132,6 +133,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/employees/deployment-history/index.vue`
   - `app/pages/employees/documents/index.vue`
   - `app/pages/employees/index.vue`
+  - `app/pages/employees/status/index.vue`
   - `app/pages/organization/agency/index.vue`
   - `app/pages/organization/client/index.vue`
   - `app/pages/organization/position/index.vue`
@@ -196,6 +198,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `PUT /api/employees/documents` → `server/api/employees/documents.put.ts`
   - `POST /api/employees/duplicates` → `server/api/employees/duplicates.post.ts`
   - `POST /api/employees/site-shifts` → `server/api/employees/site-shifts.post.ts`
+  - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
+  - `POST /api/employees/status/attendance` → `server/api/employees/status/attendance.post.ts`
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
   - `POST /api/organization/[param]` → `server/api/organization/[resource].post.ts`
@@ -224,6 +228,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/dtrBtrCrud.ts`
   - `server/utils/dtrCrud.ts`
   - `server/utils/employeeCrud.ts`
+  - `server/utils/employeeStatusCrud.ts`
   - `server/utils/holidayCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
@@ -310,6 +315,26 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
+  - `server/utils/jwt.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/employees/status`
+
+- Page: `app/pages/employees/status/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
+- Related frontend files:
+  - `app/composables/useRealtimeRefresh.ts`
+  - `components/alertmessage/messages.ts`
+  - `components/alertmessage/SystemAlert.vue`
+- API calls and handlers:
+  - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
+  - `POST /api/employees/status/attendance` → `server/api/employees/status/attendance.post.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/employeeStatusCrud.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - None detected.

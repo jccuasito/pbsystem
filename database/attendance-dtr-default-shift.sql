@@ -12,7 +12,7 @@ SET de.DefaultShiftCodeID = (
   FROM attendance at
   WHERE at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
     AND at.ShiftCodeID IS NOT NULL
-    AND at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever')
+    AND at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
   GROUP BY at.ShiftCodeID
   ORDER BY COUNT(*) DESC, at.ShiftCodeID
   LIMIT 1
@@ -21,5 +21,5 @@ WHERE EXISTS (
   SELECT 1 FROM attendance at
   WHERE at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
     AND at.ShiftCodeID IS NOT NULL
-    AND at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever')
+    AND at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
 );

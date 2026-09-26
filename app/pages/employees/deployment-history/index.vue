@@ -167,6 +167,7 @@ function historyStatus(item: any, history: any[]) {
   // current agency differs from this permanent deployment, show the real
   // employment movement without treating the DTR row itself as a transfer.
   if (item.CurrentEmployeeAgencyID && String(item.CurrentEmployeeAgencyID) !== String(item.AgencyID)) return 'Transferred'
+  if (item.Status === 'Scheduled') return 'Scheduled'
   if (item.Status === 'Active') return 'Active'
   const newer = history.find((candidate: any) => String(candidate.StartDate) > String(item.StartDate))
   return newer && (newer.AgencyID !== item.AgencyID || newer.ClientRateID !== item.ClientRateID || newer.SiteID !== item.SiteID) ? 'Transferred' : 'Ended'
