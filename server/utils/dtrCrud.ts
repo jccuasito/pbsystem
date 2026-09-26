@@ -5,7 +5,7 @@ import { requireSession } from './auth'
 import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceStatus'
 import { assertDtrBtrReady } from './dtrBtrCrud'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/alertmessage/messages'
-import { attachPendingEmployeeStatuses } from './employeeStatusCrud.ts'
+import { attachPendingEmployeeStatuses, employeeStatusAttendanceStatuses } from './employeeStatusCrud.ts'
 
 type DtrBody = Record<string, unknown>
 
@@ -96,7 +96,8 @@ export async function listDtrs(event: any) {
   const sql = `SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName, d.SiteID, s.SiteName, d.PeriodStart, d.PeriodEnd, d.Status, d.CreatedAt,
     MAX(CASE WHEN a.LogoData IS NULL THEN 0 ELSE 1 END) AS AgencyHasLogo,
     MAX(CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END) AS SiteHasLogo,
-    COUNT(DISTINCT at.EmployeeID) AS PeopleCount, COALESCE(SUM(at.RegularHours), 0) AS RegularHours, COALESCE(SUM(at.OTHours), 0) AS OTHours, COALESCE(SUM(at.NightDiffHours), 0) AS NightDiffHours
+    (SELECT COUNT(*) FROM attendance_dtr_employee roster WHERE roster.BatchID = d.BatchID) AS PeopleCount,
+    COALESCE(SUM(at.RegularHours), 0) AS RegularHours, COALESCE(SUM(at.OTHours), 0) AS OTHours, COALESCE(SUM(at.NightDiffHours), 0) AS NightDiffHours
     FROM attendance_dtr d INNER JOIN agency a ON a.AgencyID = d.AgencyID INNER JOIN client c ON c.ClientID = d.ClientID INNER JOIN site s ON s.SiteID = d.SiteID
     LEFT JOIN attendance at ON at.BatchID = d.BatchID ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
     GROUP BY d.BatchID ORDER BY d.PeriodStart DESC, d.BatchID DESC`
@@ -181,7 +182,9 @@ export async function computeDtr(event: any) {
 export async function dtrSummary(event: any) {
   const session = requireSession(event); void session.sub
   const id = batchId(event)
-  const [[summary]] = await pool.execute<any[]>(`SELECT d.BatchID, d.Status, COUNT(DISTINCT at.EmployeeID) AS PeopleCount, COUNT(at.AttendanceID) AS AttendanceCount,
+  const [[summary]] = await pool.execute<any[]>(`SELECT d.BatchID, d.Status,
+    (SELECT COUNT(*) FROM attendance_dtr_employee roster WHERE roster.BatchID = d.BatchID) AS PeopleCount,
+    COUNT(at.AttendanceID) AS AttendanceCount,
     COALESCE(SUM(at.RegularHours), 0) AS RegularHours, COALESCE(SUM(at.OTHours), 0) AS OTHours, COALESCE(SUM(at.NightDiffHours), 0) AS NightDiffHours
     FROM attendance_dtr d LEFT JOIN attendance at ON at.BatchID = d.BatchID WHERE d.BatchID = ? GROUP BY d.BatchID`, [id])
   if (!summary) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
@@ -198,6 +201,7 @@ const ordinaryWorkedHourColumns = hourColumns.filter(column => ![...holidayHourC
 const workedHourColumns = hourColumns.filter(column => !['LateHours', 'UndertimeHours', 'BreakHours'].includes(column))
 const attendanceStatuses = ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Vacation Leave', 'Holiday', 'Rest Day', 'Reliever', 'Sick Leave'] as const
 const noWorkAttendanceStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
+const employeeStatusLeaveStatuses = new Set<string>(employeeStatusAttendanceStatuses)
 
 function normalizeAttendanceStatus(value: unknown) {
   const status = String(value ?? '').trim()
@@ -865,11 +869,12 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
     if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     if (!shift.TimeIn || !shift.TimeOut) throw createError({ statusCode: 400, statusMessage: 'A Flexible shift without default times cannot be applied to every cutoff day. Import or enter its biometric times per duty instead.' })
+    await attachPendingEmployeeStatuses(connection, batch, session.sub)
     const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, periodStart, periodEnd])
     const currentByDate = new Map(currentRows.map(row => [databaseDate(row.AttendanceDate), row]))
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd))
-    let changed = 0
+    let changed = 0, preservedEmployeeStatusDays = 0
     for (const attendanceDate of cutoffDates(periodStart, periodEnd)) {
       const shiftTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
       const shiftTimeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
@@ -879,6 +884,10 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
       const workdayCount = holiday.holidayId ? 1 : Number(shift.WorkdayCount || 1)
       const current = currentByDate.get(attendanceDate)
       if (current && current.BatchID !== null && Number(current.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR on ' + attendanceDate + '.' })
+      if (current && employeeStatusLeaveStatuses.has(normalizeAttendanceStatus(current.AttendanceStatus))) {
+        preservedEmployeeStatusDays++
+        continue
+      }
       if (current) {
         // Legacy/unbatched attendance belongs to no DTR yet, so adopt it into this cutoff.
         // Only entries already belonging to this DTR are preserved by the blank-days option.
@@ -896,7 +905,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     await syncBatchHolidays(connection, batch, session.sub)
     const wdoCount = await syncAutoWdo(connection, batch, employeeId)
     await connection.commit()
-    return { success: true, changed, onlyEmpty, wdoCount }
+    return { success: true, changed, preservedEmployeeStatusDays, onlyEmpty, wdoCount }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 

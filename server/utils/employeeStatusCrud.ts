@@ -2,7 +2,8 @@ import { createError, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 
-const attendanceStatuses = ['On-Leave', 'Vacation Leave', 'Sick Leave'] as const
+export const employeeStatusAttendanceStatuses = ['On-Leave', 'Vacation Leave', 'Sick Leave'] as const
+const attendanceStatuses = employeeStatusAttendanceStatuses
 const noWorkStatuses = new Set(attendanceStatuses)
 const hourColumns = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours', 'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours', 'LateHours', 'UndertimeHours', 'BreakHours'] as const
 

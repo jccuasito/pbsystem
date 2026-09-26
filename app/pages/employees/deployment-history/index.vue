@@ -273,14 +273,14 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
             <h2>{{ formatEmployeeName(selectedEmployee) }}</h2>
             <span class="employee-id">{{ formatEmployeeId(selectedEmployee.EmployeeID) }} · {{ formatEmployeeNumber(selectedEmployee.EmployeeNumber) }}</span>
           </header>
-          <h3>Permanent deployment history</h3>
+          <h3>Fixed deployment history</h3>
           <div class="timeline">
             <article v-for="item in selectedEmployee.history" :key="item.DeploymentID" class="timeline-item">
               <div class="timeline-head"><strong>{{ display(item.ClientName) }} · {{ display(item.SiteName) }}</strong><span class="status">{{ historyStatus(item, selectedEmployee.history) }}</span></div>
               <div class="history-card-meta">
                 <span><small>Agency / position</small>{{ display(item.AgencyName) }} · {{ display(item.PositionName) }}</span>
                 <span><small>Deployment type</small><span class="type" :class="`type--${String(item.DeploymentType || '').toLowerCase()}`">{{ display(item.DeploymentType) }}</span></span>
-                <span><small>Site status</small><span class="site-status" :class="Number(item.IsPermanentSite)===1?'site-status--permanent':'site-status--cutoff'">{{ Number(item.IsPermanentSite)===1?'Permanent':'Cutoff-only' }}</span></span>
+                <span><small>Site status</small><span class="site-status" :class="Number(item.IsPermanentSite)===1?'site-status--permanent':'site-status--cutoff'">{{ Number(item.IsPermanentSite)===1?'Fixed':'Cutoff-only' }}</span></span>
                 <span><small>Shift</small>{{ shiftDisplay(item) }}</span>
               </div>
               <p class="deployment-period"><span>Deployment period</span><strong>{{ deploymentPeriod(item.StartDate, item.EndDate) }}</strong></p>
@@ -294,7 +294,7 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
               <div class="timeline-head"><strong>{{ entry.ClientName }} · {{ entry.SiteName }}</strong><span class="type" :class="`type--${String(entry.AttendanceType).toLowerCase()}`">{{ entry.AttendanceType }}</span></div>
               <div class="history-card-meta">
                 <span><small>Agency / position</small>{{ entry.AgencyName }} · {{ display(entry.PositionName) }}</span>
-                <span><small>Site status</small><span class="site-status" :class="Number(entry.IsPermanentSite)===1?'site-status--permanent':'site-status--cutoff'">{{ Number(entry.IsPermanentSite)===1?'Permanent':'Cutoff-only' }}</span></span>
+                <span><small>Site status</small><span class="site-status" :class="Number(entry.IsPermanentSite)===1?'site-status--permanent':'site-status--cutoff'">{{ Number(entry.IsPermanentSite)===1?'Fixed':'Cutoff-only' }}</span></span>
                 <span><small>Cutoff</small>{{ cutoffLabel(entry.PeriodStart, entry.PeriodEnd) }}</span>
                 <span><small>DTR status</small>{{ entry.DtrStatus }}</span>
               </div>
