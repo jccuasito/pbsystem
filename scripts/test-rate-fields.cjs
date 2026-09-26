@@ -100,9 +100,10 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
   await connection.beginTransaction()
   try {
     const [[position]] = await connection.execute("SELECT AgencyPositionID FROM agency_position WHERE Status='Active' LIMIT 1")
-    const [[client]] = await connection.execute("SELECT ClientID, RegionID FROM client WHERE Status='Active' AND RegionID IS NOT NULL LIMIT 1")
-    assert.ok(position && client, 'An active agency position and a client with a region are needed')
-    const [siteResult] = await connection.execute("INSERT INTO site (ClientID, RegionID, SiteName, Status) VALUES (?, ?, ?, 'Active')", [client.ClientID, client.RegionID, `RATE TEST ${Date.now()}`])
+    const [[client]] = await connection.execute("SELECT ClientID FROM client WHERE Status='Active' LIMIT 1")
+    const [[region]] = await connection.execute("SELECT RegionID FROM region WHERE Status='Active' LIMIT 1")
+    assert.ok(position && client && region, 'An active agency position, client, and site region are needed')
+    const [siteResult] = await connection.execute("INSERT INTO site (ClientID, RegionID, SiteName, Status) VALUES (?, ?, ?, 'Active')", [client.ClientID, region.RegionID, `RATE TEST ${Date.now()}`])
     const wrapped = { execute: (...args) => connection.execute(...args),
       beginTransaction: () => connection.query('SAVEPOINT rate_test'), commit: () => connection.query('RELEASE SAVEPOINT rate_test'),
       rollback: () => connection.query('ROLLBACK TO SAVEPOINT rate_test'), release() {} }

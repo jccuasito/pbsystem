@@ -397,6 +397,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
@@ -418,6 +419,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
@@ -459,6 +461,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
@@ -480,6 +483,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
