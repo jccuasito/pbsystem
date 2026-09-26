@@ -147,16 +147,18 @@ export async function updateDtr(event: any) {
 }
 
 export async function deleteDtr(event: any) {
-  const session = requireSession(event); void session.sub
+  const session = requireSession(event)
   const id = batchId(event); const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
     const [[current]] = await connection.execute<any[]>('SELECT Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
     if (current.Status !== 'Draft') throw createError({ statusCode: 409, statusMessage: 'Only Draft DTRs can be deleted.' })
+    const [preservedResult] = await connection.execute<any>(`UPDATE attendance SET BatchID = NULL, UpdatedBy = ?
+      WHERE BatchID = ? AND AttendanceStatus IN (${employeeStatusAttendanceStatuses.map(() => '?').join(', ')})`, [session.sub, id, ...employeeStatusAttendanceStatuses])
     const [attendanceResult] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ?', [id])
     await connection.execute<any>('DELETE FROM attendance_dtr WHERE BatchID = ?', [id])
-    await connection.commit(); return { success: true, deleted: true, deletedAttendanceRows: attendanceResult.affectedRows }
+    await connection.commit(); return { success: true, deleted: true, deletedAttendanceRows: attendanceResult.affectedRows, preservedEmployeeStatusDays: preservedResult.affectedRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -210,6 +212,10 @@ const employeeStatusLeaveStatuses = new Set<string>(employeeStatusAttendanceStat
 function normalizeAttendanceStatus(value: unknown) {
   const status = String(value ?? '').trim()
   return (attendanceStatuses as readonly string[]).includes(status) ? status : 'Present'
+}
+
+function isEmployeeStatusLeave(value: unknown) {
+  return employeeStatusLeaveStatuses.has(normalizeAttendanceStatus(value))
 }
 
 function workedAttendanceCondition(prefix = '') {
@@ -521,6 +527,7 @@ export async function listDtrRecords(event: any) {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id)
     await syncPermanentSiteEmployees(connection, batch, session.sub)
+    await attachPendingEmployeeStatuses(connection, batch, session.sub)
     await syncBatchHolidays(connection, batch, session.sub)
     await syncAutomaticAttendanceStatuses(connection, batch)
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
@@ -645,7 +652,7 @@ export async function addDtrEmployee(event: any) {
 }
 
 export async function removeDtrEmployee(event: any) {
-  const session = requireSession(event); void session.sub
+  const session = requireSession(event)
   const id = batchId(event), body = await readBody<{ EmployeeID?: unknown }>(event) || {}
   const employeeId = positiveId(body.EmployeeID, 'Employee')
   const connection = await pool.getConnection()
@@ -657,13 +664,15 @@ export async function removeDtrEmployee(event: any) {
       [id, employeeId],
     )
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
-    const [attendanceResult] = await connection.execute<any>(
-      'DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?',
-      [id, employeeId],
+    const [preservedResult] = await connection.execute<any>(
+      `UPDATE attendance SET BatchID = NULL, UpdatedBy = ?
+       WHERE BatchID = ? AND EmployeeID = ? AND AttendanceStatus IN (${employeeStatusAttendanceStatuses.map(() => '?').join(', ')})`,
+      [session.sub, id, employeeId, ...employeeStatusAttendanceStatuses],
     )
+    const [attendanceResult] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     await connection.execute('DELETE FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     await connection.commit()
-    return { success: true, deletedAttendanceRows: attendanceResult.affectedRows }
+    return { success: true, deletedAttendanceRows: attendanceResult.affectedRows, preservedEmployeeStatusDays: preservedResult.affectedRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -891,7 +900,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
       const workdayCount = holiday.holidayId ? 1 : Number(shift.WorkdayCount || 1)
       const current = currentByDate.get(attendanceDate)
       if (current && current.BatchID !== null && Number(current.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR on ' + attendanceDate + '.' })
-      if (current && employeeStatusLeaveStatuses.has(normalizeAttendanceStatus(current.AttendanceStatus))) {
+      if (current && isEmployeeStatusLeave(current.AttendanceStatus)) {
         preservedEmployeeStatusDays++
         continue
       }
@@ -929,13 +938,19 @@ async function resetDtrAttendanceBatchBody(event: any, body: { EmployeeID?: unkn
       [id, employeeId],
     )
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
+    const [[preserved]] = await connection.execute<any[]>(
+      `SELECT COUNT(*) AS PreservedCount FROM attendance
+       WHERE BatchID = ? AND EmployeeID = ? AND AttendanceStatus IN (${employeeStatusAttendanceStatuses.map(() => '?').join(', ')}) FOR UPDATE`,
+      [id, employeeId, ...employeeStatusAttendanceStatuses],
+    )
     const [attendanceResult] = await connection.execute<any>(
-      'DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?',
-      [id, employeeId],
+      `DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?
+       AND AttendanceStatus NOT IN (${employeeStatusAttendanceStatuses.map(() => '?').join(', ')})`,
+      [id, employeeId, ...employeeStatusAttendanceStatuses],
     )
     await connection.execute('UPDATE attendance_dtr_employee SET DefaultShiftCodeID = NULL WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     await connection.commit()
-    return { success: true, deletedAttendanceRows: attendanceResult.affectedRows }
+    return { success: true, deletedAttendanceRows: attendanceResult.affectedRows, preservedEmployeeStatusDays: Number(preserved?.PreservedCount || 0) }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -948,6 +963,8 @@ async function clearDtrAttendanceBody(event: any, body: { EmployeeID?: unknown, 
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
     const [[enrollment]] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
+    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, AttendanceStatus FROM attendance WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [id, employeeId, attendanceDate])
+    if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved leave cannot be cleared from the DTR. Update it from Employee Status.' })
     const [result] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate = ?', [id, employeeId, attendanceDate])
     await syncBatchHolidays(connection, batch, session.sub)
     const wdoCount = await syncAutoWdo(connection, batch, employeeId)
@@ -1139,6 +1156,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
     const policy = await sitePolicyForBatch(connection, batch)
     const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
+    await attachPendingEmployeeStatuses(connection, batch, session.sub)
     const [[enrollments], [shiftRows]] = await Promise.all([
       connection.execute<any[]>(`SELECT de.EmployeeID, de.DeploymentID, de.AttendanceType, e.EmployeeNumber
         FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
@@ -1151,6 +1169,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
     const shiftByCode = new Map(shiftRows.map((row: any) => [importKey(row.ShiftCode), row]))
     const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd))
     const clearedDutyAttendanceIds = new Set<number>(), affectedEmployeeIds = new Set<number>()
+    const preservedEmployeeStatusDates = new Set<string>()
     const issues: { row: number; reason: string }[] = []
     let imported = 0, updated = 0, skipped = 0, blank = 0, cleared = 0
     for (let index = 0; index < sourceRows.length; index++) {
@@ -1167,18 +1186,23 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       if (!enrollment) { skip('Employee ID / Employee No. is not in this DTR.'); continue }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
       if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
+      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
+      if (existing && existing.BatchID !== null && Number(existing.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
+      if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) {
+        preservedEmployeeStatusDates.add(`${enrollment.EmployeeID}:${attendanceDate}`)
+        skip(`HR-approved ${normalizeAttendanceStatus(existing.AttendanceStatus)} was preserved; the Excel row was not applied.`)
+        continue
+      }
       const attendanceStatus = normalizeAttendanceStatus(source.AttendanceStatus), noWorkStatus = noWorkAttendanceStatuses.has(attendanceStatus)
       const importedTimeIn = importText(source.TimeIn), importedTimeOut = importText(source.TimeOut)
       // A shift code in the source is only a label.  Without both biometric
       // timestamps, this employee did not work that row and the DTR stays blank.
       if (!importedTimeIn || !importedTimeOut) {
         blank++
-        const [[existingBlank]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
-        if (existingBlank && existingBlank.BatchID !== null && Number(existingBlank.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
-        const existingAttendanceId = Number(existingBlank?.AttendanceID || 0)
+        const existingAttendanceId = Number(existing?.AttendanceID || 0)
         // Do not remove a valid earlier duty for the same employee/date when a
         // second spreadsheet row is merely blank (for example, empty augmentation).
-        if (existingAttendanceId && Number(existingBlank.BatchID) === id && !clearedDutyAttendanceIds.has(existingAttendanceId)) {
+        if (existingAttendanceId && Number(existing.BatchID) === id && !clearedDutyAttendanceIds.has(existingAttendanceId)) {
           await connection.execute('DELETE FROM attendance WHERE AttendanceID = ?', [existingAttendanceId])
           affectedEmployeeIds.add(Number(enrollment.EmployeeID)); cleared++
         }
@@ -1194,8 +1218,6 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       } catch { skip('Date in/time in or date out/time out is invalid.'); continue }
       if (!noWorkStatus && (!timeIn || !timeOut)) { skip('Time in and time out are required for this shift.'); continue }
       if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) { skip('Time out must be after time in.'); continue }
-      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
-      if (existing && existing.BatchID !== null && Number(existing.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
       let attendanceId = Number(existing?.AttendanceID || 0)
       if (!attendanceId) {
         const [result] = await connection.execute<any>(`INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${hourColumns.join(', ')}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, 1, ?, ?, NULL, NULL, ${hourColumns.map(() => '?').join(', ')}, NULL, ?, ?, 1, ?)`, [enrollment.EmployeeID, enrollment.DeploymentID, null, id, attendanceDate, ...hourColumns.map(() => 0), attendanceStatus, enrollment.AttendanceType, session.sub])
@@ -1232,7 +1254,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
     await syncBatchHolidays(connection, batch, session.sub)
     for (const employeeId of affectedEmployeeIds) await syncAutoWdo(connection, batch, employeeId)
     await connection.commit()
-    return { success: true, imported, updated, skipped, blank, cleared, issues }
+    return { success: true, imported, updated, skipped, blank, cleared, preservedEmployeeStatusDays: preservedEmployeeStatusDates.size, issues }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -1319,8 +1341,9 @@ export async function createDtrAttendance(event: any) {
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
-    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
+    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
     if (existing && Number(existing.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR for this date.' })
+    if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved leave cannot be changed from the DTR. Update it from Employee Status.' })
     // Attendance edits and reapplying the same position must retain the original
     // snapshot, including after the site's override setting has been disabled.
     const preserveWorkPosition = !noWorkStatus && existing && (body.WorkAgencyPositionID === undefined || (requestedWorkAgencyPositionId !== null && requestedWorkAgencyPositionId === Number(existing.WorkAgencyPositionID)))
