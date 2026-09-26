@@ -8,7 +8,7 @@ export const EMPLOYEE_SIMILAR = 'EMPLOYEE_SIMILAR'
 export const alertMessages = {
   deploymentPositionMismatch: (): AlertMessage => ({
     title: 'Position does not match',
-    message: 'Select a client rate matching the agency and position saved in Employee List. Refresh the form if the employee position was recently changed.',
+    message: 'Select a site rate matching the agency and position saved in Employee List. Refresh the form if the employee position was recently changed.',
     tone: 'error',
   }),
   deploymentAlreadyExists: (name = 'This employee', existingDeployment = ''): AlertMessage => ({

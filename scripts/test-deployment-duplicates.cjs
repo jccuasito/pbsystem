@@ -28,14 +28,14 @@ test('deployment form shows shared alert for local conflict and stale-server con
   const state = scope.run(() => evaluate(source+'\nmodule.exports={openNewDeployment,items,form,save,deploymentAlert,modalOpen,busy};', {
     require: name => name === 'vue' ? {...vue,onMounted(){}} : name.includes('useRealtimeRefresh') ? {useRealtimeRefresh(){}} : name.includes('utils/employee') ? identities : name.includes('alertmessage/messages') ? messages : name.includes('utils/deployment') ? helpers : {},
     $fetch: async (url, options) => {
-      if (options?.method === 'POST') { posts++; if(stale) throw {data:{data:{code:messages.DEPLOYMENT_ALREADY_EXISTS,existingDeployment:{DeploymentID:18,ClientRateID:1,SiteID:1,StartDate:'2026-09-01',EndDate:null}}}}; return {success:true} }
-      return {employees:[{EmployeeID:7,AgencyID:3,AgencyPositionID:3,EmployeeName:'Ian'}], clientRates:[{ClientRateID:1,AgencyID:3,AgencyPositionID:3,ClientID:1}],sites:[{SiteID:1,ClientID:1}],agencyShiftCodes:[{ShiftCodeID:7,AgencyID:3}]}
+      if (options?.method === 'POST') { posts++; if(stale) throw {data:{data:{code:messages.DEPLOYMENT_ALREADY_EXISTS,existingDeployment:{DeploymentID:18,SiteRateID:1,SiteID:1,StartDate:'2026-09-01',EndDate:null}}}}; return {success:true} }
+      return {employees:[{EmployeeID:7,AgencyID:3,AgencyPositionID:3,EmployeeName:'Ian'}], siteRates:[{SiteRateID:1,AgencyID:3,AgencyPositionID:3,ClientID:1,SiteID:1}],sites:[{SiteID:1,ClientID:1}],agencyShiftCodes:[{ShiftCodeID:7,AgencyID:3}]}
     },
   }))
   try {
     await state.openNewDeployment()
-    Object.assign(state.form.value,{EmployeeID:'7',ClientRateID:'1',SiteID:'1',ShiftCodeID:'7',StartDate:'2026-09-19'})
-    state.items.value=[{EmployeeID:7,IsPermanentSite:1,ClientRateID:1,SiteID:1,ClientName:'Samsung',SiteName:'Samsung Davao',StartDate:'2026-09-01',EndDate:null}]
+    Object.assign(state.form.value,{EmployeeID:'7',SiteRateID:'1',SiteID:'1',ShiftCodeID:'7',StartDate:'2026-09-19'})
+    state.items.value=[{EmployeeID:7,IsPermanentSite:1,SiteRateID:1,SiteID:1,ClientName:'Samsung',SiteName:'Samsung Davao',StartDate:'2026-09-01',EndDate:null}]
     await state.save(); assert.equal(posts,0); assert.equal(state.deploymentAlert.value.title,'Employee already deployed'); assert.match(state.deploymentAlert.value.message,/Samsung — Samsung Davao/); assert.match(state.deploymentAlert.value.message,/Sep 1, 2026 – Ongoing/); assert.equal(state.modalOpen.value,true)
     state.items.value=[]; stale=true; state.deploymentAlert.value=null
     await state.save(); assert.equal(posts,1); assert.equal(state.deploymentAlert.value.title,'Employee already deployed'); assert.match(state.deploymentAlert.value.message,/Sep 1, 2026 – Ongoing/); assert.equal(state.modalOpen.value,true); assert.equal(state.busy.value,false)

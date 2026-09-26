@@ -66,7 +66,7 @@ Rules:
 |---|---|---|---|
 | 1 | Auth check + Dashboard shell | `user`, `department`, `user_history` | `dashboard/index.vue` (currentUser, stats cards) |
 | 2 | Organization | `agency`, `agency_position`, `position`, `client`, `client_policy`, `site`, `site_policy`, `site_shift`, `region`, `shift_code` | `organization/agency`, `position`, `client`, `site` |
-| 3 | Rates | `payroll_rate`, `billing_rate`, `client_rate` | `rates/payroll`, `rates/billing` |
+| 3 | Rates | `payroll_rate`, `billing_rate`, `site_rate` | `rates/payroll`, `rates/billing`, `rates/site` |
 | 4 | Employee & Deployment | `employee`, `employee_profile`, `government`, `education`, `license`, `training`, `clearance`, `bank`, `insurance`, `employee_deployment`, `employee_agency_history` | `employees` (list), `employees/deployment-history`, `employees/documents` |
 | 5 | Attendance & Holiday | `attendance`, `holiday`, view `vw_effective_site_policy`, `sp_dtr_summary` | `attendance` page |
 | 6 | Payroll, Deductions, Loans, 13th Month | `payroll`, `payroll_detail`, `payroll_deduction`, `deduction_type`, `employee_deduction`, `loan_type`, `employee_loan`, `thirteenth_month_pay`, `sp_compute_13th_month` | `payroll/processing`, `payroll/payslip`, `payroll/history`, `deductions-loans/*` |
@@ -136,14 +136,15 @@ Wag mo pang galawin ang employee/deployment/attendance/payroll — Phase 3+ pa y
 
 ---
 
-## PHASE 3 — Rates (Payroll Rate, Billing Rate, Client Rate)
+## PHASE 3 — Rates (Payroll Rate, Billing Rate, Site Rate)
 
 ```
 Context: Master context applies.
 
 1. CRUD endpoints para sa payroll_rate, billing_rate (parehong may AgencyPositionID +
-   RegionID), at client_rate (nag-link ng ClientID sa isang PayrollRateID + BillingRateID pair).
-2. Sa client_rate creation form, dapat dropdown ang AgencyPosition (agency + position combo)
+   RegionID), at site_rate (nag-link ng SiteID sa isang PayrollRateID + BillingRateID pair).
+   Ang ClientID ay kukunin sa site para iisang source lang ang ownership at billing client.
+2. Sa site_rate creation form, dapat dropdown ang Site at AgencyPosition (agency + position combo)
    at makikita ang existing payroll_rate/billing_rate para dun sa AgencyPositionID, o pwede
    silang gumawa ng bago inline.
 3. I-wire ang app/pages/rates/payroll at rates/billing.
@@ -206,7 +207,7 @@ Context: Master context applies.
 Context: Master context applies.
 
 1. Payroll processing endpoint: kukunin ang attendance rows sa loob ng StartDate-EndDate ng
-   isang deployment, i-multiply sa applicable payroll_rate (via ClientRateID chain), gagawa ng
+   isang deployment, i-multiply sa applicable payroll_rate (via SiteRateID chain), gagawa ng
    payroll + payroll_detail rows (isa-isang line item: Basic Pay, OT, ND, Holiday, atbp.).
 2. Deduction endpoints: employee_deduction CRUD, at payroll_deduction na naka-link sa
    deduction_type (ReferenceType/ReferenceID pattern para ma-trace kung saan galing —
@@ -226,7 +227,7 @@ Context: Master context applies.
 Context: Master context applies.
 
 1. Billing generation endpoint: base sa mga Approved/Released payroll ng isang client sa loob
-   ng isang period, gamitin ang billing_rate (via ClientRateID) para bumuo ng billing +
+   ng isang period, gamitin ang billing_rate (via SiteRateID) para bumuo ng billing +
    billing_detail rows (isang row per employee per site — tandaan, SiteID snapshot sa
    billing_detail para hindi apektado kapag nagbago ng deployment).
 2. I-wire ang billing/generate, billing/history.

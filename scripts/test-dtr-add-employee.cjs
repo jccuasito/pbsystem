@@ -27,7 +27,7 @@ function backend({ enrolled = false, insertConflict = false } = {}) {
       calls.push({ sql, args })
       if (sql.includes('FROM attendance_dtr WHERE')) return [[{ BatchID: args[0], AgencyID: 1, ClientID: 1, SiteID: 1, PeriodStart: '2026-08-16', PeriodEnd: '2026-08-31', Status: 'Draft' }]]
       if (sql.startsWith('SELECT EmployeeID FROM attendance_dtr_employee')) return [enrollments.has(args.join(':')) ? [{ EmployeeID: args[1] }] : []]
-      if (sql.includes('SELECT cr.ClientRateID')) return [[{ ClientRateID: 1 }]]
+      if (sql.includes('SELECT sr.SiteRateID')) return [[{ SiteRateID: 1 }]]
       if (sql.startsWith('SELECT DeploymentID FROM employee_deployment')) return [[{ DeploymentID: 30 }]]
       if (sql.startsWith('INSERT INTO attendance_dtr_employee')) {
         if (insertConflict || enrollments.has(args.slice(0, 2).join(':'))) throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' })
@@ -130,12 +130,12 @@ test('rapid double-click sends one request and reports success after save', asyn
 })
 
 test('failed save keeps candidate available and displays error, not success', async () => {
-  const h = frontend(async () => { throw { data: { statusMessage: 'No matching client rate.' } } })
+  const h = frontend(async () => { throw { data: { statusMessage: 'No matching site rate.' } } })
   try {
     const employee = { EmployeeID: 2, EmployeeName: 'John' }
     await h.state.addEmployee(employee)
     assert.equal(h.state.employeeAlreadyAdded(employee), false)
-    assert.equal(h.state.employeeAlert.value.message, 'No matching client rate.')
+    assert.equal(h.state.employeeAlert.value.message, 'No matching site rate.')
     assert.equal(h.state.employeeAlert.value.tone, 'error')
     assert.equal(h.state.saving.value, false)
   } finally { h.close() }

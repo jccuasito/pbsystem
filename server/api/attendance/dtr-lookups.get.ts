@@ -16,12 +16,13 @@ export default defineEventHandler(async (event) => {
     pool.execute<any[]>("SELECT AgencyID, AgencyName FROM agency WHERE Status = 'Active' ORDER BY AgencyName"),
     pool.execute<any[]>(
       `SELECT DISTINCT c.ClientID, c.ClientName
-       FROM client_rate cr
-       INNER JOIN client c ON c.ClientID = cr.ClientID
-       INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+       FROM site_rate sr
+       INNER JOIN site s ON s.SiteID = sr.SiteID
+       INNER JOIN client c ON c.ClientID = s.ClientID
+       INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
        INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
        INNER JOIN agency a ON a.AgencyID = ap.AgencyID
-       WHERE cr.Status = 'Active' AND c.Status = 'Active' AND pr.Status = 'Active'
+       WHERE sr.Status = 'Active' AND s.Status = 'Active' AND c.Status = 'Active' AND pr.Status = 'Active'
          AND ap.Status = 'Active' AND a.Status = 'Active'
          ${agencyId ? 'AND a.AgencyID = ?' : ''}
        ORDER BY c.ClientName`,

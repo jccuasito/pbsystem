@@ -46,16 +46,18 @@ function wholeMinutes(value: unknown, label: string) {
 }
 
 async function validateAssignment(connection: any, agencyId: number, clientId: number, siteId: number) {
-  const [[clientRate]] = await connection.execute<any[]>(
-    `SELECT cr.ClientRateID
-     FROM client_rate cr
-     INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+  const [[siteRate]] = await connection.execute<any[]>(
+    `SELECT sr.SiteRateID
+     FROM site_rate sr
+     INNER JOIN site s ON s.SiteID = sr.SiteID
+     INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
      INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-     WHERE ap.AgencyID = ? AND cr.ClientID = ? AND cr.Status = 'Active' AND pr.Status = 'Active'
-     LIMIT 1`,
-    [agencyId, clientId]
+     WHERE ap.AgencyID = ? AND s.ClientID = ? AND sr.SiteID = ?
+       AND sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active'
+     ORDER BY sr.SiteRateID DESC LIMIT 1`,
+    [agencyId, clientId, siteId]
   )
-  if (!clientRate) throw createError({ statusCode: 400, statusMessage: 'This client has no active rate under the selected agency.' })
+  if (!siteRate) throw createError({ statusCode: 400, statusMessage: 'This site has no active rate under the selected agency.' })
   const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1', [siteId, clientId])
   if (!site) throw createError({ statusCode: 400, statusMessage: 'Select an active site belonging to the selected client.' })
 }
@@ -69,11 +71,13 @@ async function ensureUniqueBatch(connection: any, agencyId: number, siteId: numb
 async function lookups() {
   const [agencies, clients, sites] = await Promise.all([
     pool.execute<any[]>("SELECT AgencyID, AgencyName FROM agency WHERE Status = 'Active' ORDER BY AgencyName").then(([rows]) => rows),
-    pool.execute<any[]>(`SELECT DISTINCT ap.AgencyID, cr.ClientID, c.ClientName
-      FROM client_rate cr INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+    pool.execute<any[]>(`SELECT DISTINCT ap.AgencyID, s.ClientID, c.ClientName
+      FROM site_rate sr
+      INNER JOIN site s ON s.SiteID = sr.SiteID
+      INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-      INNER JOIN client c ON c.ClientID = cr.ClientID
-      WHERE cr.Status = 'Active' AND pr.Status = 'Active' AND c.Status = 'Active'
+      INNER JOIN client c ON c.ClientID = s.ClientID
+      WHERE sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active' AND c.Status = 'Active'
       ORDER BY c.ClientName`).then(([rows]) => rows),
     pool.execute<any[]>(`SELECT s.SiteID, s.ClientID, s.SiteName, c.ClientName
       FROM site s INNER JOIN client c ON c.ClientID = s.ClientID
@@ -351,12 +355,12 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
   const [permanentEmployees] = await connection.execute<any[]>(`SELECT ed.EmployeeID, ed.DeploymentID, ed.DeploymentType
     FROM employee_deployment ed
     INNER JOIN employee e ON e.EmployeeID = ed.EmployeeID
-    INNER JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
-    INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+    INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+    INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-    WHERE ed.IsPermanentSite = 1 AND e.Status = 'Active' AND ap.AgencyID = ? AND cr.ClientID = ? AND ed.SiteID = ?
+    WHERE ed.IsPermanentSite = 1 AND e.Status = 'Active' AND ap.AgencyID = ? AND sr.SiteID = ? AND ed.SiteID = ?
       AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
-    ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [batch.AgencyID, batch.ClientID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+    ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [batch.AgencyID, batch.SiteID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
   for (const employee of permanentEmployees) {
     await connection.execute(`INSERT INTO attendance_dtr_employee (BatchID, EmployeeID, DeploymentID, AttendanceType, IsPermanentSite, CreatedBy)
       VALUES (?, ?, ?, ?, 1, ?)
@@ -366,35 +370,36 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
 }
 
 async function matchingDtrRate(connection: any, employeeId: number, batch: any) {
-  const [[rate]] = await connection.execute<any[]>(`SELECT cr.ClientRateID
+  const [[rate]] = await connection.execute<any[]>(`SELECT sr.SiteRateID
     FROM employee e
     INNER JOIN payroll_rate employeeRate ON employeeRate.AgencyPositionID = e.AgencyPositionID
-    INNER JOIN client_rate cr ON cr.PayrollRateID = employeeRate.PayrollRateID
-    WHERE e.EmployeeID = ? AND cr.ClientID = ? AND cr.Status = 'Active' AND employeeRate.Status = 'Active'
-    LIMIT 1`, [employeeId, batch.ClientID])
-  if (!rate) throw createError({ statusCode: 400, statusMessage: 'This employee has no active matching client rate for the DTR site.' })
+    INNER JOIN site_rate sr ON sr.PayrollRateID = employeeRate.PayrollRateID
+    WHERE e.EmployeeID = ? AND sr.SiteID = ?
+      AND sr.Status = 'Active' AND employeeRate.Status = 'Active'
+    ORDER BY employeeRate.EffectiveDate DESC, sr.SiteRateID DESC LIMIT 1`, [employeeId, batch.SiteID])
+  if (!rate) throw createError({ statusCode: 400, statusMessage: 'This employee has no active matching site rate for the DTR site.' })
   return rate
 }
 
 async function matchingWorkPositionRate(connection: any, batch: any, agencyPositionId: number, attendanceDate: string) {
-  const [[rate]] = await connection.execute<any[]>(`SELECT ap.AgencyPositionID, cr.ClientRateID, p.PositionName,
+  const [[rate]] = await connection.execute<any[]>(`SELECT ap.AgencyPositionID, sr.SiteRateID, p.PositionName,
       pr.RegularRate AS PayrollRegularRate, br.RegularRate AS BillingRegularRate
-    FROM client_rate cr
-    INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
-    INNER JOIN billing_rate br ON br.BillingRateID = cr.BillingRateID
+    FROM site_rate sr
+    INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+    INNER JOIN billing_rate br ON br.BillingRateID = sr.BillingRateID
     INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
     INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
-    WHERE ap.AgencyPositionID = ? AND ap.AgencyID = ? AND cr.ClientID = ?
-      AND cr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
+    WHERE ap.AgencyPositionID = ? AND ap.AgencyID = ? AND sr.SiteID = ?
+      AND sr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
       AND (pr.EffectiveDate IS NULL OR DATE(pr.EffectiveDate) <= ?)
       AND (br.EffectiveDate IS NULL OR DATE(br.EffectiveDate) <= ?)
-    ORDER BY pr.EffectiveDate DESC, br.EffectiveDate DESC, cr.ClientRateID DESC LIMIT 1`, [agencyPositionId, batch.AgencyID, batch.ClientID, attendanceDate, attendanceDate])
-  if (!rate) throw createError({ statusCode: 400, statusMessage: 'This position has no active client payroll and billing rate for the attendance date.' })
+    ORDER BY pr.EffectiveDate DESC, br.EffectiveDate DESC, sr.SiteRateID DESC LIMIT 1`, [agencyPositionId, batch.AgencyID, batch.SiteID, attendanceDate, attendanceDate])
+  if (!rate) throw createError({ statusCode: 400, statusMessage: 'This position has no active site payroll and billing rate for the attendance date.' })
   return rate
 }
 
 function workPositionValues(rate: any) {
-  return rate ? [rate.AgencyPositionID, rate.ClientRateID, rate.PositionName, rate.PayrollRegularRate, rate.BillingRegularRate] : [null, null, null, null, null]
+  return rate ? [rate.AgencyPositionID, rate.SiteRateID, rate.PositionName, rate.PayrollRegularRate, rate.BillingRegularRate] : [null, null, null, null, null]
 }
 
 async function applyWorkPositionThrough(connection: any, batch: any, employeeId: number, startDate: string, endDate: string, agencyPositionId: number, updatedBy: unknown) {
@@ -405,7 +410,7 @@ async function applyWorkPositionThrough(connection: any, batch: any, employeeId:
   for (const row of rows) {
     if (Number(row.WorkAgencyPositionID) === agencyPositionId) continue
     const rate = await matchingWorkPositionRate(connection, batch, agencyPositionId, databaseDate(row.AttendanceDate))
-    await connection.execute(`UPDATE attendance SET WorkAgencyPositionID = ?, WorkClientRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [...workPositionValues(rate), updatedBy, row.AttendanceID])
+    await connection.execute(`UPDATE attendance SET WorkAgencyPositionID = ?, WorkSiteRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [...workPositionValues(rate), updatedBy, row.AttendanceID])
     updatedRows++
   }
   return updatedRows
@@ -419,7 +424,7 @@ async function applyWorkPositionDates(connection: any, batch: any, employeeId: n
   for (const row of rows) {
     if (Number(row.WorkAgencyPositionID) === agencyPositionId) continue
     const rate = await matchingWorkPositionRate(connection, batch, agencyPositionId, databaseDate(row.AttendanceDate))
-    await connection.execute(`UPDATE attendance SET WorkAgencyPositionID = ?, WorkClientRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [...workPositionValues(rate), updatedBy, row.AttendanceID])
+    await connection.execute(`UPDATE attendance SET WorkAgencyPositionID = ?, WorkSiteRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [...workPositionValues(rate), updatedBy, row.AttendanceID])
     updatedRows++
   }
   return updatedRows
@@ -428,9 +433,9 @@ async function applyWorkPositionDates(connection: any, batch: any, employeeId: n
 async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, employeeId: number, deploymentType: 'Regular' | 'Reliever', currentDeploymentId: number | null, createdBy: unknown) {
   const rate = await matchingDtrRate(connection, employeeId, batch)
   const [[existingPermanent]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
-    WHERE EmployeeID = ? AND ClientRateID = ? AND SiteID = ? AND IsPermanentSite = 1
+    WHERE EmployeeID = ? AND SiteRateID = ? AND SiteID = ? AND IsPermanentSite = 1
       AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= DATE_SUB(?, INTERVAL 1 DAY))
-    ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, rate.ClientRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+    ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, rate.SiteRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
   if (existingPermanent) {
     await connection.execute(`UPDATE employee_deployment
       SET DeploymentType = ?, EndDate = NULL
@@ -457,8 +462,8 @@ async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, em
     SET EndDate = DATE_SUB(?, INTERVAL 1 DAY)
     WHERE EmployeeID = ? AND IsPermanentSite = 1 AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)`, [batch.PeriodStart, employeeId, batch.PeriodStart, batch.PeriodStart])
   const [result] = await connection.execute<any>(`INSERT INTO employee_deployment
-    (EmployeeID, ClientRateID, SiteID, DeploymentType, IsPermanentSite, StartDate, EndDate, Remarks, CreatedBy)
-    VALUES (?, ?, ?, ?, 1, ?, NULL, 'Set as permanent from DTR assignment', ?)`, [employeeId, rate.ClientRateID, batch.SiteID, deploymentType, batch.PeriodStart, createdBy])
+    (EmployeeID, SiteRateID, SiteID, DeploymentType, IsPermanentSite, StartDate, EndDate, Remarks, CreatedBy)
+    VALUES (?, ?, ?, ?, 1, ?, NULL, 'Set as permanent from DTR assignment', ?)`, [employeeId, rate.SiteRateID, batch.SiteID, deploymentType, batch.PeriodStart, createdBy])
   return Number(result.insertId)
 }
 function assertEditableBatch(batch: any) {
@@ -530,7 +535,7 @@ export async function listDtrRecords(event: any) {
       WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, ed.StartDate, ed.EndDate, de.IsPermanentSite, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
       ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
-        at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, at.WorkAgencyPositionID, at.WorkClientRateID, at.WorkPositionName, at.WorkPayrollRegularRate, at.WorkBillingRegularRate, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
+        at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, at.WorkAgencyPositionID, at.WorkSiteRateID, at.WorkPositionName, at.WorkPayrollRegularRate, at.WorkBillingRegularRate, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
         COALESCE(sc.RegularHours, (SELECT MAX(status_shift.RegularHours) FROM attendance_duty status_duty INNER JOIN shift_code status_shift ON status_shift.ShiftCodeID = status_duty.ShiftCodeID WHERE status_duty.AttendanceID = at.AttendanceID)) AS ShiftRegularHours,
         CASE WHEN EXISTS (
           SELECT 1 FROM attendance_duty flexible_duty
@@ -555,15 +560,16 @@ export async function listDtrRecords(event: any) {
           LEFT JOIN shift_code duty_shift ON duty_shift.ShiftCodeID = duty.ShiftCodeID
           LEFT JOIN shift_code saved_shift ON saved_shift.ShiftCodeID = at.ShiftCodeID
           WHERE at.BatchID = ? AND (duty.AttendanceDutyID IS NOT NULL OR at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL)
-          ORDER BY e.LastName, e.FirstName, e.MiddleName, at.AttendanceDate, duty.SourceRowNumber, at.AttendanceID`, [id]), connection.execute<any[]>(`SELECT ap.AgencyPositionID, p.PositionName, cr.ClientRateID,
+          ORDER BY e.LastName, e.FirstName, e.MiddleName, at.AttendanceDate, duty.SourceRowNumber, at.AttendanceID`, [id]), connection.execute<any[]>(`SELECT ap.AgencyPositionID, p.PositionName, sr.SiteRateID,
           pr.RegularRate AS PayrollRegularRate, br.RegularRate AS BillingRegularRate, pr.EffectiveDate
-          FROM client_rate cr
-          INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
-          INNER JOIN billing_rate br ON br.BillingRateID = cr.BillingRateID
+          FROM site_rate sr
+          INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+          INNER JOIN billing_rate br ON br.BillingRateID = sr.BillingRateID
           INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
           INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
-          WHERE ap.AgencyID = ? AND cr.ClientID = ? AND cr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
-          ORDER BY p.PositionName, pr.EffectiveDate DESC, cr.ClientRateID DESC`, [batch.AgencyID, batch.ClientID])])
+          WHERE ap.AgencyID = ? AND sr.SiteID = ?
+            AND sr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
+          ORDER BY p.PositionName, pr.EffectiveDate DESC, sr.SiteRateID DESC`, [batch.AgencyID, batch.SiteID])])
     await connection.commit()
     return { batch, policy, records, shifts, attendanceRows, dutyRows, workPositions, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
@@ -575,7 +581,7 @@ export async function listDtrEmployees(event: any) {
   const connection = await pool.getConnection()
   try {
     const batch = await batchDetail(connection, id)
-    const values: any[] = [batch.SiteID, batch.PeriodEnd, batch.PeriodStart, id, batch.AgencyID, batch.ClientID]
+    const values: any[] = [batch.SiteID, batch.PeriodEnd, batch.PeriodStart, id, batch.AgencyID, batch.SiteID]
     let searchSql = ''
     if (query.search?.trim()) {
       const value = `%${query.search.trim()}%`; values.push(value, value, value, value)
@@ -588,9 +594,10 @@ export async function listDtrEmployees(event: any) {
       EXISTS (SELECT 1 FROM attendance_dtr_employee enrolled WHERE enrolled.BatchID = ? AND enrolled.EmployeeID = e.EmployeeID) AS IsAdded
       FROM employee e INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN payroll_rate pr ON pr.AgencyPositionID = e.AgencyPositionID
-      INNER JOIN client_rate cr ON cr.PayrollRateID = pr.PayrollRateID
+      INNER JOIN site_rate sr ON sr.PayrollRateID = pr.PayrollRateID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
-      WHERE e.Status = 'Active' AND ap.AgencyID = ? AND cr.ClientID = ? AND pr.Status = 'Active' AND cr.Status = 'Active'${searchSql}
+      WHERE e.Status = 'Active' AND ap.AgencyID = ? AND sr.SiteID = ?
+        AND pr.Status = 'Active' AND sr.Status = 'Active'${searchSql}
       GROUP BY e.EmployeeID, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName, p.PositionName ORDER BY e.LastName, e.FirstName, e.MiddleName`, values)
     return { employees }
   } finally { connection.release() }
@@ -613,15 +620,15 @@ export async function addDtrEmployee(event: any) {
     if (enrolled.length) throw alreadyAdded()
     const rate = await matchingDtrRate(connection, employeeId, batch)
     const [[existing]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
-      WHERE EmployeeID = ? AND ClientRateID = ? AND SiteID = ? AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
-      ORDER BY StartDate DESC LIMIT 1`, [employeeId, rate.ClientRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+      WHERE EmployeeID = ? AND SiteRateID = ? AND SiteID = ? AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
+      ORDER BY StartDate DESC LIMIT 1`, [employeeId, rate.SiteRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
     let deploymentId = existing?.DeploymentID
     if (isPermanentSite) {
       deploymentId = await promoteDtrEmployeeToPermanentSite(connection, batch, employeeId, deploymentType, deploymentId ? Number(deploymentId) : null, session.sub)
     } else if (!deploymentId) {
       const [result] = await connection.execute<any>(`INSERT INTO employee_deployment
-        (EmployeeID, ClientRateID, SiteID, DeploymentType, IsPermanentSite, StartDate, EndDate, Remarks, CreatedBy)
-        VALUES (?, ?, ?, ?, 0, ?, ?, 'Created from DTR attendance assignment', ?)`, [employeeId, rate.ClientRateID, batch.SiteID, deploymentType, batch.PeriodStart, batch.PeriodEnd, session.sub])
+        (EmployeeID, SiteRateID, SiteID, DeploymentType, IsPermanentSite, StartDate, EndDate, Remarks, CreatedBy)
+        VALUES (?, ?, ?, ?, 0, ?, ?, 'Created from DTR attendance assignment', ?)`, [employeeId, rate.SiteRateID, batch.SiteID, deploymentType, batch.PeriodStart, batch.PeriodEnd, session.sub])
       deploymentId = result.insertId
     }
     try {
@@ -1312,7 +1319,7 @@ export async function createDtrAttendance(event: any) {
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
-    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, WorkAgencyPositionID, WorkClientRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
+    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
     if (existing && Number(existing.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR for this date.' })
     // Attendance edits and reapplying the same position must retain the original
     // snapshot, including after the site's override setting has been disabled.
@@ -1320,18 +1327,18 @@ export async function createDtrAttendance(event: any) {
     const changingWorkPosition = !noWorkStatus && body.WorkAgencyPositionID !== undefined && Number(requestedWorkAgencyPositionId) !== Number(existing?.WorkAgencyPositionID || 0)
     if ((changingWorkPosition || workPositionApplyThrough) && Number(policy.RelieverPositionOverrideEnabled) !== 1) throw createError({ statusCode: 400, statusMessage: 'Reliever position and rate override is disabled for this DTR site.' })
     const workRate = preserveWorkPosition ? {
-      AgencyPositionID: existing.WorkAgencyPositionID, ClientRateID: existing.WorkClientRateID,
+      AgencyPositionID: existing.WorkAgencyPositionID, SiteRateID: existing.WorkSiteRateID,
       PositionName: existing.WorkPositionName, PayrollRegularRate: existing.WorkPayrollRegularRate, BillingRegularRate: existing.WorkBillingRegularRate,
     } : noWorkStatus || !requestedWorkAgencyPositionId ? null : await matchingWorkPositionRate(connection, batch, requestedWorkAgencyPositionId, attendanceDate)
     if (existing) {
-      await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkAgencyPositionID = ?, WorkClientRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
+      await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkAgencyPositionID = ?, WorkSiteRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
       const relieverPositionRows = workPositionApplyThrough && requestedWorkAgencyPositionId ? await applyWorkPositionThrough(connection, batch, employeeId, attendanceDate, workPositionApplyThrough, requestedWorkAgencyPositionId, session.sub) : 0
       await syncBatchHolidays(connection, batch, session.sub)
       const wdoCount = await syncAutoWdo(connection, batch, employeeId)
       await connection.commit(); return { id: existing.AttendanceID, updated: true, wdoCount, relieverPositionRows }
     }
     const [result] = await connection.execute<any>(`INSERT INTO attendance
-      (EmployeeID, DeploymentID, ShiftCodeID, WorkAgencyPositionID, WorkClientRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, Remarks, CreatedBy)
+      (EmployeeID, DeploymentID, ShiftCodeID, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, Remarks, CreatedBy)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${placeholders}, ?, ?, ?, 1, ?, ?)`, [employeeId, deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, id, attendanceDate, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, session.sub])
     const relieverPositionRows = workPositionApplyThrough && requestedWorkAgencyPositionId ? await applyWorkPositionThrough(connection, batch, employeeId, attendanceDate, workPositionApplyThrough, requestedWorkAgencyPositionId, session.sub) : 0
     await syncBatchHolidays(connection, batch, session.sub)

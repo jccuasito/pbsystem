@@ -37,13 +37,14 @@ export async function attachPendingEmployeeStatuses(connection: any, batch: any,
   if (batch.Status !== 'Draft') return 0
   const [result] = await connection.execute<any>(`UPDATE attendance at
     INNER JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
-    INNER JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
-    INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+    INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+    INNER JOIN site s ON s.SiteID = sr.SiteID
+    INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
     INNER JOIN attendance_dtr_employee de ON de.BatchID = ? AND de.EmployeeID = at.EmployeeID AND de.DeploymentID = at.DeploymentID
     SET at.BatchID = ?, at.AttendanceType = de.AttendanceType, at.UpdatedBy = ?
     WHERE at.BatchID IS NULL AND at.AttendanceDate BETWEEN ? AND ?
-      AND ap.AgencyID = ? AND cr.ClientID = ? AND ed.SiteID = ?`, [
+      AND ap.AgencyID = ? AND s.ClientID = ? AND ed.SiteID = ?`, [
     batch.BatchID, batch.BatchID, updatedBy, batch.PeriodStart, batch.PeriodEnd,
     batch.AgencyID, batch.ClientID, batch.SiteID,
   ])
@@ -68,18 +69,18 @@ export async function listEmployeeStatus(event: any) {
           AND active_ed.StartDate <= CURDATE() AND (active_ed.EndDate IS NULL OR active_ed.EndDate >= CURDATE())
         ORDER BY active_ed.StartDate DESC, active_ed.DeploymentID DESC LIMIT 1
       )
-      LEFT JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
-      LEFT JOIN client c ON c.ClientID = cr.ClientID
+      LEFT JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
       LEFT JOIN site s ON s.SiteID = ed.SiteID
+      LEFT JOIN client c ON c.ClientID = s.ClientID
       WHERE e.Status = 'Active'
       ORDER BY e.LastName, e.FirstName, e.MiddleName`),
     pool.execute<any[]>(`SELECT ed.DeploymentID, ed.EmployeeID, ed.DeploymentType, ed.StartDate, ed.EndDate,
       a.AgencyName, c.ClientName, s.SiteName
       FROM employee_deployment ed
-      INNER JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
-      INNER JOIN client c ON c.ClientID = cr.ClientID
+      INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
       INNER JOIN site s ON s.SiteID = ed.SiteID
-      INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+      INNER JOIN client c ON c.ClientID = s.ClientID
+      INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
       INNER JOIN agency a ON a.AgencyID = ap.AgencyID
       WHERE ed.IsPermanentSite = 1
@@ -101,9 +102,9 @@ export async function listEmployeeStatus(event: any) {
       c.ClientName, s.SiteName
       FROM attendance at
       INNER JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
-      INNER JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
-      INNER JOIN client c ON c.ClientID = cr.ClientID
+      INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
       INNER JOIN site s ON s.SiteID = ed.SiteID
+      INNER JOIN client c ON c.ClientID = s.ClientID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
       ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC LIMIT 1000`),
   ])
@@ -135,10 +136,11 @@ export async function updateEmployeeDailyStatus(event: any) {
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
     const assignments: any[] = []
     for (const attendanceDate of selectedDates) {
-      const [[deployment]] = await connection.execute<any[]>(`SELECT ed.DeploymentID, ed.DeploymentType, ed.SiteID, cr.ClientID, ap.AgencyID
+      const [[deployment]] = await connection.execute<any[]>(`SELECT ed.DeploymentID, ed.DeploymentType, ed.SiteID, s.ClientID, ap.AgencyID
         FROM employee_deployment ed
-        INNER JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
-        INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+        INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+        INNER JOIN site s ON s.SiteID = sr.SiteID
+        INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
         INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
         WHERE ed.EmployeeID = ? AND ed.IsPermanentSite = 1
           AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)

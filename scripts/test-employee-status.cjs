@@ -53,10 +53,10 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
       agency: 'AgencyID INT PRIMARY KEY, AgencyName VARCHAR(100)',
       position: 'PositionID INT PRIMARY KEY, PositionName VARCHAR(100)',
       payroll_rate: 'PayrollRateID INT PRIMARY KEY, AgencyPositionID INT, Status VARCHAR(20)',
-      client_rate: 'ClientRateID INT PRIMARY KEY, PayrollRateID INT, ClientID INT, Status VARCHAR(20)',
+      site_rate: 'SiteRateID INT PRIMARY KEY, SiteID INT, PayrollRateID INT, Status VARCHAR(20)',
       client: 'ClientID INT PRIMARY KEY, ClientName VARCHAR(100), Status VARCHAR(20)',
       site: 'SiteID INT PRIMARY KEY, ClientID INT, SiteName VARCHAR(100), Status VARCHAR(20)',
-      employee_deployment: 'DeploymentID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, ClientRateID INT, SiteID INT, DeploymentType VARCHAR(20), IsPermanentSite TINYINT, StartDate DATE, EndDate DATE',
+      employee_deployment: 'DeploymentID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, SiteRateID INT, SiteID INT, DeploymentType VARCHAR(20), IsPermanentSite TINYINT, StartDate DATE, EndDate DATE',
       attendance_dtr: 'BatchID INT PRIMARY KEY, AgencyID INT, ClientID INT, SiteID INT, PeriodStart DATE, PeriodEnd DATE, Status VARCHAR(30)',
       attendance_dtr_employee: 'BatchID INT, EmployeeID INT, DeploymentID INT, AttendanceType VARCHAR(20), IsPermanentSite TINYINT, CreatedBy INT, PRIMARY KEY(BatchID,EmployeeID)',
       attendance: `AttendanceID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, DeploymentID INT, BatchID INT NULL, AttendanceDate DATE, ShiftCodeID INT, TimeIn DATETIME, TimeOut DATETIME, AttendanceStatus VARCHAR(30), AttendanceType VARCHAR(20), IsWDO TINYINT DEFAULT 0, IsManualEdit TINYINT DEFAULT 0, Remarks VARCHAR(255), CreatedBy INT, UpdatedBy INT,
@@ -69,10 +69,10 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     await c.query("INSERT INTO agency VALUES (3,'DJA Security Services INC.')")
     await c.query("INSERT INTO position VALUES (4,'Security Guard')")
     await c.query("INSERT INTO payroll_rate VALUES (21,11,'Active')")
-    await c.query("INSERT INTO client_rate VALUES (31,21,41,'Active')")
+    await c.query("INSERT INTO site_rate VALUES (31,51,21,'Active')")
     await c.query("INSERT INTO client VALUES (41,'Samsung','Active')")
     await c.query("INSERT INTO site VALUES (51,41,'Samsung S.E.P.C.O','Active')")
-    await c.query("INSERT INTO employee_deployment (EmployeeID,ClientRateID,SiteID,DeploymentType,IsPermanentSite,StartDate) VALUES (8,31,51,'Regular',1,'2026-09-01')")
+    await c.query("INSERT INTO employee_deployment (EmployeeID,SiteRateID,SiteID,DeploymentType,IsPermanentSite,StartDate) VALUES (8,31,51,'Regular',1,'2026-09-01')")
     const connection = { execute: (sql, args) => c.execute(sql, args), beginTransaction: () => c.beginTransaction(), commit: () => c.commit(), rollback: () => c.rollback(), release() {} }
     const pool = { execute: (sql, args) => c.execute(sql, args), getConnection: async () => connection }
     const api = evaluate(fs.readFileSync('server/utils/employeeStatusCrud.ts', 'utf8'), { require: name => name === 'h3' ? { readBody: async event => event.body, createError: details => Object.assign(new Error(details.statusMessage), details) } : name.includes('dbconnect') ? pool : name === './auth' ? { requireSession: () => ({ sub: 14 }) } : {} })

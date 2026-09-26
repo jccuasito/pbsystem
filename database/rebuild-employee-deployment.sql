@@ -8,7 +8,7 @@ DROP TABLE IF EXISTS employee_deployment;
 CREATE TABLE employee_deployment (
   DeploymentID INT(11) NOT NULL AUTO_INCREMENT,
   EmployeeID INT(11) NOT NULL,
-  ClientRateID INT(11) NOT NULL,
+  SiteRateID INT(11) NOT NULL,
   SiteID INT(11) NOT NULL,
   SiteShiftID INT(11) NULL,
   DeploymentType VARCHAR(50) NOT NULL DEFAULT 'Regular',
@@ -20,12 +20,12 @@ CREATE TABLE employee_deployment (
   PRIMARY KEY (DeploymentID),
   KEY idx_employee_deployment_employee_dates (EmployeeID, StartDate, EndDate),
   KEY idx_employee_deployment_site_dates (SiteID, StartDate, EndDate),
-  KEY idx_employee_deployment_client_rate (ClientRateID),
+  KEY idx_employee_deployment_site_rate (SiteRateID),
   KEY idx_employee_deployment_site_shift (SiteShiftID),
   CONSTRAINT fk_deployment_employee
     FOREIGN KEY (EmployeeID) REFERENCES employee (EmployeeID) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_deployment_clientrate
-    FOREIGN KEY (ClientRateID) REFERENCES client_rate (ClientRateID) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_deployment_site_rate
+    FOREIGN KEY (SiteRateID) REFERENCES site_rate (SiteRateID) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_deployment_site
     FOREIGN KEY (SiteID) REFERENCES site (SiteID) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_deployment_siteshift

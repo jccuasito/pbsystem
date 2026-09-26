@@ -8,12 +8,12 @@ import { findDeploymentConflict } from '~~/shared/utils/deployment'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 
-const items = ref<any[]>([]), dtrAssignments = ref<any[]>([]), agencies = ref<any[]>([]), employees = ref<any[]>([]), clientRates = ref<any[]>([]), sites = ref<any[]>([]), shiftCodes = ref<any[]>([])
+const items = ref<any[]>([]), dtrAssignments = ref<any[]>([]), agencies = ref<any[]>([]), employees = ref<any[]>([]), siteRates = ref<any[]>([]), sites = ref<any[]>([]), shiftCodes = ref<any[]>([])
 const loading = ref(true), busy = ref(false), error = ref(''), modalOpen = ref(false), detailsOpen = ref(false), rosterOpen = ref(false)
 const selectedEmployee = ref<any | null>(null), selectedRoster = ref<any | null>(null)
 const employeeSearch = ref(''), agencyFilter = ref(''), clientFilter = ref(''), siteFilter = ref(''), cutoffFilter = ref('')
 const historyView = ref<'deployments' | 'dtr'>('deployments')
-const form = ref({ EmployeeID: '', ClientRateID: '', SiteID: '', ShiftCodeID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' })
+const form = ref({ EmployeeID: '', SiteRateID: '', SiteID: '', ShiftCodeID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' })
 const ongoingDeployment = ref(true)
 const deploymentAlert = ref<AlertMessage | null>(null)
 const deploymentConflict = computed(() => findDeploymentConflict(items.value, form.value.EmployeeID, form.value.StartDate, form.value.EndDate))
@@ -89,19 +89,19 @@ const filteredEmployees = computed(() => {
 })
 const selectedEmployeeDtrHistory = computed(() => selectedEmployee.value ? dtrAssignments.value.filter(row => String(row.EmployeeID) === String(selectedEmployee.value.EmployeeID)).sort((a, b) => String(b.PeriodStart).localeCompare(String(a.PeriodStart))) : [])
 const selectedFormEmployee = computed(() => employees.value.find(employee => String(employee.EmployeeID) === String(form.value.EmployeeID)) || null)
-const availableClientRates = computed(() => selectedFormEmployee.value?.AgencyPositionID ? clientRates.value.filter(rate => String(rate.AgencyPositionID) === String(selectedFormEmployee.value.AgencyPositionID) && String(rate.AgencyID) === String(selectedFormEmployee.value.AgencyID)) : [])
-const selectedClientRate = computed(() => availableClientRates.value.find(rate => String(rate.ClientRateID) === String(form.value.ClientRateID)) || null)
-const availableSites = computed(() => selectedClientRate.value ? sites.value.filter(site => String(site.ClientID) === String(selectedClientRate.value.ClientID)) : [])
+const availableSiteRates = computed(() => selectedFormEmployee.value?.AgencyPositionID ? siteRates.value.filter(rate => String(rate.AgencyPositionID) === String(selectedFormEmployee.value.AgencyPositionID) && String(rate.AgencyID) === String(selectedFormEmployee.value.AgencyID)) : [])
+const selectedSiteRate = computed(() => availableSiteRates.value.find(rate => String(rate.SiteRateID) === String(form.value.SiteRateID)) || null)
+const availableSites = computed(() => selectedSiteRate.value ? sites.value.filter(site => String(site.SiteID) === String(selectedSiteRate.value.SiteID)) : [])
 const availableShifts = computed(() => selectedFormEmployee.value && form.value.SiteID ? shiftCodes.value.filter(shift => String(shift.AgencyID) === String(selectedFormEmployee.value.AgencyID)) : [])
 const employeeOptions = computed(() => employees.value.map(employee => ({ value: String(employee.EmployeeID), label: formatEmployeeLabel(employee), search: `${employee.AgencyName || ''} ${employee.PositionName || ''}` })))
-const clientRateOptions = computed(() => availableClientRates.value.map(rate => ({ value: String(rate.ClientRateID), label: `${rate.ClientName} — ${rate.AgencyName} — ${rate.PositionName}${rate.RegionName ? ' — '+rate.RegionName : ''}` })))
+const siteRateOptions = computed(() => availableSiteRates.value.map(rate => ({ value: String(rate.SiteRateID), label: `${rate.SiteName} — ${rate.ClientName} — ${rate.AgencyName} — ${rate.PositionName}${rate.RegionName ? ' — '+rate.RegionName : ''}` })))
 const siteOptions = computed(() => availableSites.value.map(site => ({ value: String(site.SiteID), label: `${site.ClientName} — ${site.SiteName}` })))
 const shiftOptions = computed(() => availableShifts.value.map(shift => ({ value: String(shift.ShiftCodeID), label: `${shift.ShiftCode} — ${shift.ShiftName}${shift.TimeIn && shift.TimeOut ? ' ('+String(shift.TimeIn).slice(0,5)+'–'+String(shift.TimeOut).slice(0,5)+')' : ''}` })))
 const lookupLoading = ref(false)
 const canSave = computed(() => !busy.value
   && !lookupLoading.value
   && selectedFormEmployee.value
-  && selectedClientRate.value
+  && selectedSiteRate.value
   && availableSites.value.some(site => String(site.SiteID) === String(form.value.SiteID))
   && availableShifts.value.some(shift => String(shift.ShiftCodeID) === String(form.value.ShiftCodeID))
   && Boolean(form.value.StartDate)
@@ -113,10 +113,10 @@ watch(clientFilter, () => { siteFilter.value = '' })
 watch(historyView, () => { clientFilter.value = ''; siteFilter.value = ''; cutoffFilter.value = historyView.value === 'dtr' ? cutoffOptions.value[0]?.key || '' : '' })
 watch(ongoingDeployment, ongoing => { if (ongoing) form.value.EndDate = '' })
 
-function reset() { form.value = { EmployeeID: '', ClientRateID: '', SiteID: '', ShiftCodeID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' }; ongoingDeployment.value = true; error.value = '' }
+function reset() { form.value = { EmployeeID: '', SiteRateID: '', SiteID: '', ShiftCodeID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' }; ongoingDeployment.value = true; error.value = '' }
 function onSiteChanged() { form.value.ShiftCodeID = '' }
-function onEmployeeChanged() { form.value.ClientRateID = ''; form.value.SiteID = ''; form.value.ShiftCodeID = '' }
-function onClientRateChanged() { form.value.SiteID = ''; form.value.ShiftCodeID = '' }
+function onEmployeeChanged() { form.value.SiteRateID = ''; form.value.SiteID = ''; form.value.ShiftCodeID = '' }
+function onSiteRateChanged() { form.value.SiteID = selectedSiteRate.value?.SiteID ? String(selectedSiteRate.value.SiteID) : ''; form.value.ShiftCodeID = '' }
 function display(value: any) { return value === null || value === undefined || value === '' ? '—' : value }
 function formatDeploymentDate(value: any) {
   const match = String(value || '').slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/)
@@ -131,7 +131,7 @@ function deploymentPeriod(start: any, end: any) {
 function deploymentConflictDescription(conflict: any) {
   if (!conflict) return ''
   const site = sites.value.find(item => String(item.SiteID) === String(conflict.SiteID))
-  const rate = clientRates.value.find(item => String(item.ClientRateID) === String(conflict.ClientRateID))
+  const rate = siteRates.value.find(item => String(item.SiteRateID) === String(conflict.SiteRateID))
   const clientName = conflict.ClientName || site?.ClientName || rate?.ClientName
   const siteName = conflict.SiteName || site?.SiteName
   const location = [clientName, siteName].filter(Boolean).join(' — ')
@@ -170,7 +170,7 @@ function historyStatus(item: any, history: any[]) {
   if (item.Status === 'Scheduled') return 'Scheduled'
   if (item.Status === 'Active') return 'Active'
   const newer = history.find((candidate: any) => String(candidate.StartDate) > String(item.StartDate))
-  return newer && (newer.AgencyID !== item.AgencyID || newer.ClientRateID !== item.ClientRateID || newer.SiteID !== item.SiteID) ? 'Transferred' : 'Ended'
+  return newer && (newer.AgencyID !== item.AgencyID || newer.SiteRateID !== item.SiteRateID || newer.SiteID !== item.SiteID) ? 'Transferred' : 'Ended'
 }
 function openDetails(group: any) { selectedEmployee.value = group; detailsOpen.value = true }
 function openEmployeeDetails(person: any) {
@@ -181,7 +181,7 @@ function openEmployeeDetails(person: any) {
   openDetails(group || { ...person, history: [] })
 }
 function openRoster(roster: any) { selectedRoster.value = roster; rosterOpen.value = true }
-async function load(silent = false) { if (!silent) loading.value = true; try { const response: any = await $fetch('/api/employees/deployments'); items.value = response.items || []; dtrAssignments.value = response.dtrAssignments || []; agencies.value = response.agencies || []; employees.value = response.employees || []; clientRates.value = response.clientRates || []; sites.value = response.sites || []; shiftCodes.value = response.agencyShiftCodes || []; if (!cutoffFilter.value && cutoffOptions.value[0]) cutoffFilter.value = cutoffOptions.value[0].key } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to load deployment history.' } finally { if (!silent) loading.value = false } }
+async function load(silent = false) { if (!silent) loading.value = true; try { const response: any = await $fetch('/api/employees/deployments'); items.value = response.items || []; dtrAssignments.value = response.dtrAssignments || []; agencies.value = response.agencies || []; employees.value = response.employees || []; siteRates.value = response.siteRates || []; sites.value = response.sites || []; shiftCodes.value = response.agencyShiftCodes || []; if (!cutoffFilter.value && cutoffOptions.value[0]) cutoffFilter.value = cutoffOptions.value[0].key } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to load deployment history.' } finally { if (!silent) loading.value = false } }
 async function save() {
   if (!canSave.value) return
   if (deploymentConflict.value) {
@@ -271,16 +271,16 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
         </header>
         <p v-if="lookupLoading" class="view-note" role="status">Loading employees and agency shifts...</p>
         <section class="form-section">
-          <div class="section-heading"><span class="section-number">1</span><div><h3>Employee and rate</h3><p>The employee position automatically limits the available client rates.</p></div></div>
+          <div class="section-heading"><span class="section-number">1</span><div><h3>Employee and rate</h3><p>The employee position automatically limits the available site rates.</p></div></div>
           <SearchableSelect v-model="form.EmployeeID" label="Employee" placeholder="Search employee name, ID, or employee number" :options="employeeOptions" :disabled="busy || lookupLoading" required @change="onEmployeeChanged" />
-          <div v-if="selectedFormEmployee" class="employee-position" role="status"><strong>{{ selectedFormEmployee.PositionName }}</strong> · {{ selectedFormEmployee.AgencyName }}<small>Position from Employee List. Only matching client rates are shown.</small></div>
-          <SearchableSelect v-model="form.ClientRateID" label="Client rate" placeholder="Search client or rate" :options="clientRateOptions" :disabled="busy || lookupLoading || !selectedFormEmployee" empty-text="No active client rates match this employee's agency and position." required @change="onClientRateChanged" />
-          <div v-if="selectedFormEmployee && !lookupLoading && !availableClientRates.length" class="deployment-warning" role="status">No matching client rate. Add an active client rate for {{ selectedFormEmployee.PositionName }} under {{ selectedFormEmployee.AgencyName }} before creating this deployment.</div>
+          <div v-if="selectedFormEmployee" class="employee-position" role="status"><strong>{{ selectedFormEmployee.PositionName }}</strong> · {{ selectedFormEmployee.AgencyName }}<small>Position from Employee List. Only matching site rates are shown.</small></div>
+          <SearchableSelect v-model="form.SiteRateID" label="Site rate" placeholder="Search site, client, or rate" :options="siteRateOptions" :disabled="busy || lookupLoading || !selectedFormEmployee" empty-text="No active site rates match this employee's agency and position." required @change="onSiteRateChanged" />
+          <div v-if="selectedFormEmployee && !lookupLoading && !availableSiteRates.length" class="deployment-warning" role="status">No matching site rate. Add an active site rate for {{ selectedFormEmployee.PositionName }} under {{ selectedFormEmployee.AgencyName }} before creating this deployment.</div>
         </section>
         <section class="form-section">
           <div class="section-heading"><span class="section-number">2</span><div><h3>Assignment details</h3><p>Select the site, agency shift, and deployment type.</p></div></div>
           <div class="assignment-grid">
-            <SearchableSelect v-model="form.SiteID" label="Site" placeholder="Search site name" :options="siteOptions" :disabled="busy || lookupLoading || !selectedClientRate" required @change="onSiteChanged" />
+            <SearchableSelect v-model="form.SiteID" label="Site" placeholder="Search site name" :options="siteOptions" :disabled="busy || lookupLoading || !selectedSiteRate" required @change="onSiteChanged" />
             <SearchableSelect v-model="form.ShiftCodeID" label="Agency shift" placeholder="Search shift code or name" :options="shiftOptions" :disabled="busy || lookupLoading || !form.SiteID" empty-text="No active shifts for this agency. Add one in Attendance > Shift Codes." required />
             <label>Deployment type<select v-model="form.DeploymentType"><option>Regular</option><option>Reliever</option></select></label>
             <label><span>Remarks <small class="optional-label">Optional</small></span><input v-model="form.Remarks" placeholder="Add a note about this assignment"></label>

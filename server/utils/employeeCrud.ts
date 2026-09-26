@@ -546,7 +546,7 @@ function employeeListSql(filters: string[]) {
     '  ld.StartDate AS CurrentDeploymentStartDate,',
     '  ld.EndDate AS CurrentDeploymentEndDate,',
     "  CASE WHEN ld.DeploymentID IS NULL THEN 'Unassigned' WHEN ld.EndDate IS NULL OR ld.EndDate >= CURDATE() THEN 'Active' ELSE 'Inactive' END AS DeploymentStatus,",
-    '  ld.ClientRateID,',
+    '  ld.SiteRateID,',
     '  c.ClientName,',
     '  s.SiteName,',
     '  sc.ShiftCode,',
@@ -556,9 +556,9 @@ function employeeListSql(filters: string[]) {
     'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
     positionJoin,
     latestDeploymentJoin(),
-    'LEFT JOIN client_rate cr ON cr.ClientRateID = ld.ClientRateID',
-    'LEFT JOIN client c ON c.ClientID = cr.ClientID',
+    'LEFT JOIN site_rate sr ON sr.SiteRateID = ld.SiteRateID',
     'LEFT JOIN site s ON s.SiteID = ld.SiteID',
+    'LEFT JOIN client c ON c.ClientID = s.ClientID',
     'LEFT JOIN site_shift ss ON ss.SiteShiftID = ld.SiteShiftID',
     'LEFT JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID',
     filters.length ? `WHERE ${filters.join(' AND ')}` : '',
@@ -603,18 +603,19 @@ function employeeIdFromQuery(event: any) {
   return employeeId
 }
 
-async function activeClientRates() {
+async function activeSiteRates() {
   const [rows] = await pool.execute<any[]>(
     [
-      'SELECT cr.ClientRateID, cr.ClientID, c.ClientName, ap.AgencyID, ap.PositionID, pr.AgencyPositionID, a.AgencyName, p.PositionName, cr.Status, pr.RegionID, rg.RegionName',
-      'FROM client_rate cr',
-      'INNER JOIN client c ON c.ClientID = cr.ClientID',
-      'INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID',
+      'SELECT sr.SiteRateID, s.ClientID, sr.SiteID, c.ClientName, s.SiteName, ap.AgencyID, ap.PositionID, pr.AgencyPositionID, a.AgencyName, p.PositionName, sr.Status, s.RegionID, rg.RegionName',
+      'FROM site_rate sr',
+      'INNER JOIN site s ON s.SiteID = sr.SiteID',
+      'INNER JOIN client c ON c.ClientID = s.ClientID',
+      'INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID',
       'INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID',
       'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
       positionJoin,
-      'LEFT JOIN region rg ON rg.RegionID = pr.RegionID',
-      "WHERE cr.Status = 'Active' AND pr.Status = 'Active'",
+      'LEFT JOIN region rg ON rg.RegionID = COALESCE(s.RegionID, pr.RegionID)',
+      "WHERE sr.Status = 'Active' AND s.Status = 'Active' AND c.Status = 'Active' AND pr.Status = 'Active'",
       'ORDER BY c.ClientName, a.AgencyName, p.PositionName'
     ].join('\n')
   )
@@ -622,11 +623,11 @@ async function activeClientRates() {
 }
 
 async function deploymentLookups() {
-  const [agencies, clientRates, employees, sites, shiftCodes, agencyShiftCodes] = await Promise.all([
+  const [agencies, siteRates, employees, sites, shiftCodes, agencyShiftCodes] = await Promise.all([
     activeAgencies(),
-    activeClientRates(),
+    activeSiteRates(),
     activeEmployees(),
-    pool.execute<any[]>('SELECT s.SiteID, s.ClientID, c.ClientName, s.SiteName FROM site s INNER JOIN client c ON c.ClientID = s.ClientID WHERE s.Status = \'Active\' AND c.Status = \'Active\' ORDER BY c.ClientName, s.SiteName').then(([rows]) => rows),
+    pool.execute<any[]>('SELECT s.SiteID, s.ClientID, s.RegionID, c.ClientName, s.SiteName FROM site s INNER JOIN client c ON c.ClientID = s.ClientID WHERE s.Status = \'Active\' AND c.Status = \'Active\' ORDER BY c.ClientName, s.SiteName').then(([rows]) => rows),
     pool.execute<any[]>(
       `SELECT ss.SiteShiftID, ss.SiteID, sc.ShiftCodeID, sc.ShiftCode, sc.ShiftName
        FROM site_shift ss
@@ -637,7 +638,7 @@ async function deploymentLookups() {
     ).then(([rows]) => rows),
     pool.execute<any[]>("SELECT ShiftCodeID, AgencyID, ShiftCode, ShiftName, TimeIn, TimeOut FROM shift_code WHERE Status = 'Active' ORDER BY ShiftCode, ShiftName").then(([rows]) => rows)
   ])
-  return { agencies, clientRates, employees, sites, shiftCodes, agencyShiftCodes }
+  return { agencies, siteRates, employees, sites, shiftCodes, agencyShiftCodes }
 }
 
 function deploymentSql(filters: string[]) {
@@ -649,20 +650,20 @@ function deploymentSql(filters: string[]) {
     '  sc.ShiftCode, sc.ShiftName,',
     '  ed.DeploymentType, ed.IsPermanentSite, ed.StartDate, ed.EndDate,',
     "  CASE WHEN ed.StartDate > CURDATE() THEN 'Scheduled' WHEN ed.EndDate IS NULL OR ed.EndDate >= CURDATE() THEN 'Active' ELSE 'Ended' END AS Status,",
-    '  ed.ClientRateID, ed.SiteID, ed.SiteShiftID, ed.Remarks, ed.CreatedAt,',
+    '  ed.SiteRateID, ed.SiteID, ed.SiteShiftID, ed.Remarks, ed.CreatedAt,',
     '  ap.AgencyPositionID, ap.AgencyID, ap.PositionID',
     'FROM employee_deployment ed',
     'INNER JOIN employee e ON e.EmployeeID = ed.EmployeeID',
     'LEFT JOIN agency_position current_ap ON current_ap.AgencyPositionID = e.AgencyPositionID',
-    'INNER JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID',
-    'INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID',
+    'INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID',
+    'INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID',
     'INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID',
     'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
     positionJoin,
     'INNER JOIN site s ON s.SiteID = ed.SiteID',
     'LEFT JOIN site_shift ss ON ss.SiteShiftID = ed.SiteShiftID',
     'LEFT JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID',
-    'INNER JOIN client c ON c.ClientID = cr.ClientID',
+    'INNER JOIN client c ON c.ClientID = s.ClientID',
     filters.length ? `WHERE ${filters.join(' AND ')}` : '',
     'ORDER BY ed.StartDate DESC, ed.DeploymentID DESC'
   ].filter(Boolean).join('\n')
@@ -860,8 +861,8 @@ async function dtrDeploymentAssignments() {
     INNER JOIN client c ON c.ClientID = d.ClientID
     INNER JOIN site s ON s.SiteID = d.SiteID
     LEFT JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
-    LEFT JOIN client_rate cr ON cr.ClientRateID = ed.ClientRateID
-    LEFT JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+    LEFT JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+    LEFT JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     LEFT JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
     LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
     ORDER BY d.PeriodStart DESC, d.PeriodEnd DESC, c.ClientName, s.SiteName, e.LastName, e.FirstName`
@@ -880,7 +881,7 @@ export async function createDeployment(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, unknown>>(event) || {}
   const employeeId = parseInteger(body.EmployeeID, 'EmployeeID')
-  const clientRateID = parseInteger(body.ClientRateID, 'ClientRateID')
+  const siteRateID = parseInteger(body.SiteRateID, 'SiteRateID')
   const siteID = parseInteger(body.SiteID, 'SiteID')
   const shiftCodeID = parseInteger(body.ShiftCodeID, 'ShiftCodeID', true)
   let siteShiftID = parseInteger(body.SiteShiftID, 'SiteShiftID', true)
@@ -911,7 +912,7 @@ export async function createDeployment(event: any) {
     // The employee lock serializes repeated/concurrent submissions. Check before
     // changing any site link or deployment; transfers have a separate endpoint.
     const [[conflict]] = await connection.execute<any[]>(
-      `SELECT DeploymentID, ClientRateID, SiteID, StartDate, EndDate
+      `SELECT DeploymentID, SiteRateID, SiteID, StartDate, EndDate
        FROM employee_deployment
        WHERE EmployeeID = ? AND IsPermanentSite = 1
          AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
@@ -928,27 +929,29 @@ export async function createDeployment(event: any) {
       },
     })
 
-    const [[clientRate]] = await connection.execute<any[]>(
-      `SELECT cr.ClientID, pr.AgencyPositionID, ap.AgencyID
-       FROM client_rate cr
-       INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+    const [[siteRate]] = await connection.execute<any[]>(
+      `SELECT s.ClientID, sr.SiteID, pr.AgencyPositionID, ap.AgencyID
+       FROM site_rate sr
+       INNER JOIN site s ON s.SiteID = sr.SiteID
+       INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
        INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-       WHERE cr.ClientRateID = ? AND cr.Status = 'Active' AND pr.Status = 'Active'
+       WHERE sr.SiteRateID = ? AND sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active'
        LIMIT 1`,
-      [clientRateID]
+      [siteRateID]
     )
-    if (!clientRate || Number(clientRate.AgencyID) !== Number(employee.AgencyID)) {
-      throw createError({ statusCode: 400, statusMessage: 'Select a client rate registered under the employee\'s current agency.' })
+    if (!siteRate || Number(siteRate.AgencyID) !== Number(employee.AgencyID)) {
+      throw createError({ statusCode: 400, statusMessage: 'Select a site rate registered under the employee\'s current agency.' })
     }
-    if (Number(clientRate.AgencyPositionID) !== Number(employee.AgencyPositionID)) {
+    if (Number(siteRate.AgencyPositionID) !== Number(employee.AgencyPositionID)) {
       throw createError({ statusCode: 400, statusMessage: alertMessages.deploymentPositionMismatch().message })
     }
 
+    if (Number(siteRate.SiteID) !== Number(siteID)) throw createError({ statusCode: 400, statusMessage: 'The selected site does not match this site rate.' })
     const [[site]] = await connection.execute<any[]>(
-      'SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1 FOR UPDATE',
-      [siteID, clientRate.ClientID]
+      'SELECT SiteID FROM site WHERE SiteID = ? AND Status = \'Active\' LIMIT 1 FOR UPDATE',
+      [siteID]
     )
-    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site that belongs to the selected client rate.' })
+    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select an active site.' })
 
     if (shiftCodeID) {
       const [[shift]] = await connection.execute<any[]>("SELECT ShiftCodeID FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = 'Active' FOR UPDATE", [shiftCodeID, employee.AgencyID])
@@ -968,9 +971,9 @@ export async function createDeployment(event: any) {
     }
 
     const [result] = await connection.execute<any>(
-      `INSERT INTO employee_deployment (EmployeeID, ClientRateID, SiteID, SiteShiftID, DeploymentType, StartDate, EndDate, Remarks, CreatedBy)
+      `INSERT INTO employee_deployment (EmployeeID, SiteRateID, SiteID, SiteShiftID, DeploymentType, StartDate, EndDate, Remarks, CreatedBy)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [employeeId, clientRateID, siteID, siteShiftID, deploymentType, startDate, endDate, remarks, session.sub] as any[]
+      [employeeId, siteRateID, siteID, siteShiftID, deploymentType, startDate, endDate, remarks, session.sub] as any[]
     )
     await connection.commit()
     return { success: true, id: result.insertId }
@@ -986,7 +989,7 @@ export async function transferEmployee(event: any) {
   const session = requireSession(event)
   const employeeId = parseInteger(getRouterParam(event, 'id'), 'employeeId') as number
   const body = await readBody<Record<string, unknown>>(event) || {}
-  const clientRateId = parseInteger(body.ClientRateID, 'ClientRateID') as number
+  const siteRateId = parseInteger(body.SiteRateID, 'SiteRateID') as number
   const siteId = parseInteger(body.SiteID, 'SiteID') as number
   const siteShiftId = parseInteger(body.SiteShiftID, 'SiteShiftID', true) as number | null
   const startDate = parseDate(body.StartDate)
@@ -1004,17 +1007,19 @@ export async function transferEmployee(event: any) {
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
 
     const [[target]] = await connection.execute<any[]>(
-      `SELECT pr.AgencyPositionID, cr.ClientID
-       FROM client_rate cr
-       INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
-       WHERE cr.ClientRateID = ? AND cr.Status = 'Active' AND pr.Status = 'Active'
+      `SELECT pr.AgencyPositionID, sr.SiteID
+       FROM site_rate sr
+       INNER JOIN site s ON s.SiteID = sr.SiteID
+       INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+       WHERE sr.SiteRateID = ? AND sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active'
        LIMIT 1`,
-      [clientRateId]
+      [siteRateId]
     )
-    if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active client rate.' })
+    if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active site rate.' })
 
-    const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1', [siteId, target.ClientID])
-    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site that belongs to the selected client rate.' })
+    if (Number(target.SiteID) !== Number(siteId)) throw createError({ statusCode: 400, statusMessage: 'The selected site does not match this site rate.' })
+    const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND Status = \'Active\' LIMIT 1', [siteId])
+    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select an active site.' })
     if (siteShiftId) {
       const [[shift]] = await connection.execute<any[]>('SELECT SiteShiftID FROM site_shift WHERE SiteShiftID = ? AND SiteID = ? AND Status = \'Active\' LIMIT 1', [siteShiftId, siteId])
       if (!shift) throw createError({ statusCode: 400, statusMessage: 'Select an active shift for the selected site.' })
@@ -1037,9 +1042,9 @@ export async function transferEmployee(event: any) {
 
     await connection.execute('UPDATE employee_deployment SET EndDate = DATE_SUB(?, INTERVAL 1 DAY) WHERE DeploymentID = ?', [startDate, current.DeploymentID])
     const [result] = await connection.execute<any>(
-      `INSERT INTO employee_deployment (EmployeeID, ClientRateID, SiteID, SiteShiftID, DeploymentType, StartDate, Remarks, CreatedBy)
+      `INSERT INTO employee_deployment (EmployeeID, SiteRateID, SiteID, SiteShiftID, DeploymentType, StartDate, Remarks, CreatedBy)
        VALUES (?, ?, ?, ?, 'Regular', ?, ?, ?)`,
-      [employeeId, clientRateId, siteId, siteShiftId, startDate, remarks, session.sub] as any[]
+      [employeeId, siteRateId, siteId, siteShiftId, startDate, remarks, session.sub] as any[]
     )
     await connection.execute('UPDATE employee SET AgencyPositionID = ?, UpdatedBy = ? WHERE EmployeeID = ?', [target.AgencyPositionID, session.sub, employeeId])
     await connection.commit()
@@ -1066,7 +1071,7 @@ function validHours(value: unknown, field: string) {
 export async function createTransferSiteShift(event: any) {
   const session = requireSession(event)
   const body = await readBody<Record<string, any>>(event) || {}
-  const clientRateId = parseInteger(body.ClientRateID, 'ClientRateID') as number
+  const siteRateId = parseInteger(body.SiteRateID, 'SiteRateID') as number
   const siteId = parseInteger(body.SiteID, 'SiteID') as number
   const requestedShiftCodeId = parseInteger(body.ShiftCodeID, 'ShiftCodeID', true) as number | null
   const newShift = body.newShift && typeof body.newShift === 'object' ? body.newShift as Record<string, unknown> : null
@@ -1076,17 +1081,19 @@ export async function createTransferSiteShift(event: any) {
   try {
     await connection.beginTransaction()
     const [[target]] = await connection.execute<any[]>(
-      `SELECT ap.AgencyID, cr.ClientID
-       FROM client_rate cr
-       INNER JOIN payroll_rate pr ON pr.PayrollRateID = cr.PayrollRateID
+      `SELECT ap.AgencyID, sr.SiteID
+       FROM site_rate sr
+       INNER JOIN site s ON s.SiteID = sr.SiteID
+       INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
        INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-       WHERE cr.ClientRateID = ? AND cr.Status = 'Active' AND pr.Status = 'Active'
+       WHERE sr.SiteRateID = ? AND sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active'
        LIMIT 1`,
-      [clientRateId]
+      [siteRateId]
     )
-    if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active client rate.' })
-    const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND ClientID = ? AND Status = \'Active\' LIMIT 1', [siteId, target.ClientID])
-    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site that belongs to the selected client rate.' })
+    if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active site rate.' })
+    if (Number(target.SiteID) !== Number(siteId)) throw createError({ statusCode: 400, statusMessage: 'The selected site does not match this site rate.' })
+    const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND Status = \'Active\' LIMIT 1', [siteId])
+    if (!site) throw createError({ statusCode: 400, statusMessage: 'Select an active site.' })
 
     let shiftCodeId = requestedShiftCodeId
     if (shiftCodeId) {

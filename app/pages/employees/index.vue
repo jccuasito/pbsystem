@@ -40,7 +40,7 @@ const deleteBusy = ref(false)
 const deleteError = ref('')
 const transferBusy = ref(false)
 const transferError = ref('')
-const transferClientRates = ref<any[]>([])
+const transferSiteRates = ref<any[]>([])
 const transferSites = ref<any[]>([])
 const transferShiftCodes = ref<any[]>([])
 const siteShiftCodes = ref<any[]>([])
@@ -105,7 +105,7 @@ const form = ref({
   EmergencyAddress: '',
   EmergencyContactNo: ''
 })
-const transferForm = ref({ ClientRateID: '', SiteID: '', SiteShiftID: '', StartDate: '', Remarks: '' })
+const transferForm = ref({ SiteRateID: '', SiteID: '', SiteShiftID: '', StartDate: '', Remarks: '' })
 const siteShiftForm = ref({ ShiftCodeID: '', ShiftCode: '', ShiftName: '', ShiftType: 'Day', TimeIn: '08:00', TimeOut: '17:00', RegularHours: '8', RegularOTCap: '4' })
 
 function beneficiariesFromEmployee(item: any): BeneficiaryEntry[] {
@@ -349,16 +349,16 @@ function discardEmployeeChanges() {
 }
 
 const availableTransferSites = computed(() => {
-  const rate = transferClientRates.value.find((item) => String(item.ClientRateID) === String(transferForm.value.ClientRateID))
-  return rate ? transferSites.value.filter((item) => String(item.ClientID) === String(rate.ClientID)) : []
+  const rate = transferSiteRates.value.find((item) => String(item.SiteRateID) === String(transferForm.value.SiteRateID))
+  return rate ? transferSites.value.filter((item) => String(item.SiteID) === String(rate.SiteID)) : []
 })
 
 const availableTransferShifts = computed(() => transferShiftCodes.value.filter((item) => String(item.SiteID) === String(transferForm.value.SiteID)))
-const selectedTransferRate = computed(() => transferClientRates.value.find((item) => String(item.ClientRateID) === String(transferForm.value.ClientRateID)) || null)
-const filteredTransferClientRates = computed(() => {
+const selectedTransferRate = computed(() => transferSiteRates.value.find((item) => String(item.SiteRateID) === String(transferForm.value.SiteRateID)) || null)
+const filteredTransferSiteRates = computed(() => {
   const query = rateSearch.value.trim().toLowerCase()
-  const results = transferClientRates.value.filter((item) => {
-    const matchesSearch = !query || [item.ClientName, item.AgencyName, item.PositionName].some((value) => String(value || '').toLowerCase().includes(query))
+  const results = transferSiteRates.value.filter((item) => {
+    const matchesSearch = !query || [item.SiteName, item.ClientName, item.AgencyName, item.PositionName].some((value) => String(value || '').toLowerCase().includes(query))
     return matchesSearch
   })
   return results.slice(0, 8)
@@ -616,26 +616,26 @@ function today() {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10)
 }
 
-function onTransferClientRateChanged() {
-  transferForm.value.SiteID = ''
+function onTransferSiteRateChanged() {
+  transferForm.value.SiteID = selectedTransferRate.value?.SiteID ? String(selectedTransferRate.value.SiteID) : ''
   transferForm.value.SiteShiftID = ''
 }
 
-function clientRateLabel(rate: any) {
-  return `${rate.ClientName} — ${rate.AgencyName} — ${rate.PositionName}`
+function siteRateLabel(rate: any) {
+  return `${rate.SiteName} — ${rate.ClientName} — ${rate.AgencyName} — ${rate.PositionName}`
 }
 
-function selectTransferClientRate(rate: any) {
-  transferForm.value.ClientRateID = String(rate.ClientRateID)
-  rateSearch.value = clientRateLabel(rate)
+function selectTransferSiteRate(rate: any) {
+  transferForm.value.SiteRateID = String(rate.SiteRateID)
+  rateSearch.value = siteRateLabel(rate)
   ratePickerOpen.value = false
-  onTransferClientRateChanged()
+  onTransferSiteRateChanged()
 }
 
 function onRateSearchInput() {
   ratePickerOpen.value = true
-  transferForm.value.ClientRateID = ''
-  onTransferClientRateChanged()
+  transferForm.value.SiteRateID = ''
+  onTransferSiteRateChanged()
 }
 
 function searchTransferRates() {
@@ -653,11 +653,11 @@ function onTransferSiteChanged() {
 async function openTransfer(item: any) {
   transferError.value = ''
   transferring.value = item
-  transferForm.value = { ClientRateID: '', SiteID: '', SiteShiftID: '', StartDate: today(), Remarks: '' }
+  transferForm.value = { SiteRateID: '', SiteID: '', SiteShiftID: '', StartDate: today(), Remarks: '' }
   rateSearch.value = ''
   try {
     const response: any = await $fetch('/api/employees/deployments')
-    transferClientRates.value = response.clientRates || []
+    transferSiteRates.value = response.siteRates || []
     transferSites.value = response.sites || []
     transferShiftCodes.value = response.shiftCodes || []
     transferOpen.value = true
@@ -667,7 +667,7 @@ async function openTransfer(item: any) {
 }
 
 async function openShiftSetup() {
-  if (!transferForm.value.ClientRateID || !transferForm.value.SiteID) return
+  if (!transferForm.value.SiteRateID || !transferForm.value.SiteID) return
   shiftSetupBusy.value = true
   shiftSetupError.value = ''
   try {
@@ -687,7 +687,7 @@ async function saveSiteShift() {
   shiftSetupBusy.value = true
   shiftSetupError.value = ''
   try {
-    const body: any = { ClientRateID: transferForm.value.ClientRateID, SiteID: transferForm.value.SiteID }
+    const body: any = { SiteRateID: transferForm.value.SiteRateID, SiteID: transferForm.value.SiteID }
     if (createNewShiftCode.value) body.newShift = { ...siteShiftForm.value }
     else body.ShiftCodeID = siteShiftForm.value.ShiftCodeID
     const response: any = await $fetch('/api/employees/site-shifts', { method: 'POST', body })
@@ -1064,20 +1064,20 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           <p class="transfer-subtitle">{{ transferring ? formatEmployeeName(transferring) : '' }}</p>
           <p class="transfer-note">The current deployment closes the day before the effective date. Previous attendance and payroll remain under that deployment.</p>
 
-          <label class="rate-picker" @click.stop>Find new assignment
-            <input v-model="rateSearch" type="search" autocomplete="off" placeholder="Search client, agency, or position" @focus="ratePickerOpen = true" @input="onRateSearchInput" />
+          <label class="rate-picker" @click.stop>Find site rate
+            <input v-model="rateSearch" type="search" autocomplete="off" placeholder="Search site, client, agency, or position" @focus="ratePickerOpen = true" @input="onRateSearchInput" />
             <button type="button" class="rate-search-button" @click="searchTransferRates">Search</button>
             <div v-if="ratePickerOpen" class="rate-picker__results">
-              <button v-for="rate in filteredTransferClientRates" :key="rate.ClientRateID" type="button" @click="selectTransferClientRate(rate)">
-                <strong>{{ rate.ClientName }}</strong><span>{{ rate.AgencyName }} — {{ rate.PositionName }}</span>
+              <button v-for="rate in filteredTransferSiteRates" :key="rate.SiteRateID" type="button" @click="selectTransferSiteRate(rate)">
+                <strong>{{ rate.SiteName }}</strong><span>{{ rate.ClientName }} · {{ rate.AgencyName }} — {{ rate.PositionName }}</span>
               </button>
-              <p v-if="!filteredTransferClientRates.length">No matching client rate.</p>
+              <p v-if="!filteredTransferSiteRates.length">No matching site rate.</p>
             </div>
-            <small v-if="selectedTransferRate">Selected: {{ clientRateLabel(selectedTransferRate) }}</small>
+            <small v-if="selectedTransferRate">Selected: {{ siteRateLabel(selectedTransferRate) }}</small>
           </label>
           <div class="grid">
             <label>New site
-              <select v-model="transferForm.SiteID" required :disabled="!transferForm.ClientRateID" @change="onTransferSiteChanged">
+              <select v-model="transferForm.SiteID" required :disabled="!transferForm.SiteRateID" @change="onTransferSiteChanged">
                 <option value="">Select site</option>
                 <option v-for="site in availableTransferSites" :key="site.SiteID" :value="site.SiteID">{{ site.SiteName }}</option>
               </select>

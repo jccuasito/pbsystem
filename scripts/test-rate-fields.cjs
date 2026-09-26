@@ -69,9 +69,9 @@ test('payroll and billing forms submit, reopen, and reset every additional rate'
   }
 })
 
-test('client inline creation sends complete payroll/billing amounts and linked previews expose them', async () => {
-  const { state, calls } = component('components/ClientRateCrud.vue', 'reset,form,save,inlinePayroll,inlineBilling,inlinePayrollAmounts,inlineBillingAmounts,payrollRates,billingRates,selectedPayroll,selectedBilling')
-  state.reset(); state.form.value = { ClientID: 1, AgencyPositionID: 1, PayrollRateID: '', BillingRateID: '', Status: 'Active' }
+test('site inline creation sends complete payroll/billing amounts and linked previews expose them', async () => {
+  const { state, calls } = component('components/SiteRateCrud.vue', 'reset,form,save,inlinePayroll,inlineBilling,inlinePayrollAmounts,inlineBillingAmounts,payrollRates,billingRates,selectedPayroll,selectedBilling')
+  state.reset(); state.form.value = { SiteID: 1, AgencyPositionID: 1, PayrollRateID: '', BillingRateID: '', Status: 'Active' }
   state.inlinePayroll.value = true; state.inlineBilling.value = true
   state.inlinePayrollAmounts.value = { ...fields.emptyRateAmounts(), ...visibleAmounts }
   state.inlineBillingAmounts.value = { ...fields.emptyRateAmounts(), ...visibleAmounts, OTExtRate: 200 }
@@ -94,14 +94,15 @@ test('shared money input compiles with the shared field definitions', () => {
   assert.deepEqual(sfc.compileStyle({ source: descriptor.styles[0].content, filename, id: 'rate-input', scoped: true }).errors, [])
 })
 
-test('MySQL rate create/list/update and inline client linking preserve extra amounts (rolled back)', { skip: process.env.RATES_TEST_DATABASE !== '1' }, async () => {
+test('MySQL rate create/list/update and inline site linking preserve extra amounts (rolled back)', { skip: process.env.RATES_TEST_DATABASE !== '1' }, async () => {
   const env = { ...require('node:util').parseEnv(fs.readFileSync('.env', 'utf8')), ...process.env }
   const connection = await require('mysql2/promise').createConnection({ host: env.DB_HOST || '127.0.0.1', port: Number(env.DB_PORT || 3306), user: env.DB_USER || 'root', password: env.DB_PASSWORD, database: env.DB_NAME || 'pbsystem', dateStrings: true })
   await connection.beginTransaction()
   try {
     const [[position]] = await connection.execute("SELECT AgencyPositionID FROM agency_position WHERE Status='Active' LIMIT 1")
-    const [[client]] = await connection.execute("SELECT ClientID FROM client WHERE Status='Active' LIMIT 1")
-    assert.ok(position && client, 'An active agency position and client are needed')
+    const [[client]] = await connection.execute("SELECT ClientID, RegionID FROM client WHERE Status='Active' AND RegionID IS NOT NULL LIMIT 1")
+    assert.ok(position && client, 'An active agency position and a client with a region are needed')
+    const [siteResult] = await connection.execute("INSERT INTO site (ClientID, RegionID, SiteName, Status) VALUES (?, ?, ?, 'Active')", [client.ClientID, client.RegionID, `RATE TEST ${Date.now()}`])
     const wrapped = { execute: (...args) => connection.execute(...args),
       beginTransaction: () => connection.query('SAVEPOINT rate_test'), commit: () => connection.query('RELEASE SAVEPOINT rate_test'),
       rollback: () => connection.query('ROLLBACK TO SAVEPOINT rate_test'), release() {} }
@@ -129,16 +130,17 @@ test('MySQL rate create/list/update and inline client linking preserve extra amo
       const defaults = (await api.listRateResource({ resource })).items.find(row => row[idKey] === zero.id)
       for (const key of additional) assert.equal(Number(defaults[key]), 0)
     }
-    const clientBody = { ClientID: client.ClientID, AgencyPositionID: position.AgencyPositionID, inlinePayrollRate: amounts, inlineBillingRate: { ...amounts, RestDayOTRate: 222 } }
-    const linked = await api.createRateResource({ resource: 'client-rate', body: clientBody })
-    const listing = await api.listRateResource({ resource: 'client-rate' })
-    const link = listing.items.find(row => row.ClientRateID === linked.id)
+    const clientBody = { SiteID: siteResult.insertId, AgencyPositionID: position.AgencyPositionID, inlinePayrollRate: amounts, inlineBillingRate: { ...amounts, RestDayOTRate: 222 } }
+    const linked = await api.createRateResource({ resource: 'site-rate', body: clientBody })
+    const listing = await api.listRateResource({ resource: 'site-rate' })
+    const link = listing.items.find(row => row.SiteRateID === linked.id)
     const payroll = listing.payrollRates.find(row => row.PayrollRateID === link.PayrollRateID)
     const billing = listing.billingRates.find(row => row.BillingRateID === link.BillingRateID)
     for (const key of additional) assert.equal(Number(payroll[key]), amounts[key])
     assert.equal(Number(billing.RestDayOTRate), 222)
+    await assert.rejects(api.createRateResource({ resource: 'site-rate', body: { SiteID: siteResult.insertId, AgencyPositionID: position.AgencyPositionID, PayrollRateID: link.PayrollRateID, BillingRateID: link.BillingRateID } }), error => error.statusCode === 409)
     const [[before]] = await connection.execute('SELECT COUNT(*) AS Count FROM payroll_rate')
-    await assert.rejects(api.createRateResource({ resource: 'client-rate', body: { ...clientBody, inlineBillingRate: { ...amounts, OTExtRate: -1 } } }), /OTExtRate/)
+    await assert.rejects(api.createRateResource({ resource: 'site-rate', body: { ...clientBody, inlineBillingRate: { ...amounts, OTExtRate: -1 } } }), /OTExtRate/)
     const [[after]] = await connection.execute('SELECT COUNT(*) AS Count FROM payroll_rate')
     assert.equal(after.Count, before.Count, 'Failed inline billing rolls back the paired payroll insert')
   } finally { await connection.rollback(); await connection.end() }

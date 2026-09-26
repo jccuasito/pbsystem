@@ -13,7 +13,7 @@ import SitePage from '../organization/site/index.vue'
 import RegionPage from '../organization/region/index.vue'
 import PayrollRatePage from '../rates/payroll/index.vue'
 import BillingRatePage from '../rates/billing/index.vue'
-import ClientRatePage from '../rates/client/index.vue'
+import SiteRatePage from '../rates/site/index.vue'
 import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
 import ShiftCodePage from '../attendance/shift-code/index.vue'
 import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
@@ -33,13 +33,13 @@ type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
   | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payslip' | 'payroll-history'
-  | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-client'
+  | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
   | 'deductions' | 'loans' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
   'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payslip', 'payroll-history',
-  'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-client',
+  'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
   'deductions', 'loans', 'reports', 'settings'
 ])
 const activeWorkspaceView = computed<WorkspaceView | null>(() => {
@@ -187,7 +187,7 @@ const navGroups = [
     children: [
       { label: 'Payroll Rate', to: '/rates/payroll', icon: 'peso', view: 'rates-payroll' },
       { label: 'Billing Rate', to: '/rates/billing', icon: 'peso', view: 'rates-billing' },
-      { label: 'Client Rate', to: '/rates/client', icon: 'building', view: 'rates-client' }
+      { label: 'Site Rates', to: '/rates/site', icon: 'building', view: 'rates-site' }
     ]
   },
   {
@@ -237,7 +237,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'organization-region': RegionPage,
   'rates-payroll': PayrollRatePage,
   'rates-billing': BillingRatePage,
-  'rates-client': ClientRatePage,
+  'rates-site': SiteRatePage,
   'attendance-dtr': DailyTimeRecordsPage,
   'attendance-shift-code': ShiftCodePage,
   'attendance-holiday-manager': HolidayManagerPage

@@ -140,18 +140,18 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/organization/region/index.vue`
   - `app/pages/organization/site/index.vue`
   - `app/pages/rates/billing/index.vue`
-  - `app/pages/rates/client/index.vue`
   - `app/pages/rates/payroll/index.vue`
+  - `app/pages/rates/site/index.vue`
   - `app/utils/employee.ts`
   - `components/alertmessage/logoutalert.vue`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
-  - `components/ClientRateCrud.vue`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/RateCrud.vue`
   - `components/RateMoneyFields.vue`
   - `components/SearchableSelect.vue`
+  - `components/SiteRateCrud.vue`
   - `shared/utils/deployment.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
@@ -217,10 +217,10 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/[param]` → `server/api/rates/[resource].put.ts`
-  - `DELETE /api/rates/client-rate` → `server/api/rates/[resource].delete.ts`
-  - `GET /api/rates/client-rate` → `server/api/rates/[resource].get.ts`
-  - `POST /api/rates/client-rate` → `server/api/rates/[resource].post.ts`
-  - `PUT /api/rates/client-rate` → `server/api/rates/[resource].put.ts`
+  - `DELETE /api/rates/site-rate` → `server/api/rates/[resource].delete.ts`
+  - `GET /api/rates/site-rate` → `server/api/rates/[resource].get.ts`
+  - `POST /api/rates/site-rate` → `server/api/rates/[resource].post.ts`
+  - `PUT /api/rates/site-rate` → `server/api/rates/[resource].put.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
@@ -519,30 +519,6 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - None detected.
 - Links to: none detected.
 
-### `/rates/client`
-
-- Page: `app/pages/rates/client/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
-- Related frontend files:
-  - `app/composables/useRealtimeRefresh.ts`
-  - `components/ClientRateCrud.vue`
-  - `components/RateMoneyFields.vue`
-  - `shared/utils/rateFields.ts`
-- API calls and handlers:
-  - `DELETE /api/rates/client-rate` → `server/api/rates/[resource].delete.ts`
-  - `GET /api/rates/client-rate` → `server/api/rates/[resource].get.ts`
-  - `POST /api/rates/client-rate` → `server/api/rates/[resource].post.ts`
-  - `PUT /api/rates/client-rate` → `server/api/rates/[resource].put.ts`
-- Related backend utilities:
-  - `server/connection/dbconnect.ts`
-  - `server/utils/auth.ts`
-  - `server/utils/jwt.ts`
-  - `server/utils/rateCrud.ts`
-  - `shared/utils/rateFields.ts`
-- Static assets:
-  - None detected.
-- Links to: none detected.
-
 ### `/rates/payroll`
 
 - Page: `app/pages/rates/payroll/index.vue`
@@ -557,6 +533,30 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/[param]` → `server/api/rates/[resource].put.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/rateCrud.ts`
+  - `shared/utils/rateFields.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/rates/site`
+
+- Page: `app/pages/rates/site/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
+- Related frontend files:
+  - `app/composables/useRealtimeRefresh.ts`
+  - `components/RateMoneyFields.vue`
+  - `components/SiteRateCrud.vue`
+  - `shared/utils/rateFields.ts`
+- API calls and handlers:
+  - `DELETE /api/rates/site-rate` → `server/api/rates/[resource].delete.ts`
+  - `GET /api/rates/site-rate` → `server/api/rates/[resource].get.ts`
+  - `POST /api/rates/site-rate` → `server/api/rates/[resource].post.ts`
+  - `PUT /api/rates/site-rate` → `server/api/rates/[resource].put.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
