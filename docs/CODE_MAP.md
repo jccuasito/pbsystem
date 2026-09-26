@@ -550,6 +550,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/RateMoneyFields.vue`
+  - `components/SearchableSelect.vue`
   - `components/SiteRateCrud.vue`
   - `shared/utils/rateFields.ts`
 - API calls and handlers:
