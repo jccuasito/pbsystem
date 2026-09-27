@@ -14,7 +14,7 @@ function evaluate(source, dependencies = {}) {
   return module.exports
 }
 
-test('catalog page compiles and keeps amounts out of the master form', () => {
+test('catalog page compiles as a reusable-name lookup form', () => {
   const filename = 'app/pages/deductions-loans/catalog/index.vue'
   const source = fs.readFileSync(filename, 'utf8')
   const { descriptor, errors } = sfc.parse(source, { filename })
@@ -31,6 +31,7 @@ test('catalog page compiles and keeps amounts out of the master form', () => {
   }
   assert.doesNotMatch(descriptor.template.content, /Loan amount|Deduction amount|Remaining balance|Amortization/i)
   assert.doesNotMatch(descriptor.template.content, /Provider or agency|Government agency/i)
+  assert.doesNotMatch(descriptor.template.content, /Deduction category|Default frequency|Description/i)
   assert.match(descriptor.template.content, /Parent classification/)
   assert.match(descriptor.template.content, /Sub-classification/)
   assert.match(descriptor.template.content, /classification-group-row/)
@@ -39,6 +40,7 @@ test('catalog page compiles and keeps amounts out of the master form', () => {
   assert.match(descriptor.template.content, /\+ Add classification/)
   assert.match(descriptor.template.content, /\+ Add sub-classification/)
   assert.match(descriptor.scriptSetup.content, /openTypeForClassification/)
+  assert.doesNotMatch(descriptor.scriptSetup.content, /DeductionCategory|DeductionPeriod|GovernmentAgency/)
 })
 
 test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classification deactivation', { skip: process.env.CATALOG_TEST_DATABASE !== '1' }, async () => {
@@ -88,7 +90,7 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
     })
     const loan = await api.createDeductionLoanCatalog({
       resource: 'loan-type',
-      body: { LoanName: `TEST LOAN ${suffix}`, ClassificationID: classification.id, GovernmentAgency: 'Test Provider', Status: 'Active' },
+      body: { LoanName: `TEST LOAN ${suffix}`, ClassificationID: classification.id, Status: 'Active' },
     })
     const sameNameUnderAnotherParent = await api.createDeductionLoanCatalog({
       resource: 'loan-type',
@@ -110,7 +112,7 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
     )
     const deduction = await api.createDeductionLoanCatalog({
       resource: 'deduction-type',
-      body: { DeductionName: `TEST DEDUCTION ${suffix}`, ClassificationID: deductionClassification.id, DeductionCategory: 'Company', DeductionPeriod: 'Semi-Monthly', Status: 'Active' },
+      body: { DeductionName: `TEST DEDUCTION ${suffix}`, ClassificationID: deductionClassification.id, Status: 'Active' },
     })
 
     const loans = await api.listDeductionLoanCatalog({ resource: 'loan-type' })
@@ -118,18 +120,16 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
     const savedLoan = loans.items.find(item => Number(item.LoanTypeID) === Number(loan.id))
     const savedDeduction = deductions.items.find(item => Number(item.DeductionTypeID) === Number(deduction.id))
     assert.equal(savedLoan.ClassificationID, classification.id)
-    assert.equal(savedLoan.GovernmentAgency, 'Test Provider')
-    assert.equal(savedDeduction.DeductionPeriod, 'Semi-Monthly')
+    assert.equal(savedDeduction.ClassificationID, deductionClassification.id)
     assert.equal('LoanAmount' in savedLoan, false)
     assert.equal('Amount' in savedDeduction, false)
 
     await api.updateDeductionLoanCatalog({
       resource: 'loan-type',
-      body: { id: loan.id, LoanName: `UPDATED LOAN ${suffix}`, ClassificationID: classification.id, GovernmentAgency: '', Description: 'Updated', Status: 'Active' },
+      body: { id: loan.id, LoanName: `UPDATED LOAN ${suffix}`, ClassificationID: classification.id, Status: 'Active' },
     })
     const updated = (await api.listDeductionLoanCatalog({ resource: 'loan-type' })).items.find(item => Number(item.LoanTypeID) === Number(loan.id))
     assert.equal(updated.LoanName, `UPDATED LOAN ${suffix}`)
-    assert.equal(updated.Description, 'Updated')
 
     await assert.rejects(
       api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: classification.id } }),

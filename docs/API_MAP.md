@@ -99,7 +99,7 @@ The complete monetary fields are `RegularRate`, `OTRate`, `OTExtRate`, `NightDif
 
 ## Deductions & Loans
 
-All catalog routes require a session. `:resource` is restricted to `classification`, `loan-type`, or `deduction-type`. The UI presents one hierarchical list: a classification is the expandable parent group (for example, PAG-IBIG or SSS), while the existing loan/deduction type rows are labeled sub-classifications (for example, MPL, Calamity Loan, or Salary Loan). The page-level action creates a classification. Each parent row has an Add sub-classification action that opens the child form with its type and parent locked to that classification. The catalog stores reusable setup records only; employee amounts, balances, payment schedules, and payroll postings remain in the later employee deduction/loan processes.
+All catalog routes require a session. `:resource` is restricted to `classification`, `loan-type`, or `deduction-type`. The UI presents one hierarchical lookup list: a classification is the expandable parent group (for example, PAG-IBIG or SSS), while the existing loan/deduction type rows are labeled sub-classifications (for example, MPL, Calamity Loan, or Salary Loan). The page-level action creates a classification. Each parent row has an Add sub-classification action that opens the child form with its type and parent locked to that classification. The forms collect only the reusable name, parent/type, and active status. Employee amounts, frequency, balances, schedules, and payroll postings belong to the later employee deduction/loan processes, which reference the saved `LoanTypeID` or `DeductionTypeID`.
 
 | Method | Path | Tables used | Caller | Request / response |
 | --- | --- | --- | --- | --- |

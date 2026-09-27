@@ -10,7 +10,6 @@ type Classification = {
   ClassificationID: number
   ClassificationName: string
   AppliesTo: AppliesTo
-  Description: string | null
   Status: Status
   LoanTypeCount?: number
   DeductionTypeCount?: number
@@ -22,10 +21,7 @@ type CatalogItem = {
   kind: Kind
   ClassificationID: number | null
   ClassificationName: string | null
-  detail: string
-  description: string | null
   Status: Status
-  source: any
 }
 
 const loanTypes = ref<any[]>([])
@@ -50,16 +46,12 @@ const typeForm = ref({
   Kind: 'Loan' as Kind,
   Name: '',
   ClassificationID: '',
-  DeductionCategory: 'Other',
-  DeductionPeriod: 'Monthly',
-  Description: '',
   Status: 'Active' as Status,
 })
 
 const classificationForm = ref({
   ClassificationName: '',
   AppliesTo: 'Loan' as AppliesTo,
-  Description: '',
   Status: 'Active' as Status,
 })
 
@@ -70,10 +62,7 @@ const catalogItems = computed<CatalogItem[]>(() => [
     kind: 'Loan' as Kind,
     ClassificationID: item.ClassificationID ? Number(item.ClassificationID) : null,
     ClassificationName: item.ClassificationName,
-    detail: '—',
-    description: item.Description,
     Status: item.Status,
-    source: item,
   })),
   ...deductionTypes.value.map(item => ({
     id: Number(item.DeductionTypeID),
@@ -81,10 +70,7 @@ const catalogItems = computed<CatalogItem[]>(() => [
     kind: 'Deduction' as Kind,
     ClassificationID: item.ClassificationID ? Number(item.ClassificationID) : null,
     ClassificationName: item.ClassificationName,
-    detail: `${item.DeductionCategory || 'Other'} · ${item.DeductionPeriod || 'Monthly'}`,
-    description: item.Description,
     Status: item.Status,
-    source: item,
   })),
 ].sort((a, b) => a.name.localeCompare(b.name)))
 
@@ -100,14 +86,14 @@ const groupedTypes = computed(() => {
       && (!classificationFilter.value || Number(item.ClassificationID) === Number(classificationFilter.value))
       && (!statusFilter.value || item.Status === statusFilter.value))
     .map(item => {
-      const parentHaystack = [item.ClassificationName, item.AppliesTo, item.Description, item.Status].join(' ').toLocaleLowerCase()
+      const parentHaystack = [item.ClassificationName, item.AppliesTo, item.Status].join(' ').toLocaleLowerCase()
       const parentMatches = words.every(word => parentHaystack.includes(word))
       const eligibleChildren = catalogItems.value.filter(child => Number(child.ClassificationID) === Number(item.ClassificationID)
         && (!statusFilter.value || child.Status === statusFilter.value))
       const items = !words.length || parentMatches
         ? eligibleChildren
         : eligibleChildren.filter(child => {
-            const haystack = [child.name, child.kind, child.detail, child.description, child.Status].join(' ').toLocaleLowerCase()
+            const haystack = [child.name, child.kind, child.Status].join(' ').toLocaleLowerCase()
             return words.every(word => haystack.includes(word))
           })
       return {
@@ -169,13 +155,10 @@ function openType(item: CatalogItem | null = null) {
     Kind: item.kind,
     Name: item.name,
     ClassificationID: String(item.ClassificationID || ''),
-    DeductionCategory: item.source.DeductionCategory || 'Other',
-    DeductionPeriod: item.source.DeductionPeriod || 'Monthly',
-    Description: item.description || '',
     Status: item.Status,
   } : {
     Kind: kindFilter.value === 'Deduction' ? 'Deduction' : 'Loan',
-    Name: '', ClassificationID: '', DeductionCategory: 'Other', DeductionPeriod: 'Monthly', Description: '', Status: 'Active',
+    Name: '', ClassificationID: '', Status: 'Active',
   }
   modalOpen.value = true
 }
@@ -194,9 +177,8 @@ function openClassification(item: Classification | null = null) {
   classificationForm.value = item ? {
     ClassificationName: item.ClassificationName,
     AppliesTo: item.AppliesTo,
-    Description: item.Description || '',
     Status: item.Status,
-  } : { ClassificationName: '', AppliesTo: 'Loan', Description: '', Status: 'Active' }
+  } : { ClassificationName: '', AppliesTo: 'Loan', Status: 'Active' }
   modalOpen.value = true
 }
 
@@ -223,16 +205,12 @@ async function save() {
       const body: Record<string, unknown> = {
         ...(editing.value ? { id: editing.value.id } : {}),
         ClassificationID: Number(typeForm.value.ClassificationID),
-        Description: typeForm.value.Description,
         Status: typeForm.value.Status,
       }
       if (typeForm.value.Kind === 'Loan') {
         body.LoanName = typeForm.value.Name
-        body.GovernmentAgency = ''
       } else {
         body.DeductionName = typeForm.value.Name
-        body.DeductionCategory = typeForm.value.DeductionCategory
-        body.DeductionPeriod = typeForm.value.DeductionPeriod
       }
       await $fetch(`/api/deductions-loans/${resource}`, { method: editing.value ? 'PUT' : 'POST', body })
     }
@@ -289,7 +267,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
       <div>
         <p>DEDUCTIONS &amp; LOANS</p>
         <h1>Loan &amp; Deduction Catalog</h1>
-        <small>Create classifications and their reusable sub-classifications. Employee amounts and schedules are assigned later.</small>
+        <small>Maintain the names available when assigning loans and deductions to employees.</small>
       </div>
       <button class="primary" type="button" @click="openPrimaryModal">+ Add classification</button>
     </header>
@@ -335,7 +313,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
               </td>
             </tr>
             <tr v-for="item in collapsedClassifications.has(group.key) ? [] : group.items" :key="`${item.kind}-${item.id}`" class="subclassification-row">
-              <td><strong>{{ item.name }}</strong><small v-if="item.detail !== '—'">{{ item.detail }}</small><small v-if="item.description">{{ item.description }}</small></td>
+              <td><strong>{{ item.name }}</strong></td>
               <td><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></td>
               <td><div class="actions"><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></div></td>
             </tr>
@@ -363,8 +341,6 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
             <div v-if="!group.items.length" class="mobile-empty"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></div>
             <article v-for="item in group.items" :key="`${item.kind}-${item.id}`" class="record-card">
               <header><strong>{{ item.name }}</strong><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></header>
-              <div v-if="item.detail !== '—'" class="card-tags"><span>{{ item.detail }}</span></div>
-              <p v-if="item.description">{{ item.description }}</p>
               <footer><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></footer>
             </article>
           </div>
@@ -376,24 +352,18 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
       <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">
         <form class="catalog-modal" @submit.prevent="save">
           <button type="button" class="close" aria-label="Close" :disabled="busy" @click="closeModal">×</button>
-          <header class="modal-heading"><p>DEDUCTIONS &amp; LOANS</p><h2>{{ modalTitle }}</h2><span>{{ modalKind === 'classification' ? (editing ? 'Update this parent classification.' : 'Create a parent classification, then add its sub-classifications from the catalog list.') : editing ? 'Update the sub-classification and its parent assignment.' : 'Add a reusable child under the selected parent classification.' }} Employee amounts are entered later.</span></header>
+          <header class="modal-heading"><p>DEDUCTIONS &amp; LOANS</p><h2>{{ modalTitle }}</h2><span>{{ modalKind === 'classification' ? (editing ? 'Update this catalog classification.' : 'Create a classification for reusable loan or deduction names.') : editing ? 'Update this reusable name and its parent classification.' : 'Add a reusable name that can be selected during employee assignment.' }}</span></header>
 
           <div v-if="modalKind === 'type'" class="form-grid">
             <label class="form-field"><span>Type</span><select v-model="typeForm.Kind" :disabled="Boolean(editing) || parentClassificationLocked" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option></select></label>
             <label class="form-field"><span>Sub-classification name</span><input v-model="typeForm.Name" maxlength="100" :placeholder="typeForm.Kind === 'Loan' ? 'e.g. SSS Salary Loan' : 'e.g. Uniform deduction'" required></label>
             <label class="form-field form-field--wide"><span>Parent classification</span><select v-model="typeForm.ClassificationID" :disabled="parentClassificationLocked" required><option value="">Select classification</option><option v-for="item in compatibleClassifications" :key="item.ClassificationID" :value="String(item.ClassificationID)">{{ item.ClassificationName }}{{ item.Status === 'Inactive' ? ' (Inactive)' : '' }}</option></select><small v-if="parentClassificationLocked">This sub-classification will be added under the selected parent.</small></label>
-            <template v-if="typeForm.Kind === 'Deduction'">
-              <label class="form-field"><span>Deduction category</span><select v-model="typeForm.DeductionCategory"><option>Government</option><option>Loan</option><option>Company</option><option>Other</option></select></label>
-              <label class="form-field"><span>Default frequency</span><select v-model="typeForm.DeductionPeriod"><option>Monthly</option><option>Semi-Monthly</option><option>Weekly</option><option>One-Time</option></select></label>
-            </template>
-            <label class="form-field form-field--wide"><span>Description <em>Optional</em></span><textarea v-model="typeForm.Description" maxlength="255" placeholder="Short note explaining when this type is used"></textarea></label>
             <label class="form-field"><span>Status</span><select v-model="typeForm.Status"><option>Active</option><option>Inactive</option></select></label>
           </div>
 
           <div v-else class="form-grid">
             <label class="form-field"><span>Classification name</span><input v-model="classificationForm.ClassificationName" maxlength="100" placeholder="e.g. PAG-IBIG or SSS" required></label>
             <label class="form-field"><span>Applies to</span><select v-model="classificationForm.AppliesTo"><option>Loan</option><option>Deduction</option></select></label>
-            <label class="form-field form-field--wide"><span>Description <em>Optional</em></span><textarea v-model="classificationForm.Description" maxlength="255" placeholder="Describe the group of records under this classification"></textarea></label>
             <label class="form-field"><span>Status</span><select v-model="classificationForm.Status"><option>Active</option><option>Inactive</option></select></label>
           </div>
 
