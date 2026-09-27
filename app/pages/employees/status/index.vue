@@ -16,6 +16,9 @@ const sheetOpen = ref(false), statusOpen = ref(false), summaryOpen = ref(false)
 const sheetSearch = ref(''), sheetEmployeeId = ref('')
 const now = new Date(), selectedYear = ref(String(now.getFullYear()))
 const selectedCutoffKey = ref(''), summaryEmployeeId = ref('')
+const summaryLoading = ref(false), summaryError = ref('')
+const summaryYear = ref(''), summaryStatusFilter = ref(''), expandedSummaryPeriod = ref('')
+const summaryAvailableYears = ref<number[]>([]), summaryHistoryRows = ref<any[]>([]), summaryCutoffRows = ref<any[]>([])
 const alert = ref<AlertMessage | null>(null)
 const statusForm = ref({ EmployeeID: '', AttendanceStatus: 'On-Leave', StartDate: '', EndDate: '', Remarks: '' })
 
@@ -113,12 +116,44 @@ const statusAssignment = computed(() => deploymentAt(statusForm.value.EmployeeID
 const sheetEmployee = computed(() => employees.value.find(item => String(item.EmployeeID) === sheetEmployeeId.value) || null)
 const selectedSheetAgency = computed(() => cutoffAssignment(sheetEmployeeId.value)?.AgencyName || sheetEmployee.value?.AgencyName || 'No agency assignment')
 const summaryEmployee = computed(() => employees.value.find(item => String(item.EmployeeID) === summaryEmployeeId.value) || null)
-const selectedHistory = computed(() => history.value.filter(item => String(item.EmployeeID) === summaryEmployeeId.value))
-const summaryCutoffs = computed(() => cutoffs.value.filter(item => String(item.EmployeeID) === summaryEmployeeId.value))
+const summaryStatusOptions = computed(() => [...new Set(summaryHistoryRows.value.map(item => String(item.AttendanceStatus || '')).filter(Boolean))].sort())
 const summaryCounts = computed(() => {
   const counts: Record<string, number> = {}
-  for (const row of selectedHistory.value) counts[row.AttendanceStatus] = (counts[row.AttendanceStatus] || 0) + 1
+  for (const row of summaryHistoryRows.value) counts[row.AttendanceStatus] = (counts[row.AttendanceStatus] || 0) + 1
   return Object.entries(counts).sort((a, b) => b[1] - a[1])
+})
+const summaryPeriods = computed(() => {
+  const periods = new Map<string, any>()
+  for (const cutoff of summaryCutoffRows.value) {
+    const key = `batch-${cutoff.BatchID}`
+    periods.set(key, { ...cutoff, key, pending: false, rows: [] })
+  }
+  for (const row of summaryHistoryRows.value) {
+    const month = dateOnly(row.AttendanceDate).slice(0, 7)
+    const key = row.BatchID ? `batch-${row.BatchID}` : `pending-${month}`
+    if (!periods.has(key)) {
+      periods.set(key, {
+        ...row,
+        key,
+        pending: !row.BatchID,
+        PeriodStart: row.PeriodStart || `${month}-01`,
+        PeriodEnd: row.PeriodEnd || dateOnly(row.AttendanceDate),
+        DtrStatus: row.DtrStatus || 'Waiting for cutoff',
+        rows: [],
+      })
+    }
+    const period = periods.get(key)
+    period.rows.push(row)
+    if (period.pending && dateOnly(row.AttendanceDate) > dateOnly(period.PeriodEnd)) period.PeriodEnd = row.AttendanceDate
+  }
+  return [...periods.values()].map(period => {
+    const allRows = [...period.rows].sort((a, b) => dateOnly(a.AttendanceDate).localeCompare(dateOnly(b.AttendanceDate)))
+    const visibleRows = summaryStatusFilter.value ? allRows.filter(row => row.AttendanceStatus === summaryStatusFilter.value) : allRows
+    const counts: Record<string, number> = {}
+    for (const row of allRows) counts[row.AttendanceStatus] = (counts[row.AttendanceStatus] || 0) + 1
+    return { ...period, rows: allRows, visibleRows, counts: Object.entries(counts).sort((a, b) => b[1] - a[1]), ranges: groupStatusRanges(visibleRows) }
+  }).filter(period => !summaryStatusFilter.value || period.visibleRows.length)
+    .sort((a, b) => dateOnly(b.PeriodEnd).localeCompare(dateOnly(a.PeriodEnd)) || Number(b.BatchID || 0) - Number(a.BatchID || 0))
 })
 const canSaveStatus = computed(() => Boolean(statusForm.value.EmployeeID && statusForm.value.AttendanceStatus && statusForm.value.StartDate) && !saving.value)
 
@@ -126,6 +161,37 @@ function statusAt(employeeId: any, attendanceDate: string) { return statusByEmpl
 function isLocked(record: any) { return Boolean(record?.BatchID && record?.DtrStatus && record.DtrStatus !== 'Draft') }
 function dateHeader(value: string) { return parseDate(value).toLocaleDateString('en-PH', { weekday: 'short' }) }
 function latestStatus(employeeId: any) { return history.value.find(item => String(item.EmployeeID) === String(employeeId)) || null }
+
+function groupStatusRanges(rows: any[]) {
+  const ranges: any[] = []
+  for (const row of rows) {
+    const attendanceDate = dateOnly(row.AttendanceDate)
+    const previous = ranges[ranges.length - 1]
+    const previousDate = previous ? parseDate(previous.end) : null
+    if (previousDate) previousDate.setDate(previousDate.getDate() + 1)
+    const consecutive = previousDate ? isoDate(previousDate) === attendanceDate : false
+    if (previous && consecutive && previous.status === row.AttendanceStatus && String(previous.remarks || '') === String(row.Remarks || '')) {
+      previous.end = attendanceDate
+      previous.days++
+    } else {
+      ranges.push({ start: attendanceDate, end: attendanceDate, days: 1, status: row.AttendanceStatus, remarks: row.Remarks || '' })
+    }
+  }
+  return ranges.reverse()
+}
+
+function summaryRangeLabel(range: any) {
+  return range.start === range.end ? formatDate(range.start) : `${formatDate(range.start)} – ${formatDate(range.end)}`
+}
+
+function summaryPeriodLabel(period: any) {
+  if (!period.pending) return periodLabel(period)
+  return parseDate(`${dateOnly(period.PeriodStart).slice(0, 7)}-01`).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })
+}
+
+function toggleSummaryPeriod(key: string) {
+  expandedSummaryPeriod.value = expandedSummaryPeriod.value === key ? '' : key
+}
 
 watch([selectedYear, cutoffOptions], ([year, options]) => {
   if (selectedCutoffKey.value && options.some(item => item.key === selectedCutoffKey.value)) return
@@ -167,8 +233,32 @@ function openStatusCell(employee: any, attendanceDate: string) {
 }
 async function openSummary(employee: any) {
   summaryEmployeeId.value = String(employee.EmployeeID)
+  summaryYear.value = ''
+  summaryStatusFilter.value = ''
+  summaryHistoryRows.value = []
+  summaryCutoffRows.value = []
+  summaryError.value = ''
   summaryOpen.value = true
-  await load(true)
+  await loadSummary()
+}
+async function loadSummary() {
+  if (!summaryEmployeeId.value) return
+  summaryLoading.value = true
+  summaryError.value = ''
+  try {
+    const result = await $fetch<any>(`/api/employees/status/${summaryEmployeeId.value}/summary`, {
+      query: summaryYear.value ? { year: summaryYear.value } : undefined,
+    })
+    summaryYear.value = String(result.year)
+    summaryAvailableYears.value = result.availableYears || []
+    summaryCutoffRows.value = result.cutoffs || []
+    summaryHistoryRows.value = result.history || []
+    expandedSummaryPeriod.value = summaryPeriods.value[0]?.key || ''
+  } catch (cause: any) {
+    summaryError.value = cause.data?.statusMessage || 'Unable to load this employee history.'
+  } finally {
+    summaryLoading.value = false
+  }
 }
 async function saveStatus() {
   if (!canSaveStatus.value) return
@@ -205,13 +295,89 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !statusOpen.value &&
 
     <div v-if="statusOpen" class="modal-layer editor-layer"><form class="modal status-modal" @submit.prevent="saveStatus"><button class="modal-close" type="button" aria-label="Close" :disabled="saving" @click="statusOpen=false">×</button><p class="eyebrow">LEAVE REQUEST</p><h2>{{ statusEmployee?.EmployeeName }}</h2><small>{{ statusAssignment?.AgencyName }} · {{ statusEmployee?.PositionName }}</small><div class="selected-day"><span>{{ periodLabel(selectedCutoff) }}</span><strong>{{ formatDate(statusForm.StartDate) }}</strong></div><div class="status-options"><button v-for="status in attendanceStatuses" :key="status" type="button" :class="[statusClass(status), { selected: statusForm.AttendanceStatus === status }]" @click="statusForm.AttendanceStatus=status">{{ status }}</button></div><label class="remarks-field">Remarks<textarea v-model.trim="statusForm.Remarks" maxlength="255" placeholder="Reason, reference, or note"></textarea></label><p v-if="error" class="error" role="alert">{{ error }}</p><footer><button class="secondary" type="button" :disabled="saving" @click="statusOpen=false">Cancel</button><button class="primary" :disabled="!canSaveStatus">{{ saving ? 'Saving…' : 'Save status' }}</button></footer></form></div>
 
-    <div v-if="summaryOpen" class="modal-layer editor-layer"><section class="modal summary-modal"><button class="modal-close" type="button" aria-label="Close" @click="summaryOpen=false">×</button><p class="eyebrow">EMPLOYEE STATUS SUMMARY</p><h2>{{ summaryEmployee?.EmployeeName }}</h2><small>{{ employeeCode(summaryEmployee?.EmployeeID) }} · {{ employeeNumber(summaryEmployee?.EmployeeNumber) }} · {{ summaryEmployee?.AgencyName }}</small><div class="summary-counts"><span v-for="([status, count]) in summaryCounts" :key="status" class="status-chip" :class="statusClass(status)">{{ status }}: {{ count }}</span><span v-if="!summaryCounts.length" class="muted">No status entries yet</span></div><div class="summary-grid"><section><h3>DTR cutoffs</h3><div class="timeline"><article v-for="cutoff in summaryCutoffs" :key="cutoff.BatchID"><strong>{{ periodLabel(cutoff) }}</strong><small>DTR {{ cutoff.DtrStatus }}</small></article><p v-if="!summaryCutoffs.length" class="empty-note">No DTR cutoff yet.</p></div></section><section><h3>Status history</h3><div class="timeline"><article v-for="row in selectedHistory" :key="row.AttendanceID"><div><strong>{{ formatDate(row.AttendanceDate) }}</strong><small>{{ row.BatchID ? periodLabel(row) : 'Waiting for DTR cutoff' }}<template v-if="row.Remarks"> · {{ row.Remarks }}</template></small></div><span class="status-chip" :class="statusClass(row.AttendanceStatus)">{{ row.AttendanceStatus }}</span></article><p v-if="!selectedHistory.length" class="empty-note">No employee status records yet.</p></div></section></div><footer><button class="secondary" type="button" @click="summaryOpen=false">Close</button></footer></section></div>
+    <div v-if="summaryOpen" class="modal-layer editor-layer">
+      <section class="modal summary-modal">
+        <button class="modal-close" type="button" aria-label="Close" @click="summaryOpen=false">×</button>
+        <header class="summary-header">
+          <div>
+            <p class="eyebrow">EMPLOYEE STATUS HISTORY</p>
+            <h2>{{ summaryEmployee?.EmployeeName }}</h2>
+            <small>{{ employeeCode(summaryEmployee?.EmployeeID) }} · {{ employeeNumber(summaryEmployee?.EmployeeNumber) }} · {{ summaryEmployee?.AgencyName }}</small>
+          </div>
+        </header>
+
+        <div class="summary-toolbar">
+          <label>Year
+            <select v-model="summaryYear" :disabled="summaryLoading" @change="loadSummary">
+              <option v-for="year in summaryAvailableYears" :key="year" :value="String(year)">{{ year }}</option>
+            </select>
+          </label>
+          <label>Status
+            <select v-model="summaryStatusFilter">
+              <option value="">All statuses</option>
+              <option v-for="status in summaryStatusOptions" :key="status" :value="status">{{ status }}</option>
+            </select>
+          </label>
+        </div>
+
+        <p v-if="summaryLoading" class="summary-state">Loading history…</p>
+        <p v-else-if="summaryError" class="summary-state error" role="alert">{{ summaryError }}</p>
+        <template v-else>
+          <section class="summary-overview">
+            <div class="summary-overview-copy">
+              <strong>{{ summaryYear }} overview</strong>
+              <small>{{ summaryHistoryRows.length }} saved day{{ summaryHistoryRows.length === 1 ? '' : 's' }} across {{ summaryCutoffRows.length }} DTR cutoff{{ summaryCutoffRows.length === 1 ? '' : 's' }}</small>
+            </div>
+            <div class="summary-counts">
+              <span v-for="([status, count]) in summaryCounts" :key="status" class="summary-metric"><strong>{{ count }}</strong><small>{{ status }}</small></span>
+              <span v-if="!summaryCounts.length" class="muted">No saved status entries</span>
+            </div>
+          </section>
+
+          <section class="period-list" aria-label="Status history by cutoff">
+            <article v-for="period in summaryPeriods" :key="period.key" class="summary-period">
+              <button class="period-toggle" type="button" :aria-expanded="expandedSummaryPeriod === period.key" @click="toggleSummaryPeriod(period.key)">
+                <span class="period-heading">
+                  <strong>{{ summaryPeriodLabel(period) }}</strong>
+                  <small>{{ period.SiteName || 'No site' }}<template v-if="period.ClientName"> · {{ period.ClientName }}</template></small>
+                </span>
+                <span class="period-summary">
+                  <span class="dtr-state">{{ period.pending ? 'Pending DTR' : `DTR ${period.DtrStatus}` }}</span>
+                  <span>{{ period.rows.length }} recorded day{{ period.rows.length === 1 ? '' : 's' }}</span>
+                  <span class="chevron" aria-hidden="true">{{ expandedSummaryPeriod === period.key ? '⌃' : '⌄' }}</span>
+                </span>
+              </button>
+              <div class="period-counts">
+                <span v-for="([status, count]) in period.counts" :key="status" class="period-count"><i :class="statusClass(status)"></i>{{ status }} <strong>{{ count }}</strong></span>
+                <span v-if="!period.counts.length" class="muted">No saved daily entries in this cutoff</span>
+              </div>
+              <div v-if="expandedSummaryPeriod === period.key" class="period-details">
+                <article v-for="range in period.ranges" :key="`${range.start}-${range.end}-${range.status}`" class="range-row">
+                  <div>
+                    <strong>{{ summaryRangeLabel(range) }}</strong>
+                    <small>{{ range.days }} day{{ range.days === 1 ? '' : 's' }}<template v-if="range.remarks"> · {{ range.remarks }}</template></small>
+                  </div>
+                  <span class="status-chip" :class="statusClass(range.status)">{{ range.status }}</span>
+                </article>
+                <p v-if="!period.ranges.length" class="empty-note">No {{ summaryStatusFilter || 'status' }} entries in this cutoff.</p>
+              </div>
+            </article>
+            <p v-if="!summaryPeriods.length" class="summary-empty">No history matches the selected year and status.</p>
+          </section>
+        </template>
+        <footer><button class="secondary" type="button" @click="summaryOpen=false">Close</button></footer>
+      </section>
+    </div>
   </main>
 </template>
 
 <style scoped>
-.employee-status-page{box-sizing:border-box;min-height:100%;padding:34px;color:#172642}.page-head,.sheet-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:25px}.eyebrow{margin:0 0 7px;color:#3262c9;font-size:12px;font-weight:900;letter-spacing:.09em}.page-head h1{margin:0 0 7px;font-size:36px;line-height:1.1}.page-head small,.modal small{color:#6d7d96}.filters{display:grid;gap:16px}.main-filters{grid-template-columns:minmax(320px,1fr) 270px 270px;margin-bottom:20px}.sheet-filters{grid-template-columns:260px minmax(260px,1fr) 230px;margin:18px 0}.filters label,.remarks-field{display:grid;gap:7px;color:#50617c;font-size:13px;font-weight:800}.filters input,.filters select,.remarks-field textarea{box-sizing:border-box;width:100%;min-height:46px;border:1px solid #ccd7e8;border-radius:10px;padding:0 13px;background:#fff;color:#17243d;font:inherit}.primary,.secondary,.action-button{min-height:42px;border:1px solid #cbd8ea;border-radius:10px;padding:0 17px;background:#fff;color:#24446c;font:inherit;font-weight:800;cursor:pointer}.primary,.action-primary{border-color:#2d53e8;background:#2d53e8;color:#fff}.primary:disabled{opacity:.55}.table-shell{max-width:100%;overflow:auto;border:1px solid #cfd9e7;border-radius:14px;background:#fff}.employee-table{width:100%;min-width:1120px;border-collapse:collapse}.employee-table th{padding:15px 17px;background:#f7f9fc;color:#53647c;font-size:12px;text-align:left;text-transform:uppercase}.employee-table td{padding:15px 17px;border-top:1px solid #e5ebf3;color:#233652;font-size:13px}.employee-id{color:#173e77}.employee-name{font-weight:900}.latest-date{display:block;margin-top:5px;font-size:10px}.row-actions{display:flex;gap:7px;white-space:nowrap}.action-button{min-height:36px;padding:0 12px;font-size:12px}.state{padding:30px;text-align:center}.error{color:#b42318;font-weight:700}.list-footer{padding:14px 2px;color:#697993;font-size:13px}.modal-layer{position:fixed;z-index:90;inset:0;display:grid;place-items:center;padding:20px;background:#0d1d3b99}.editor-layer{z-index:110}.modal{position:relative;box-sizing:border-box;width:min(760px,100%);max-height:calc(100dvh - 40px);overflow:auto;border:1px solid #d8e2ef;border-radius:18px;padding:28px;background:#fff;color:#172642;box-shadow:0 25px 70px #08152f55}.sheet-modal{width:min(1500px,calc(100vw - 70px))}.status-modal{width:min(600px,100%)}.summary-modal{width:min(950px,100%)}.modal-close{position:absolute;right:18px;top:14px;border:0;background:transparent;color:#38506e;font-size:27px;cursor:pointer}.modal h2{margin:0 0 7px}.sheet-head{align-items:center;margin-right:36px}.sheet-head h2{font-size:28px}.cutoff-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin:20px 0 10px}.cutoff-heading h3{margin:0 0 4px}.status-legend{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px 11px;margin:0;color:#566984;font-size:10px}.status-legend span{display:inline-flex;align-items:center;gap:4px}.status-legend i{width:10px;height:10px;border-radius:3px}.status-grid{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0}.status-grid th,.status-grid td{border-right:1px solid #dce3ec;border-bottom:1px solid #dce3ec;text-align:center}.status-grid th{height:52px;padding:5px 8px;background:#fff200;color:#172033;font-size:10px;text-transform:uppercase}.status-grid tbody tr:last-child td{border-bottom:0}.person-column,.employee-number-column,.agency-column,.position-column{box-sizing:border-box;background:#fff!important;text-align:left!important}.person-column{position:sticky;left:0;z-index:3;width:210px;min-width:210px}.employee-number-column{width:120px;min-width:120px}.agency-column{width:180px;min-width:180px}.position-column{width:135px;min-width:135px}.status-grid thead .person-column,.status-grid thead .employee-number-column,.status-grid thead .agency-column,.status-grid thead .position-column{background:#fff200!important}.person-button{width:100%;min-height:60px;border:0;background:transparent;padding:8px 10px;color:#163762;text-align:left;cursor:pointer}.person-button strong,.person-button small{display:block}.person-button strong{font-size:11px}.person-button small{margin-top:4px;font-size:9px}.day-heading,.day-cell{box-sizing:border-box;width:60px;min-width:60px}.day-heading strong,.day-heading small,.day-cell strong,.day-cell small{display:block}.day-heading strong{font-size:13px}.day-cell{padding:0!important}.day-cell button{width:100%;min-height:60px;border:0;background:#fff;color:#18375e;padding:4px 2px;cursor:pointer}.day-cell button:hover{background:#edf4ff}.day-cell button:disabled{cursor:not-allowed}.day-cell small{margin-top:3px;color:inherit;font-size:8px;line-height:1.1}.outside-deployment{background:#f1f5f9!important;color:#94a3b8!important}.locked{background-image:repeating-linear-gradient(135deg,transparent,transparent 5px,#0000000b 5px,#0000000b 9px)!important}.sheet-modal>footer,.modal>footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}.selected-day{display:flex;justify-content:space-between;gap:12px;margin-top:20px;border-radius:10px;padding:13px 15px;background:#eef4ff;color:#284b7a;font-size:12px}.status-options{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}.status-options button{min-height:40px;border:2px solid transparent;border-radius:9px;font:inherit;font-size:12px;font-weight:800;cursor:pointer}.status-options button.selected{border-color:#244be8;box-shadow:0 0 0 2px #244be822}.remarks-field textarea{min-height:82px;padding:10px 12px;resize:vertical}.status-chip{display:inline-flex;border-radius:999px;padding:5px 9px;background:#eef2f7;color:#43536b;font-size:11px;font-weight:900}.status-present{background:#dcfce7!important;color:#167443!important}.status-absent{background:#fee2e2!important;color:#991b1b!important}.status-late{background:#ffedd5!important;color:#9a3412!important}.status-half-day{background:#e2e8f0!important;color:#334155!important}.status-on-leave{background:#ede9fe!important;color:#5b21b6!important}.status-holiday{background:#fef3c7!important;color:#92400e!important}.status-rest-day{background:#e0f2fe!important;color:#075985!important}.status-reliever{background:#d1fae5!important;color:#065f46!important}.status-sick-leave{background:#ffe4e6!important;color:#9f1239!important}.summary-counts{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0}.summary-grid{display:grid;grid-template-columns:.75fr 1.25fr;gap:18px}.summary-grid>section{border:1px solid #e0e7f0;border-radius:12px;padding:15px}.summary-grid h3{margin:0 0 10px}.timeline{display:grid;gap:8px;max-height:410px;overflow:auto}.timeline article{display:flex;justify-content:space-between;gap:12px;border:1px solid #dee6f1;border-radius:9px;padding:10px}.timeline article>div{display:grid;gap:3px}.muted,.empty-note{color:#7a879b}
+.employee-status-page{box-sizing:border-box;min-height:100%;padding:34px;color:#172642}.page-head,.sheet-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:25px}.eyebrow{margin:0 0 7px;color:#3262c9;font-size:12px;font-weight:900;letter-spacing:.09em}.page-head h1{margin:0 0 7px;font-size:36px;line-height:1.1}.page-head small,.modal small{color:#6d7d96}.filters{display:grid;gap:16px}.main-filters{grid-template-columns:minmax(320px,1fr) 270px 270px;margin-bottom:20px}.sheet-filters{grid-template-columns:260px minmax(260px,1fr) 230px;margin:18px 0}.filters label,.remarks-field{display:grid;gap:7px;color:#50617c;font-size:13px;font-weight:800}.filters input,.filters select,.remarks-field textarea{box-sizing:border-box;width:100%;min-height:46px;border:1px solid #ccd7e8;border-radius:10px;padding:0 13px;background:#fff;color:#17243d;font:inherit}.primary,.secondary,.action-button{min-height:42px;border:1px solid #cbd8ea;border-radius:10px;padding:0 17px;background:#fff;color:#24446c;font:inherit;font-weight:800;cursor:pointer}.primary,.action-primary{border-color:#2d53e8;background:#2d53e8;color:#fff}.primary:disabled{opacity:.55}.table-shell{max-width:100%;overflow:auto;border:1px solid #cfd9e7;border-radius:14px;background:#fff}.employee-table{width:100%;min-width:1120px;border-collapse:collapse}.employee-table th{padding:15px 17px;background:#f7f9fc;color:#53647c;font-size:12px;text-align:left;text-transform:uppercase}.employee-table td{padding:15px 17px;border-top:1px solid #e5ebf3;color:#233652;font-size:13px}.employee-id{color:#173e77}.employee-name{font-weight:900}.latest-date{display:block;margin-top:5px;font-size:10px}.row-actions{display:flex;gap:7px;white-space:nowrap}.action-button{min-height:36px;padding:0 12px;font-size:12px}.state{padding:30px;text-align:center}.error{color:#b42318;font-weight:700}.list-footer{padding:14px 2px;color:#697993;font-size:13px}.modal-layer{position:fixed;z-index:90;inset:0;display:grid;place-items:center;padding:20px;background:#0d1d3b99}.editor-layer{z-index:110}.modal{position:relative;box-sizing:border-box;width:min(760px,100%);max-height:calc(100dvh - 40px);overflow:auto;border:1px solid #d8e2ef;border-radius:18px;padding:28px;background:#fff;color:#172642;box-shadow:0 25px 70px #08152f55}.sheet-modal{width:min(1500px,calc(100vw - 70px))}.status-modal{width:min(600px,100%)}.summary-modal{width:min(950px,100%)}.modal-close{position:absolute;right:18px;top:14px;border:0;background:transparent;color:#38506e;font-size:27px;cursor:pointer}.modal h2{margin:0 0 7px}.sheet-head{align-items:center;margin-right:36px}.sheet-head h2{font-size:28px}.cutoff-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin:20px 0 10px}.cutoff-heading h3{margin:0 0 4px}.status-legend{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px 11px;margin:0;color:#566984;font-size:10px}.status-legend span{display:inline-flex;align-items:center;gap:4px}.status-legend i{width:10px;height:10px;border-radius:3px}.status-grid{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0}.status-grid th,.status-grid td{border-right:1px solid #dce3ec;border-bottom:1px solid #dce3ec;text-align:center}.status-grid th{height:52px;padding:5px 8px;background:#fff200;color:#172033;font-size:10px;text-transform:uppercase}.status-grid tbody tr:last-child td{border-bottom:0}.person-column,.employee-number-column,.agency-column,.position-column{box-sizing:border-box;background:#fff!important;text-align:left!important}.person-column{position:sticky;left:0;z-index:3;width:210px;min-width:210px}.employee-number-column{width:120px;min-width:120px}.agency-column{width:180px;min-width:180px}.position-column{width:135px;min-width:135px}.status-grid thead .person-column,.status-grid thead .employee-number-column,.status-grid thead .agency-column,.status-grid thead .position-column{background:#fff200!important}.person-button{width:100%;min-height:60px;border:0;background:transparent;padding:8px 10px;color:#163762;text-align:left;cursor:pointer}.person-button strong,.person-button small{display:block}.person-button strong{font-size:11px}.person-button small{margin-top:4px;font-size:9px}.day-heading,.day-cell{box-sizing:border-box;width:60px;min-width:60px}.day-heading strong,.day-heading small,.day-cell strong,.day-cell small{display:block}.day-heading strong{font-size:13px}.day-cell{padding:0!important}.day-cell button{width:100%;min-height:60px;border:0;background:#fff;color:#18375e;padding:4px 2px;cursor:pointer}.day-cell button:hover{background:#edf4ff}.day-cell button:disabled{cursor:not-allowed}.day-cell small{margin-top:3px;color:inherit;font-size:8px;line-height:1.1}.outside-deployment{background:#f1f5f9!important;color:#94a3b8!important}.locked{background-image:repeating-linear-gradient(135deg,transparent,transparent 5px,#0000000b 5px,#0000000b 9px)!important}.sheet-modal>footer,.modal>footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}.selected-day{display:flex;justify-content:space-between;gap:12px;margin-top:20px;border-radius:10px;padding:13px 15px;background:#eef4ff;color:#284b7a;font-size:12px}.status-options{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}.status-options button{min-height:40px;border:2px solid transparent;border-radius:9px;font:inherit;font-size:12px;font-weight:800;cursor:pointer}.status-options button.selected{border-color:#244be8;box-shadow:0 0 0 2px #244be822}.remarks-field textarea{min-height:82px;padding:10px 12px;resize:vertical}.status-chip{display:inline-flex;border-radius:999px;padding:5px 9px;background:#eef2f7;color:#43536b;font-size:11px;font-weight:900}.status-present{background:#dcfce7!important;color:#167443!important}.status-absent{background:#fee2e2!important;color:#991b1b!important}.status-late{background:#ffedd5!important;color:#9a3412!important}.status-half-day{background:#e2e8f0!important;color:#334155!important}.status-on-leave{background:#ede9fe!important;color:#5b21b6!important}.status-holiday{background:#fef3c7!important;color:#92400e!important}.status-rest-day{background:#e0f2fe!important;color:#075985!important}.status-reliever{background:#d1fae5!important;color:#065f46!important}.status-sick-leave{background:#ffe4e6!important;color:#9f1239!important}.muted,.empty-note{color:#7a879b}
+.summary-modal{display:flex;width:min(960px,100%);max-height:calc(100dvh - 32px);overflow:hidden;flex-direction:column;padding:24px}.summary-header{flex:0 0 auto;padding-right:42px}.summary-header h2{font-size:24px}.summary-toolbar{display:grid;grid-template-columns:180px 230px;gap:12px;margin:20px 0 12px}.summary-toolbar label{display:grid;gap:6px;color:#50617c;font-size:12px;font-weight:800}.summary-toolbar select{box-sizing:border-box;width:100%;min-height:42px;border:1px solid #ccd7e8;border-radius:9px;padding:0 12px;background:#fff;color:#17243d;font:inherit}.summary-state{min-height:240px;padding:70px 20px;text-align:center}.summary-overview{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid #dce5f0;border-radius:12px;padding:12px 14px;background:#f7f9fd}.summary-overview-copy{display:grid;flex:0 0 auto;gap:3px}.summary-overview-copy small{font-size:11px}.summary-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px;margin:0}.summary-counts button{cursor:pointer}.summary-counts .selected{outline:2px solid #2d53e8;outline-offset:2px}.period-list{display:grid;min-height:0;max-height:460px;overflow:auto;gap:9px;margin-top:12px;padding-right:3px}.summary-period{border:1px solid #dce5f0;border-radius:12px;background:#fff}.period-toggle{display:flex;width:100%;align-items:center;justify-content:space-between;gap:18px;border:0;padding:13px 14px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}.period-heading,.period-summary{display:flex;align-items:center;gap:10px}.period-heading{display:grid;gap:3px}.period-heading small{font-size:11px}.period-summary{flex:0 0 auto;color:#53647d;font-size:11px}.dtr-state{border-radius:999px;padding:5px 8px;background:#eef3fa;font-weight:800}.chevron{display:grid;width:25px;height:25px;place-items:center;border-radius:50%;background:#edf3ff;color:#2149bd;font-size:18px;font-weight:700}.period-counts{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px}.period-details{display:grid;gap:7px;border-top:1px solid #e2e8f1;padding:10px 14px 13px;background:#f8faff}.range-row{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid #e0e7f1;border-radius:9px;padding:9px 11px;background:#fff}.range-row>div{display:grid;gap:3px}.range-row strong{font-size:12px}.range-row small{font-size:10px}.summary-empty{margin:0;padding:45px 20px;border:1px dashed #ccd8e8;border-radius:12px;color:#71809a;text-align:center}
 .status-vacation-leave{background:#fef3c7!important;color:#854d0e!important}
+
+/* Employee history follows the compact administrative tables used across PMS. */
+.employee-status-page .summary-modal{border-radius:12px}.employee-status-page .summary-overview{border-radius:8px;background:#fafbfd}.summary-metric{display:grid;min-width:72px;gap:1px;border-left:2px solid #ccd8e8;padding:0 0 0 9px;color:#203651}.summary-metric strong{font-size:16px;line-height:1}.summary-metric small{font-size:9px;text-transform:uppercase;letter-spacing:.04em}.employee-status-page .summary-period{border-radius:8px;box-shadow:none}.employee-status-page .period-toggle{padding:12px 14px}.employee-status-page .dtr-state{border-radius:0;border-right:1px solid #d4deeb;padding:0 10px 0 0;background:transparent}.employee-status-page .chevron{display:block;width:auto;height:auto;border-radius:0;background:transparent;color:#335784;font-size:18px;line-height:1}.period-count{display:inline-flex;align-items:center;gap:5px;color:#5a6980;font-size:10px}.period-count i{display:inline-block;width:8px;height:8px;border-radius:2px}.period-count strong{color:#253a57}.employee-status-page .period-details{background:#fbfcfe}.employee-status-page .range-row{border-radius:6px;box-shadow:none}.employee-status-page .range-row .status-chip{border-radius:5px}
 
 /* Keep this workflow visually compact even when dashboard-wide table/modal rules load later. */
 .employee-status-page .employee-table{width:100%;min-width:1080px;border-collapse:collapse;font-family:inherit}
@@ -239,6 +405,6 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !statusOpen.value &&
 .employee-status-page .status-modal{width:min(500px,100%);padding:22px}
 .employee-status-page .status-options{grid-template-columns:repeat(3,minmax(0,1fr));margin:14px 0}
 
-:global(html[data-theme='dark']) .employee-status-page{color:#e9efff}:global(html[data-theme='dark']) .table-shell,:global(html[data-theme='dark']) .modal,:global(html[data-theme='dark']) .summary-grid>section{border-color:#2b3b5b;background:#15223f;color:#edf3ff}:global(html[data-theme='dark']) .employee-table th{background:#1d2d4c;color:#b8c7df}:global(html[data-theme='dark']) .employee-table td{border-color:#293958;color:#e2eaf7}:global(html[data-theme='dark']) .status-grid tbody .person-column,:global(html[data-theme='dark']) .status-grid tbody .employee-number-column,:global(html[data-theme='dark']) .status-grid tbody .agency-column,:global(html[data-theme='dark']) .status-grid tbody .position-column,:global(html[data-theme='dark']) .day-cell button{background:#15223f;color:#e1eaff}:global(html[data-theme='dark']) .filters input,:global(html[data-theme='dark']) .filters select,:global(html[data-theme='dark']) .remarks-field textarea,:global(html[data-theme='dark']) .agency-assignment strong{border-color:#385070;background:#0e1b34;color:#f2f6ff}:global(html[data-theme='dark']) .secondary,:global(html[data-theme='dark']) .action-button:not(.action-primary){border-color:#405477;background:#1b2c4e;color:#dce8ff}:global(html[data-theme='dark']) .timeline article{border-color:#344867;background:#182946}
-@media(max-width:900px){.employee-status-page{padding:22px 15px 60px}.page-head{align-items:stretch;flex-direction:column}.page-head h1{font-size:29px}.main-filters,.employee-status-page .sheet-filters{grid-template-columns:1fr}.sheet-modal{width:calc(100vw - 20px);padding:23px 12px}.sheet-head,.cutoff-heading{align-items:flex-start;flex-direction:column}.status-legend{justify-content:flex-start}.employee-number-column,.agency-column,.position-column{position:static}.person-column{width:175px;min-width:175px}.day-heading,.day-cell{width:52px;min-width:52px}.summary-grid{grid-template-columns:1fr}.status-options{grid-template-columns:repeat(2,1fr)}.modal>footer{position:sticky;bottom:-20px;margin:20px -16px -20px;padding:12px 16px;border-top:1px solid #dce4ef;background:inherit}.modal>footer button{flex:1}}
+:global(html[data-theme='dark']) .employee-status-page{color:#e9efff}:global(html[data-theme='dark']) .table-shell,:global(html[data-theme='dark']) .modal{border-color:#2b3b5b;background:#15223f;color:#edf3ff}:global(html[data-theme='dark']) .employee-table th{background:#1d2d4c;color:#b8c7df}:global(html[data-theme='dark']) .employee-table td{border-color:#293958;color:#e2eaf7}:global(html[data-theme='dark']) .status-grid tbody .person-column,:global(html[data-theme='dark']) .status-grid tbody .employee-number-column,:global(html[data-theme='dark']) .status-grid tbody .agency-column,:global(html[data-theme='dark']) .status-grid tbody .position-column,:global(html[data-theme='dark']) .day-cell button{background:#15223f;color:#e1eaff}:global(html[data-theme='dark']) .filters input,:global(html[data-theme='dark']) .filters select,:global(html[data-theme='dark']) .remarks-field textarea,:global(html[data-theme='dark']) .agency-assignment strong,:global(html[data-theme='dark']) .summary-toolbar select{border-color:#385070;background:#0e1b34;color:#f2f6ff}:global(html[data-theme='dark']) .secondary,:global(html[data-theme='dark']) .action-button:not(.action-primary){border-color:#405477;background:#1b2c4e;color:#dce8ff}:global(html[data-theme='dark']) .summary-overview,:global(html[data-theme='dark']) .summary-period{border-color:#344867;background:#182946}:global(html[data-theme='dark']) .summary-overview{background:#14213c}:global(html[data-theme='dark']) .period-details{border-color:#344867;background:#101e38}:global(html[data-theme='dark']) .range-row{border-color:#344867;background:#182946}:global(html[data-theme='dark']) .dtr-state{border-color:#405477;background:transparent;color:#dce7ff}:global(html[data-theme='dark']) .chevron{background:transparent;color:#dce7ff}:global(html[data-theme='dark']) .period-summary,:global(html[data-theme='dark']) .period-count{color:#b9c8df}:global(html[data-theme='dark']) .period-count strong,:global(html[data-theme='dark']) .summary-metric{color:#edf3ff}:global(html[data-theme='dark']) .summary-metric{border-color:#496080}:global(html[data-theme='dark']) .summary-empty{border-color:#405477;color:#aab9d0}
+@media(max-width:900px){.employee-status-page{padding:22px 15px 60px}.page-head{align-items:stretch;flex-direction:column}.page-head h1{font-size:29px}.main-filters,.employee-status-page .sheet-filters{grid-template-columns:1fr}.sheet-modal{width:calc(100vw - 20px);padding:23px 12px}.sheet-head,.cutoff-heading{align-items:flex-start;flex-direction:column}.status-legend{justify-content:flex-start}.employee-number-column,.agency-column,.position-column{position:static}.person-column{width:175px;min-width:175px}.day-heading,.day-cell{width:52px;min-width:52px}.status-options{grid-template-columns:repeat(2,1fr)}.summary-modal{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);padding:20px 14px}.summary-header h2{font-size:21px}.summary-toolbar{grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}.summary-overview{align-items:flex-start;flex-direction:column}.summary-counts{justify-content:flex-start}.period-list{max-height:none}.period-toggle{align-items:flex-start;padding:12px}.period-heading{min-width:0}.period-heading strong,.period-heading small{overflow-wrap:anywhere}.period-summary{align-items:flex-end;flex-direction:column;gap:5px}.period-counts{padding:0 12px 11px}.period-details{padding:9px 10px 11px}.range-row{align-items:flex-start;flex-direction:column}.modal>footer{position:sticky;bottom:-20px;margin:20px -16px -20px;padding:12px 16px;border-top:1px solid #dce4ef;background:inherit}.modal>footer button{flex:1}}
 </style>

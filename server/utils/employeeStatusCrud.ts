@@ -1,4 +1,4 @@
-import { createError, readBody } from 'h3'
+import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 
@@ -115,6 +115,74 @@ export async function listEmployeeStatus(event: any) {
     dtrCutoffs: dtrCutoffsResult[0],
     history: historyResult[0],
     attendanceStatuses,
+  }
+}
+
+export async function getEmployeeStatusSummary(event: any) {
+  const session = requireSession(event)
+  void session.sub
+  const employeeId = positiveId(getRouterParam(event, 'id'), 'Employee')
+  const query = getQuery(event)
+  const requestedYear = query.year === undefined || query.year === '' ? null : Number(query.year)
+  if (requestedYear !== null && (!Number.isInteger(requestedYear) || requestedYear < 1900 || requestedYear > 2200)) {
+    throw createError({ statusCode: 400, statusMessage: 'Year must be between 1900 and 2200.' })
+  }
+
+  const [employeeResult, attendanceYearsResult, cutoffYearsResult] = await Promise.all([
+    pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber,
+      CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
+      a.AgencyName, p.PositionName
+      FROM employee e
+      INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+      INNER JOIN agency a ON a.AgencyID = ap.AgencyID
+      INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
+      WHERE e.EmployeeID = ? AND e.Status = 'Active' LIMIT 1`, [employeeId]),
+    pool.execute<any[]>('SELECT DISTINCT YEAR(AttendanceDate) AS SummaryYear FROM attendance WHERE EmployeeID = ? ORDER BY SummaryYear DESC', [employeeId]),
+    pool.execute<any[]>(`SELECT DISTINCT YEAR(d.PeriodStart) AS SummaryYear
+      FROM attendance_dtr_employee de
+      INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
+      WHERE de.EmployeeID = ? ORDER BY SummaryYear DESC`, [employeeId]),
+  ])
+  const employee = employeeResult[0][0]
+  if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
+
+  const availableYears = [...new Set([
+    ...attendanceYearsResult[0].map((row: any) => Number(row.SummaryYear)),
+    ...cutoffYearsResult[0].map((row: any) => Number(row.SummaryYear)),
+  ].filter((year: number) => Number.isInteger(year)))].sort((a, b) => b - a)
+  const year = requestedYear || availableYears[0] || new Date().getFullYear()
+  if (!availableYears.includes(year)) availableYears.push(year)
+  availableYears.sort((a, b) => b - a)
+  const yearStart = `${year}-01-01`
+  const yearEnd = `${year}-12-31`
+
+  const [cutoffsResult, historyResult] = await Promise.all([
+    pool.execute<any[]>(`SELECT d.BatchID, d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
+      c.ClientName, s.SiteName
+      FROM attendance_dtr_employee de
+      INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
+      INNER JOIN client c ON c.ClientID = d.ClientID
+      INNER JOIN site s ON s.SiteID = d.SiteID
+      WHERE de.EmployeeID = ? AND d.PeriodStart <= ? AND d.PeriodEnd >= ?
+      ORDER BY d.PeriodStart DESC, d.BatchID DESC`, [employeeId, yearEnd, yearStart]),
+    pool.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.BatchID, at.AttendanceDate,
+      at.AttendanceStatus, at.Remarks, d.PeriodStart, d.PeriodEnd,
+      d.Status AS DtrStatus, c.ClientName, s.SiteName
+      FROM attendance at
+      INNER JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
+      INNER JOIN site s ON s.SiteID = ed.SiteID
+      INNER JOIN client c ON c.ClientID = s.ClientID
+      LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
+      WHERE at.EmployeeID = ? AND at.AttendanceDate BETWEEN ? AND ?
+      ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC`, [employeeId, yearStart, yearEnd]),
+  ])
+
+  return {
+    employee,
+    year,
+    availableYears,
+    cutoffs: cutoffsResult[0],
+    history: historyResult[0],
   }
 }
 

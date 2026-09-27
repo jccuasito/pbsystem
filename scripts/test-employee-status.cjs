@@ -26,11 +26,18 @@ test('employee status leave sheet and DTR workspace compile with synchronized st
   assert.doesNotMatch(page, /\+ Add cutoff/)
   assert.match(page, /Click to add/)
   assert.match(page, /openStatusCell/)
+  assert.match(page, /EMPLOYEE STATUS HISTORY/)
+  assert.match(page, /summaryPeriods/)
+  assert.match(page, /groupStatusRanges/)
+  assert.match(page, /\/api\/employees\/status\/\$\{summaryEmployeeId\.value\}\/summary/)
+  assert.doesNotMatch(page, /â|Ã|Â/)
   assert.doesNotMatch(page, /Transfer to site|Site transfer/)
   const dtr = fs.readFileSync('app/components/DtrAttendanceWorkspace.vue', 'utf8')
   for (const status of ['Absent', 'Late', 'Half-Day', 'On-Leave', 'Vacation Leave', 'Holiday', 'Rest Day', 'Reliever', 'Sick Leave']) assert.match(dtr, new RegExp(status))
   const statusCrud = fs.readFileSync('server/utils/employeeStatusCrud.ts', 'utf8')
   assert.match(statusCrud, /\['On-Leave', 'Vacation Leave', 'Sick Leave'\]/)
+  assert.match(statusCrud, /export async function getEmployeeStatusSummary/)
+  assert.match(statusCrud, /at\.EmployeeID = \? AND at\.AttendanceDate BETWEEN \? AND \?/)
   assert.match(dtr, /dateWithinDeployment/)
   const dtrCrud = fs.readFileSync('server/utils/dtrCrud.ts', 'utf8')
   assert.match(dtrCrud, /attachPendingEmployeeStatuses\(connection, batch, createdBy\)/)
@@ -86,7 +93,12 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     await c.query("INSERT INTO employee_deployment (EmployeeID,SiteRateID,SiteID,DeploymentType,IsPermanentSite,StartDate) VALUES (8,31,51,'Regular',1,'2026-09-01')")
     const connection = { execute: (sql, args) => c.execute(sql, args), beginTransaction: () => c.beginTransaction(), commit: () => c.commit(), rollback: () => c.rollback(), release() {} }
     const pool = { execute: (sql, args) => c.execute(sql, args), getConnection: async () => connection }
-    const api = evaluate(fs.readFileSync('server/utils/employeeStatusCrud.ts', 'utf8'), { require: name => name === 'h3' ? { readBody: async event => event.body, createError: details => Object.assign(new Error(details.statusMessage), details) } : name.includes('dbconnect') ? pool : name === './auth' ? { requireSession: () => ({ sub: 14 }) } : {} })
+    const api = evaluate(fs.readFileSync('server/utils/employeeStatusCrud.ts', 'utf8'), { require: name => name === 'h3' ? {
+      readBody: async event => event.body,
+      getQuery: event => event.query || {},
+      getRouterParam: (event, key) => event.params?.[key],
+      createError: details => Object.assign(new Error(details.statusMessage), details),
+    } : name.includes('dbconnect') ? pool : name === './auth' ? { requireSession: () => ({ sub: 14 }) } : {} })
 
     const range = { EmployeeID: 8, AttendanceStatus: 'Sick Leave', StartDate: '2026-09-24', EndDate: '2026-09-26', Remarks: 'Medical certificate to follow' }
     const first = await api.updateEmployeeDailyStatus({ body: range })
@@ -114,6 +126,14 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal(listed.dtrCutoffs.length, 1)
     assert.equal(listed.history.length, 3)
     assert.equal(listed.history[0].AttendanceStatus, 'Late')
+    const summary = await api.getEmployeeStatusSummary({ params: { id: '8' }, query: { year: '2026' } })
+    assert.equal(summary.employee.EmployeeID, 8)
+    assert.equal(summary.year, 2026)
+    assert.deepEqual([...summary.availableYears], [2026])
+    assert.equal(summary.cutoffs.length, 1)
+    assert.equal(summary.history.length, 3)
+    assert.equal(summary.history[0].AttendanceStatus, 'Late')
+    await assert.rejects(() => api.getEmployeeStatusSummary({ params: { id: '8' }, query: { year: 'bad' } }), /Year must be between/)
   } finally {
     await c.end()
   }

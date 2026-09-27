@@ -199,6 +199,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/employees/duplicates` → `server/api/employees/duplicates.post.ts`
   - `POST /api/employees/site-shifts` → `server/api/employees/site-shifts.post.ts`
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
+  - `GET /api/employees/status/[param]/summary` → `server/api/employees/status/[id]/summary.get.ts`
   - `POST /api/employees/status/attendance` → `server/api/employees/status/attendance.post.ts`
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -330,6 +331,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/SystemAlert.vue`
 - API calls and handlers:
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
+  - `GET /api/employees/status/[param]/summary` → `server/api/employees/status/[id]/summary.get.ts`
   - `POST /api/employees/status/attendance` → `server/api/employees/status/attendance.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
