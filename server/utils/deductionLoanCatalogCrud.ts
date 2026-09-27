@@ -68,12 +68,30 @@ async function ensureClassification(classificationId: number, kind: 'Loan' | 'De
   }
 }
 
-async function ensureUnique(table: 'loan_type' | 'deduction_type' | 'deduction_loan_classification', nameColumn: string, name: string, idColumn: string, id?: number) {
+async function ensureUnique(
+  table: 'loan_type' | 'deduction_type' | 'deduction_loan_classification',
+  nameColumn: string,
+  name: string,
+  idColumn: string,
+  options: { id?: number; classificationId?: number } = {},
+) {
+  const hasClassificationScope = options.classificationId !== undefined
+  const hasExcludedId = options.id !== undefined
+  const scopeSql = hasClassificationScope ? ' AND ClassificationID = ?' : ''
+  const excludeSql = hasExcludedId ? ` AND \`${idColumn}\` <> ?` : ''
+  const params: Array<string | number> = [name]
+  if (hasClassificationScope) params.push(options.classificationId as number)
+  if (hasExcludedId) params.push(options.id as number)
   const [rows] = await pool.execute<any[]>(
-    `SELECT \`${idColumn}\` AS id FROM \`${table}\` WHERE LOWER(\`${nameColumn}\`) = LOWER(?)${id ? ` AND \`${idColumn}\` <> ?` : ''} LIMIT 1`,
-    id ? [name, id] : [name],
+    `SELECT \`${idColumn}\` AS id FROM \`${table}\` WHERE LOWER(\`${nameColumn}\`) = LOWER(?)${scopeSql}${excludeSql} LIMIT 1`,
+    params,
   )
-  if (rows[0]) throw createError({ statusCode: 409, statusMessage: 'A catalog record with this name already exists.' })
+  if (rows[0]) {
+    const statusMessage = hasClassificationScope
+      ? 'A sub-classification with this name already exists under the selected classification.'
+      : 'A classification with this name already exists.'
+    throw createError({ statusCode: 409, statusMessage })
+  }
 }
 
 async function ensureClassificationCanChange(id: number, appliesTo: string, status: string) {
@@ -161,7 +179,7 @@ export async function createDeductionLoanCatalog(event: any) {
     const name = requiredText(body?.LoanName, 'Loan name')
     const governmentAgency = optionalText(body?.GovernmentAgency, 'Provider or agency', 100)
     await ensureClassification(classificationId, 'Loan')
-    await ensureUnique('loan_type', 'LoanName', name, 'LoanTypeID')
+    await ensureUnique('loan_type', 'LoanName', name, 'LoanTypeID', { classificationId })
     const [result] = await pool.execute<any>(
       'INSERT INTO loan_type (LoanName, ClassificationID, GovernmentAgency, Description, Status) VALUES (?, ?, ?, ?, ?)',
       [name, classificationId, governmentAgency, description, status],
@@ -173,7 +191,7 @@ export async function createDeductionLoanCatalog(event: any) {
   const category = enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
   const period = enumValue(body?.DeductionPeriod, validDeductionPeriods, 'deduction frequency', 'Monthly')
   await ensureClassification(classificationId, 'Deduction')
-  await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID')
+  await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID', { classificationId })
   const [result] = await pool.execute<any>(
     'INSERT INTO deduction_type (DeductionName, ClassificationID, DeductionCategory, DeductionPeriod, Description, Status) VALUES (?, ?, ?, ?, ?, ?)',
     [name, classificationId, category, period, description, status],
@@ -193,7 +211,7 @@ export async function updateDeductionLoanCatalog(event: any) {
     const name = requiredText(body?.ClassificationName, 'Classification name')
     const appliesTo = enumValue(body?.AppliesTo, validAppliesTo, 'classification scope', 'Loan')
     const description = optionalText(body?.Description, 'Description')
-    await ensureUnique('deduction_loan_classification', 'ClassificationName', name, 'ClassificationID', id)
+    await ensureUnique('deduction_loan_classification', 'ClassificationName', name, 'ClassificationID', { id })
     await ensureClassificationCanChange(id, appliesTo, status)
     const [result] = await pool.execute<any>(
       'UPDATE deduction_loan_classification SET ClassificationName = ?, AppliesTo = ?, Description = ?, Status = ? WHERE ClassificationID = ?',
@@ -209,7 +227,7 @@ export async function updateDeductionLoanCatalog(event: any) {
     const name = requiredText(body?.LoanName, 'Loan name')
     const governmentAgency = optionalText(body?.GovernmentAgency, 'Provider or agency', 100)
     await ensureClassification(classificationId, 'Loan', status === 'Active')
-    await ensureUnique('loan_type', 'LoanName', name, 'LoanTypeID', id)
+    await ensureUnique('loan_type', 'LoanName', name, 'LoanTypeID', { id, classificationId })
     const [result] = await pool.execute<any>(
       'UPDATE loan_type SET LoanName = ?, ClassificationID = ?, GovernmentAgency = ?, Description = ?, Status = ? WHERE LoanTypeID = ?',
       [name, classificationId, governmentAgency, description, status, id],
@@ -222,7 +240,7 @@ export async function updateDeductionLoanCatalog(event: any) {
   const category = enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
   const period = enumValue(body?.DeductionPeriod, validDeductionPeriods, 'deduction frequency', 'Monthly')
   await ensureClassification(classificationId, 'Deduction', status === 'Active')
-  await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID', id)
+  await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID', { id, classificationId })
   const [result] = await pool.execute<any>(
     'UPDATE deduction_type SET DeductionName = ?, ClassificationID = ?, DeductionCategory = ?, DeductionPeriod = ?, Description = ?, Status = ? WHERE DeductionTypeID = ?',
     [name, classificationId, category, period, description, status, id],

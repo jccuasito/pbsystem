@@ -102,10 +102,18 @@ try {
   }
   await connection.query("ALTER TABLE deduction_loan_classification MODIFY AppliesTo ENUM('Loan', 'Deduction') NOT NULL DEFAULT 'Loan'")
 
+  const obsoleteIndexes = [
+    ['loan_type', 'uq_loan_type_name'],
+    ['deduction_type', 'uq_deduction_type_name'],
+  ]
+  for (const [table, name] of obsoleteIndexes) {
+    if (await hasIndex(table, name)) await connection.query(`ALTER TABLE \`${table}\` DROP INDEX \`${name}\``)
+  }
+
   const indexes = [
-    ['loan_type', 'uq_loan_type_name', 'UNIQUE KEY uq_loan_type_name (LoanName)'],
+    ['loan_type', 'uq_loan_type_classification_name', 'UNIQUE KEY uq_loan_type_classification_name (ClassificationID, LoanName)'],
     ['loan_type', 'idx_loan_type_classification', 'KEY idx_loan_type_classification (ClassificationID)'],
-    ['deduction_type', 'uq_deduction_type_name', 'UNIQUE KEY uq_deduction_type_name (DeductionName)'],
+    ['deduction_type', 'uq_deduction_type_classification_name', 'UNIQUE KEY uq_deduction_type_classification_name (ClassificationID, DeductionName)'],
     ['deduction_type', 'idx_deduction_type_classification', 'KEY idx_deduction_type_classification (ClassificationID)'],
   ]
   for (const [table, name, definition] of indexes) {

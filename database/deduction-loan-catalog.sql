@@ -13,7 +13,7 @@ CREATE TABLE deduction_loan_classification (
 ALTER TABLE loan_type
   ADD COLUMN ClassificationID INT NULL AFTER LoanName,
   ADD COLUMN Description VARCHAR(255) NULL AFTER GovernmentAgency,
-  ADD UNIQUE KEY uq_loan_type_name (LoanName),
+  ADD UNIQUE KEY uq_loan_type_classification_name (ClassificationID, LoanName),
   ADD KEY idx_loan_type_classification (ClassificationID),
   ADD CONSTRAINT fk_loan_type_classification
     FOREIGN KEY (ClassificationID) REFERENCES deduction_loan_classification (ClassificationID)
@@ -22,7 +22,7 @@ ALTER TABLE loan_type
 ALTER TABLE deduction_type
   ADD COLUMN ClassificationID INT NULL AFTER DeductionName,
   ADD COLUMN Description VARCHAR(255) NULL AFTER DeductionPeriod,
-  ADD UNIQUE KEY uq_deduction_type_name (DeductionName),
+  ADD UNIQUE KEY uq_deduction_type_classification_name (ClassificationID, DeductionName),
   ADD KEY idx_deduction_type_classification (ClassificationID),
   ADD CONSTRAINT fk_deduction_type_classification
     FOREIGN KEY (ClassificationID) REFERENCES deduction_loan_classification (ClassificationID)

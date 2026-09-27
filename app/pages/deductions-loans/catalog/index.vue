@@ -310,7 +310,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 
     <div class="desktop-table">
       <table>
-        <thead><tr><th>Sub-classification</th><th>Status</th><th class="actions-heading">Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Status</th><th class="actions-heading">Actions</th></tr></thead>
         <tbody>
           <tr v-if="loading" class="table-message"><td colspan="3">Loading sub-classifications…</td></tr>
           <tr v-else-if="!groupedTypes.length" class="table-message"><td colspan="3"><strong>No catalog entries found.</strong><span>Add a classification and its first sub-classification.</span></td></tr>

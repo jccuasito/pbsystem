@@ -34,6 +34,7 @@ test('catalog page compiles and keeps amounts out of the master form', () => {
   assert.match(descriptor.template.content, /Parent classification/)
   assert.match(descriptor.template.content, /Sub-classification/)
   assert.match(descriptor.template.content, /classification-group-row/)
+  assert.match(descriptor.template.content, /<th>Name<\/th>/)
   assert.doesNotMatch(descriptor.template.content, /class="tabs"/)
   assert.match(descriptor.template.content, /\+ Add classification/)
   assert.match(descriptor.template.content, /\+ Add sub-classification/)
@@ -81,10 +82,32 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
       resource: 'classification',
       body: { ClassificationName: `TEST DEDUCTION CLASS ${suffix}`, AppliesTo: 'Deduction', Status: 'Active' },
     })
+    const secondLoanClassification = await api.createDeductionLoanCatalog({
+      resource: 'classification',
+      body: { ClassificationName: `TEST SECOND LOAN CLASS ${suffix}`, AppliesTo: 'Loan', Status: 'Active' },
+    })
     const loan = await api.createDeductionLoanCatalog({
       resource: 'loan-type',
       body: { LoanName: `TEST LOAN ${suffix}`, ClassificationID: classification.id, GovernmentAgency: 'Test Provider', Status: 'Active' },
     })
+    const sameNameUnderAnotherParent = await api.createDeductionLoanCatalog({
+      resource: 'loan-type',
+      body: { LoanName: `TEST LOAN ${suffix}`, ClassificationID: secondLoanClassification.id, Status: 'Active' },
+    })
+    await assert.rejects(
+      api.createDeductionLoanCatalog({
+        resource: 'loan-type',
+        body: { LoanName: `test loan ${suffix}`, ClassificationID: classification.id, Status: 'Active' },
+      }),
+      error => error.statusCode === 409 && /selected classification/.test(error.statusMessage),
+    )
+    await assert.rejects(
+      api.updateDeductionLoanCatalog({
+        resource: 'loan-type',
+        body: { id: sameNameUnderAnotherParent.id, LoanName: `TEST LOAN ${suffix}`, ClassificationID: classification.id, Status: 'Active' },
+      }),
+      error => error.statusCode === 409 && /selected classification/.test(error.statusMessage),
+    )
     const deduction = await api.createDeductionLoanCatalog({
       resource: 'deduction-type',
       body: { DeductionName: `TEST DEDUCTION ${suffix}`, ClassificationID: deductionClassification.id, DeductionCategory: 'Company', DeductionPeriod: 'Semi-Monthly', Status: 'Active' },
@@ -113,8 +136,10 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
       error => error.statusCode === 409,
     )
     await api.deleteDeductionLoanCatalog({ resource: 'loan-type', body: { id: loan.id } })
+    await api.deleteDeductionLoanCatalog({ resource: 'loan-type', body: { id: sameNameUnderAnotherParent.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'deduction-type', body: { id: deduction.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: classification.id } })
+    await api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: secondLoanClassification.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: deductionClassification.id } })
     const inactive = (await api.listDeductionLoanCatalog({ resource: 'classification' })).items.find(item => Number(item.ClassificationID) === Number(classification.id))
     assert.equal(inactive.Status, 'Inactive')
