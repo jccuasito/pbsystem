@@ -130,6 +130,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/attendance/daily-time-records/index.vue`
   - `app/pages/attendance/holiday-manager/index.vue`
   - `app/pages/attendance/shift-code/index.vue`
+  - `app/pages/deductions-loans/catalog/index.vue`
   - `app/pages/employees/deployment-history/index.vue`
   - `app/pages/employees/documents/index.vue`
   - `app/pages/employees/index.vue`
@@ -184,6 +185,14 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/dashboard/recent-activity` → `server/api/dashboard/recent-activity.get.ts`
   - `GET /api/dashboard/recent-payroll` → `server/api/dashboard/recent-payroll.get.ts`
   - `GET /api/dashboard/stats` → `server/api/dashboard/stats.get.ts`
+  - `DELETE /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].delete.ts`
+  - `POST /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].post.ts`
+  - `PUT /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].put.ts`
+  - `GET /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].get.ts`
+  - `POST /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].post.ts`
+  - `PUT /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].put.ts`
+  - `GET /api/deductions-loans/deduction-type` → `server/api/deductions-loans/[resource].get.ts`
+  - `GET /api/deductions-loans/loan-type` → `server/api/deductions-loans/[resource].get.ts`
   - `GET /api/employees` → `server/api/employees/index.get.ts`
   - `POST /api/employees` → `server/api/employees/index.post.ts`
   - `DELETE /api/employees/[param]` → `server/api/employees/[id].delete.ts`
@@ -226,6 +235,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/deductionLoanCatalogCrud.ts`
   - `server/utils/dtrBtrCrud.ts`
   - `server/utils/dtrCrud.ts`
   - `server/utils/employeeCrud.ts`
@@ -241,6 +251,30 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Static assets:
   - None detected.
 - Links to: `/loginscreen`, `/payroll/history`, `/userprofile/viewprofile`
+
+### `/deductions-loans/catalog`
+
+- Page: `app/pages/deductions-loans/catalog/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
+- Related frontend files:
+  - `app/composables/useRealtimeRefresh.ts`
+- API calls and handlers:
+  - `DELETE /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].delete.ts`
+  - `POST /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].post.ts`
+  - `PUT /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].put.ts`
+  - `GET /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].get.ts`
+  - `POST /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].post.ts`
+  - `PUT /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].put.ts`
+  - `GET /api/deductions-loans/deduction-type` → `server/api/deductions-loans/[resource].get.ts`
+  - `GET /api/deductions-loans/loan-type` → `server/api/deductions-loans/[resource].get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/deductionLoanCatalogCrud.ts`
+  - `server/utils/jwt.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
 
 ### `/employees`
 

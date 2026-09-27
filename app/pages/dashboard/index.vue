@@ -17,6 +17,7 @@ import SiteRatePage from '../rates/site/index.vue'
 import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
 import ShiftCodePage from '../attendance/shift-code/index.vue'
 import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
+import DeductionLoanCatalogPage from '../deductions-loans/catalog/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,13 +35,13 @@ type WorkspaceView =
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
   | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
-  | 'deductions' | 'loans' | 'reports' | 'settings'
+  | 'deductions' | 'loans' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
   'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
-  'deductions', 'loans', 'reports', 'settings'
+  'deductions', 'loans', 'deductions-loans-catalog', 'reports', 'settings'
 ])
 const activeWorkspaceView = computed<WorkspaceView | null>(() => {
   const value = Array.isArray(route.query.view) ? route.query.view[0] : route.query.view
@@ -193,8 +194,9 @@ const navGroups = [
   {
     label: 'Deductions & Loans', icon: 'file-text', key: 'deductions',
     children: [
-      { label: 'Employee Deduction', to: '/deductions-loans/deduction', icon: 'file-text', view: 'deductions' },
-      { label: 'Employee Loan', to: '/deductions-loans/loan', icon: 'peso', view: 'loans' }
+      { label: 'Deductions', to: '/deductions-loans/deduction', icon: 'file-text', view: 'deductions' },
+      { label: 'Loans', to: '/deductions-loans/loan', icon: 'peso', view: 'loans' },
+      { label: 'Catalog', to: '/deductions-loans/catalog', icon: 'settings', view: 'deductions-loans-catalog' }
     ]
   },
   { label: 'Reports', to: '/reports', icon: 'chart-bar', view: 'reports' },
@@ -240,7 +242,8 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'rates-site': SiteRatePage,
   'attendance-dtr': DailyTimeRecordsPage,
   'attendance-shift-code': ShiftCodePage,
-  'attendance-holiday-manager': HolidayManagerPage
+  'attendance-holiday-manager': HolidayManagerPage,
+  'deductions-loans-catalog': DeductionLoanCatalogPage
 }
 const activePageComponent = computed(() => activeWorkspaceView.value ? workspaceComponents[activeWorkspaceView.value] : null)
 

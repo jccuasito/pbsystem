@@ -97,6 +97,19 @@ All rate routes are session-protected. `:resource` is whitelisted to `payroll-ra
 
 The complete monetary fields are `RegularRate`, `OTRate`, `OTExtRate`, `NightDiffRate`, `RestDayRate`, `RestDayOTRate`, `SpecialHolidayRate`, `LegalHolidayRate`, `SpecialHolidayOTRate`, `LegalHolidayOTRate`, `LateDeduction`, `UndertimeDeduction`, `BreakDeduction`, and `Allowance`. `shared/utils/rateFields.ts` supplies the full `rateMoneyFields` list to the API and the same full `rateFormFields` list to `components/RateMoneyFields.vue`. Payroll and Billing add/edit forms, both Site Rates inline creation sections, and linked rate previews use the full list, including `LateDeduction` and `UndertimeDeduction`. UI payloads include these amounts, and edit forms reload their stored values. Restoring these fields requires no additional migration. Existing linked payroll/billing amounts can be inspected through expandable previews in the site form. Run `node --test scripts/test-rate-fields.cjs`; add `RATES_TEST_DATABASE=1` for transactional MySQL CRUD/linking tests that roll back their data.
 
+## Deductions & Loans
+
+All catalog routes require a session. `:resource` is restricted to `classification`, `loan-type`, or `deduction-type`. The UI presents one hierarchical list: a classification is the expandable parent group (for example, PAG-IBIG or SSS), while the existing loan/deduction type rows are labeled sub-classifications (for example, MPL, Calamity Loan, or Salary Loan). The page-level action creates a classification. Each parent row has an Add sub-classification action that opens the child form with its type and parent locked to that classification. The catalog stores reusable setup records only; employee amounts, balances, payment schedules, and payroll postings remain in the later employee deduction/loan processes.
+
+| Method | Path | Tables used | Caller | Request / response |
+| --- | --- | --- | --- | --- |
+| GET | `/api/deductions-loans/:resource` | `deduction_loan_classification`, `loan_type`, `deduction_type` | `app/pages/deductions-loans/catalog/index.vue` | Returns `{ items }`; type resources also return `{ classifications }`. Classification rows include linked loan/deduction sub-classification counts. Loan and deduction rows retain their existing `LoanTypeID` and `DeductionTypeID`, which are the IDs referenced by employee records. |
+| POST | `/api/deductions-loans/:resource` | Target catalog table; validates `deduction_loan_classification` for type resources | Catalog add modal | Creates a classification dedicated to either Loan or Deduction, or creates a reusable sub-classification under a compatible parent. Names are required and unique per table. No amount is accepted. Returns `{ id }`. |
+| PUT | `/api/deductions-loans/:resource` | Target catalog table; classification updates inspect `loan_type` and `deduction_type` usage | Catalog edit modal | Body is `{ id, ...fields }`. Prevents changing or deactivating a parent classification in a way that conflicts with active linked sub-classifications. Returns `{ success: true }`. |
+| DELETE | `/api/deductions-loans/:resource` | Target catalog table; classification deactivation inspects active type usage | Catalog table/cards | Body `{ id }`; soft-deactivates the record. A classification with active linked sub-classifications must keep its active status until those child records are deactivated. Returns `{ success: true }`. |
+
+Apply `database/deduction-loan-catalog.sql` with `node --env-file=.env scripts/apply-deduction-loan-catalog.mjs`. The repeat-safe runner creates the shared classification table and adds nullable classification/description fields plus foreign keys and unique name indexes to the existing `loan_type` and `deduction_type` tables. Existing employee foreign keys continue to use the same type IDs.
+
 ## Attendance
 
 | Method | Path | Tables used | Caller | Request / response |
