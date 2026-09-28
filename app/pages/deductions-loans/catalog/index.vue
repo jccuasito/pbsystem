@@ -40,6 +40,7 @@ const editing = ref<any>(null)
 const modalError = ref('')
 const confirmItem = ref<{ resource: string; id: number; name: string } | null>(null)
 const collapsedClassifications = ref<Set<string>>(new Set())
+const collapsedStateInitialized = ref(false)
 const parentClassificationLocked = ref(false)
 
 const typeForm = ref({
@@ -138,6 +139,10 @@ async function load(silent = false) {
     classifications.value = classificationResponse.items || []
     loanTypes.value = loanResponse.items || []
     deductionTypes.value = deductionResponse.items || []
+    if (!collapsedStateInitialized.value) {
+      collapsedClassifications.value = new Set(classifications.value.map(item => `${item.AppliesTo}-${item.ClassificationID}`))
+      collapsedStateInitialized.value = true
+    }
     pageError.value = ''
   } catch (cause: any) {
     pageError.value = cause.data?.statusMessage || 'Unable to load the loan and deduction catalog.'

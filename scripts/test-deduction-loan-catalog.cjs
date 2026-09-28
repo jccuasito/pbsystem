@@ -40,6 +40,8 @@ test('catalog page compiles as a reusable-name lookup form', () => {
   assert.match(descriptor.template.content, /\+ Add classification/)
   assert.match(descriptor.template.content, /\+ Add sub-classification/)
   assert.match(descriptor.scriptSetup.content, /openTypeForClassification/)
+  assert.match(descriptor.scriptSetup.content, /collapsedStateInitialized/)
+  assert.match(descriptor.scriptSetup.content, /new Set\(classifications\.value\.map/)
   assert.doesNotMatch(descriptor.scriptSetup.content, /DeductionCategory|DeductionPeriod|GovernmentAgency/)
 })
 
