@@ -38,6 +38,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/components/DtrAttendanceWorkspace.vue`
   - `app/components/DtrBtrModal.vue`
+  - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
@@ -64,6 +65,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/attendance/dtr/[param]/summary` → `server/api/attendance/dtr/[id]/summary.get.ts`
   - `GET /api/organization/shift-code` → `server/api/organization/[resource].get.ts`
   - `POST /api/organization/shift-code` → `server/api/organization/[resource].post.ts`
+  - `GET /api/payroll/adjustments` → `server/api/payroll/adjustments/index.get.ts`
+  - `POST /api/payroll/adjustments` → `server/api/payroll/adjustments/index.post.ts`
+  - `PUT /api/payroll/adjustments` → `server/api/payroll/adjustments/index.put.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
@@ -73,6 +77,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeStatusCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
+  - `server/utils/payrollAdjustmentCrud.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
 - Static assets:
@@ -126,6 +131,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/components/DtrAttendanceWorkspace.vue`
   - `app/components/DtrBtrModal.vue`
+  - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
   - `app/pages/attendance/holiday-manager/index.vue`
@@ -140,6 +146,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/organization/position/index.vue`
   - `app/pages/organization/region/index.vue`
   - `app/pages/organization/site/index.vue`
+  - `app/pages/payroll/adjustments/index.vue`
   - `app/pages/rates/billing/index.vue`
   - `app/pages/rates/payroll/index.vue`
   - `app/pages/rates/site/index.vue`
@@ -223,6 +230,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/organization/shift-code` → `server/api/organization/[resource].post.ts`
   - `PUT /api/organization/shift-code` → `server/api/organization/[resource].put.ts`
   - `GET /api/organization/site-shift` → `server/api/organization/[resource].get.ts`
+  - `GET /api/payroll/adjustments` → `server/api/payroll/adjustments/index.get.ts`
+  - `POST /api/payroll/adjustments` → `server/api/payroll/adjustments/index.post.ts`
+  - `PUT /api/payroll/adjustments` → `server/api/payroll/adjustments/index.put.ts`
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
@@ -243,6 +253,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/holidayCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
+  - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/rateCrud.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
@@ -531,6 +542,20 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/payroll/adjustments`
+
+- Page: `app/pages/payroll/adjustments/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
+- Related frontend files:
+  - None detected.
+- API calls and handlers:
+  - None detected.
+- Related backend utilities:
+  - None detected.
 - Static assets:
   - None detected.
 - Links to: none detected.

@@ -18,6 +18,7 @@ import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
 import ShiftCodePage from '../attendance/shift-code/index.vue'
 import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
 import DeductionLoanCatalogPage from '../deductions-loans/catalog/index.vue'
+import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,13 +34,13 @@ let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
-  | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payslip' | 'payroll-history'
+  | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
   | 'deductions' | 'loans' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
-  'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payslip', 'payroll-history',
+  'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
   'deductions', 'loans', 'deductions-loans-catalog', 'reports', 'settings'
 ])
@@ -172,6 +173,7 @@ const navGroups = [
     label: 'Payroll', icon: 'peso', key: 'payroll',
     children: [
       { label: 'Payroll Processing', to: '/payroll/processing', icon: 'peso', view: 'payroll-processing' },
+      { label: 'Adjustments', to: '/payroll/adjustments', icon: 'file-text', view: 'payroll-adjustments' },
       { label: 'Payslip', to: '/payroll/payslip', icon: 'file-text', view: 'payslip' },
       { label: 'Payroll History', to: '/payroll/history', icon: 'chart-bar', view: 'payroll-history' }
     ]
@@ -243,6 +245,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'attendance-dtr': DailyTimeRecordsPage,
   'attendance-shift-code': ShiftCodePage,
   'attendance-holiday-manager': HolidayManagerPage,
+  'payroll-adjustments': PayrollAdjustmentsPage,
   'deductions-loans-catalog': DeductionLoanCatalogPage
 }
 const activePageComponent = computed(() => activeWorkspaceView.value ? workspaceComponents[activeWorkspaceView.value] : null)
