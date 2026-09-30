@@ -60,6 +60,7 @@ const suggestedBirthYear = new Date().getFullYear() - 25
 const relationshipOptions = ['Spouse', 'Child', 'Parent', 'Sibling', 'Grandchild', 'Grandparent', 'Legal Guardian', 'Other Relative', 'Partner', 'Other']
 const genderOptions = ['Male', 'Female', 'Non-binary', 'Prefer not to say']
 const civilStatusOptions = ['Single', 'Married', 'Widowed', 'Separated', 'Divorced', 'Annulled']
+const bankOptions = ['BDO', 'BPI', 'Chinabank', 'Metrobank', 'Landbank', 'PNB', 'Security Bank', 'UnionBank', 'RCBC']
 let employeeObserver: IntersectionObserver | null = null
 let compactViewQuery: MediaQueryList | null = null
 const deleteWarning = alertMessages.employeePermanentDelete()
@@ -83,6 +84,13 @@ const form = ref({
   ContactNumber: '',
   DateHired: '',
   Status: 'Active',
+  PaymentMethod: 'Cash',
+  PaymentMethodEffectiveDate: '',
+  AccountName: '',
+  BankNameOption: '',
+  BankName: '',
+  AccountNumber: '',
+  AccountType: 'Payroll',
   PermanentUnitHouseNumber: '',
   PermanentProvince: '',
   PermanentStreet: '',
@@ -142,6 +150,10 @@ function reset(item: any = null) {
   editing.value = item
   photoPickerOpen.value = false
   photoDragActive.value = false
+  const savedBankName = String(item?.BankName || '').trim()
+  const savedBankOption = savedBankName
+    ? bankOptions.find(bank => bank.toLocaleLowerCase() === savedBankName.toLocaleLowerCase()) || 'Other'
+    : ''
   form.value = {
     AgencyPositionID: item?.AgencyPositionID ?? '',
     EmployeeNumber: item?.EmployeeNumber ?? '',
@@ -160,6 +172,13 @@ function reset(item: any = null) {
     ContactNumber: item?.ContactNumber ?? '',
     DateHired: item?.DateHired?.slice?.(0, 10) ?? item?.DateHired ?? '',
     Status: item?.Status ?? 'Active',
+    PaymentMethod: canonicalOption(item?.PaymentMethod, ['Cash', 'Check', 'Bank Transfer']) || 'Cash',
+    PaymentMethodEffectiveDate: item?.PaymentMethodEffectiveDate?.slice?.(0, 10) ?? item?.PaymentMethodEffectiveDate ?? item?.DateHired?.slice?.(0, 10) ?? item?.DateHired ?? today(),
+    AccountName: String(item?.AccountName ?? '').toLocaleUpperCase(),
+    BankNameOption: savedBankOption,
+    BankName: savedBankName,
+    AccountNumber: item?.AccountNumber ?? '',
+    AccountType: canonicalOption(item?.AccountType, ['Payroll', 'Savings', 'Checking']) || 'Payroll',
     PermanentUnitHouseNumber: item?.PermanentUnitHouseNumber ?? '',
     PermanentProvince: item?.PermanentProvince ?? '',
     PermanentStreet: item?.PermanentStreet ?? '',
@@ -553,9 +572,16 @@ function incompleteEmployeeFields() {
   const required: Array<[keyof typeof form.value, string]> = [
     ['AgencyPositionID', 'Agency position'], ['FirstName', 'First name'], ['LastName', 'Last name'],
     ['Birthday', 'Birthday'], ['DateHired', 'Date hired'], ['Gender', 'Gender'], ['CivilStatus', 'Civil status'],
-    ['Email', 'Email'], ['ContactNumber', 'Contact number'],
+    ['Email', 'Email'], ['ContactNumber', 'Contact number'], ['PaymentMethod', 'Salary payment method'],
+    ['PaymentMethodEffectiveDate', 'Payment method effective date'],
   ]
   const missing = required.filter(([key]) => !String(form.value[key] ?? '').trim()).map(([, label]) => label)
+  if (form.value.PaymentMethod === 'Bank Transfer') {
+    if (!form.value.AccountName.trim()) missing.push('Account holder name')
+    if (!form.value.BankName.trim()) missing.push('Bank name')
+    if (!/^\d{6,30}$/.test(form.value.AccountNumber)) missing.push('Valid bank account number')
+    if (!form.value.AccountType) missing.push('Bank account type')
+  }
   if (!form.value.BeneficiaryNotApplicable) {
     beneficiaries.value.forEach((entry, index) => {
       if (!entry.Name.trim()) missing.push(`Beneficiary ${index + 1} name`)
@@ -581,6 +607,39 @@ function sanitizeEmergencyContactNumber(event: Event) {
 
 function normalizeEmail() {
   form.value.Email = String(form.value.Email || '').trim().toLocaleLowerCase()
+}
+
+function selectPaymentMethod(method: 'Cash' | 'Check' | 'Bank Transfer') {
+  form.value.PaymentMethod = method
+  if (method === 'Bank Transfer' && !form.value.AccountName.trim()) {
+    form.value.AccountName = [form.value.FirstName, form.value.MiddleName, form.value.LastName]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleUpperCase()
+  }
+}
+
+function onBankNameOptionChanged() {
+  if (form.value.BankNameOption === 'Other') {
+    if (bankOptions.includes(form.value.BankName)) form.value.BankName = ''
+    return
+  }
+  form.value.BankName = form.value.BankNameOption
+}
+
+function uppercaseAccountName(event: Event) {
+  const input = event.target as HTMLInputElement
+  const uppercased = input.value.toLocaleUpperCase()
+  input.value = uppercased
+  form.value.AccountName = uppercased
+}
+
+function sanitizeBankAccountNumber(event: Event) {
+  const input = event.target as HTMLInputElement
+  const sanitized = input.value.replace(/\D/g, '').slice(0, 30)
+  input.value = sanitized
+  form.value.AccountNumber = sanitized
 }
 
 watch([search, () => filters.value.agencyId, () => filters.value.positionId], () => {
@@ -931,6 +990,56 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
             </div>
           </section>
 
+          <section class="employee-form-section payroll-disbursement-section">
+            <div class="employee-form-section__heading">
+              <div><span>PAYROLL DISBURSEMENT</span><h3>Salary payment method</h3></div>
+              <small>Used when releasing the employee's net pay.</small>
+            </div>
+
+            <div class="payment-method-options" role="radiogroup" aria-label="Salary payment method">
+              <button type="button" class="payment-method-card" :class="{ 'is-selected': form.PaymentMethod === 'Cash' }" :aria-pressed="form.PaymentMethod === 'Cash'" @click="selectPaymentMethod('Cash')">
+                <span class="payment-method-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10h.01M17 14h.01M12 9v6m2-4.5c0-.8-.9-1.5-2-1.5s-2 .7-2 1.5.9 1.5 2 1.5 2 .7 2 1.5-.9 1.5-2 1.5-2-.7-2-1.5" /></svg></span>
+                <span><strong>Cash</strong><small>Paid directly in cash</small></span>
+                <span class="payment-method-card__check" aria-hidden="true">✓</span>
+              </button>
+              <button type="button" class="payment-method-card" :class="{ 'is-selected': form.PaymentMethod === 'Check' }" :aria-pressed="form.PaymentMethod === 'Check'" @click="selectPaymentMethod('Check')">
+                <span class="payment-method-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM7 9h7M7 13h4M15 15l1.5 1.5L20 13" /></svg></span>
+                <span><strong>Cheque</strong><small>Released through a cheque</small></span>
+                <span class="payment-method-card__check" aria-hidden="true">✓</span>
+              </button>
+              <button type="button" class="payment-method-card" :class="{ 'is-selected': form.PaymentMethod === 'Bank Transfer' }" :aria-pressed="form.PaymentMethod === 'Bank Transfer'" @click="selectPaymentMethod('Bank Transfer')">
+                <span class="payment-method-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 10h18M5 10V20m4-10v10m6-10v10m4-10v10M2 20h20M12 3l9 5H3z" /></svg></span>
+                <span><strong>Bank transfer</strong><small>Credit salary to a bank account</small></span>
+                <span class="payment-method-card__check" aria-hidden="true">✓</span>
+              </button>
+            </div>
+
+            <div class="payment-method-date">
+              <ModernDateField v-model="form.PaymentMethodEffectiveDate" label="Effective date" placeholder="Select effective date" required />
+              <p>This method will be used for payrolls on or after the selected date.</p>
+            </div>
+
+            <div v-if="form.PaymentMethod === 'Bank Transfer'" class="bank-account-panel">
+              <div class="bank-account-panel__heading">
+                <div class="bank-account-panel__title">
+                  <span class="bank-account-panel__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 10h18M5 10V20m4-10v10m6-10v10m4-10v10M2 20h20M12 3l9 5H3z" /></svg></span>
+                  <div><strong>Bank account details</strong><small>Enter the account where the employee's salary will be credited.</small></div>
+                </div>
+                <span>Required</span>
+              </div>
+
+              <div class="bank-transfer-form-grid">
+                <label><span>Bank <b aria-hidden="true">*</b></span><select v-model="form.BankNameOption" required @change="onBankNameOptionChanged"><option disabled value="">Select bank</option><option v-for="bank in bankOptions" :key="bank" :value="bank">{{ bank }}</option><option value="Other">Other bank</option></select></label>
+                <label><span>Account type <b aria-hidden="true">*</b></span><select v-model="form.AccountType" required><option value="Payroll">Payroll account</option><option value="Savings">Savings account</option><option value="Checking">Checking account</option></select></label>
+                <label v-if="form.BankNameOption === 'Other'" class="bank-transfer-form-grid__full"><span>Bank name <b aria-hidden="true">*</b></span><input v-model.trim="form.BankName" placeholder="Enter the complete bank name" required /></label>
+                <label><span>Account holder name <b aria-hidden="true">*</b></span><input :value="form.AccountName" autocomplete="name" placeholder="Name registered with the bank" required @input="uppercaseAccountName" /><small>It should match the name registered on the account.</small></label>
+                <label><span>Account number <b aria-hidden="true">*</b></span><input :value="form.AccountNumber" type="text" inputmode="numeric" autocomplete="off" maxlength="30" placeholder="Enter account number" required @input="sanitizeBankAccountNumber" /><small>Use the bank account number, not the ATM card number.</small></label>
+              </div>
+              <p class="bank-account-panel__notice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4" /></svg> Verify the account name and number before saving. A changed account is recorded as a new active bank record.</p>
+            </div>
+            <p v-else class="payment-method-note">No bank details are required for {{ form.PaymentMethod === 'Check' ? 'cheque' : 'cash' }} payments.</p>
+          </section>
+
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>PERMANENT ADDRESS</span><h3>Permanent residence</h3></div></div>
             <div class="grid"><label>Unit/House number<input v-model="form.PermanentUnitHouseNumber" /></label><label>Province<input v-model="form.PermanentProvince" /></label></div>
@@ -1239,6 +1348,251 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
   color: #738196;
   font-size: .74rem;
   font-weight: 650;
+}
+
+.payment-method-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.payment-method-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 10px;
+  min-height: 76px;
+  padding: 13px;
+  border: 1px solid #cfdaea;
+  border-radius: 12px;
+  background: #fff;
+  color: #213754;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.payment-method-card:hover {
+  border-color: #89a9e8;
+  background: #f8fbff;
+  transform: translateY(-1px);
+}
+
+.payment-method-card:focus-visible {
+  outline: 3px solid rgba(46, 99, 212, .2);
+  outline-offset: 2px;
+}
+
+.payment-method-card.is-selected {
+  border-color: #2e63d4;
+  background: #f0f5ff;
+  box-shadow: 0 0 0 2px rgba(46, 99, 212, .1);
+}
+
+.payment-method-card__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #edf3fb;
+  color: #355c93;
+}
+
+.payment-method-card.is-selected .payment-method-card__icon {
+  background: #2e63d4;
+  color: #fff;
+}
+
+.payment-method-card__icon svg,
+.bank-account-panel__icon svg,
+.bank-account-panel__notice svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.payment-method-card strong,
+.payment-method-card small {
+  display: block;
+}
+
+.payment-method-card strong {
+  color: #142a48;
+  font-size: .84rem;
+}
+
+.payment-method-card small {
+  margin-top: 3px;
+  color: #708099;
+  font-size: .69rem;
+  line-height: 1.35;
+}
+
+.payment-method-card__check {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid #c8d4e5;
+  border-radius: 50%;
+  color: transparent;
+  font-size: .72rem;
+  font-weight: 900;
+}
+
+.payment-method-card.is-selected .payment-method-card__check {
+  border-color: #2e63d4;
+  background: #2e63d4;
+  color: #fff;
+}
+
+.payment-method-date {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 14px;
+}
+
+.payment-method-date > p,
+.payment-method-note {
+  margin: 0;
+  color: #667a98;
+  font-size: .76rem;
+  line-height: 1.5;
+}
+
+.payment-method-date > p {
+  padding-bottom: 13px;
+}
+
+.bank-account-panel {
+  display: grid;
+  gap: 13px;
+  padding: 16px;
+  border: 1px solid #cbdcf8;
+  border-radius: 12px;
+  background: #f7faff;
+}
+
+.bank-account-panel__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bank-account-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bank-account-panel__icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #2e63d4;
+  color: #fff;
+}
+
+.bank-account-panel__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.bank-account-panel__heading strong,
+.bank-account-panel__heading small {
+  display: block;
+}
+
+.bank-account-panel__heading strong {
+  color: #1c365c;
+  font-size: .86rem;
+}
+
+.bank-account-panel__heading small {
+  margin-top: 3px;
+  color: #6b7e9b;
+  font-size: .72rem;
+}
+
+.bank-account-panel__heading > span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e3edff;
+  color: #285bbf;
+  font-size: .66rem;
+  font-weight: 850;
+}
+
+.bank-transfer-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.bank-transfer-form-grid > label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  margin: 0;
+}
+
+.bank-transfer-form-grid > label > span {
+  color: #304665;
+  font-size: .78rem;
+  font-weight: 800;
+}
+
+.bank-transfer-form-grid > label > span b {
+  color: #d13f3f;
+}
+
+.bank-transfer-form-grid input,
+.bank-transfer-form-grid select {
+  min-height: 48px;
+  background: #fff;
+}
+
+.bank-transfer-form-grid small {
+  min-height: 17px;
+  margin-top: -1px;
+  color: #70819a;
+  font-size: .69rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.bank-transfer-form-grid__full {
+  grid-column: 1 / -1;
+}
+
+.bank-account-panel__notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #eaf2ff;
+  color: #355d95;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
+.bank-account-panel__notice svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
 }
 
 .employee-photo-editor {
@@ -1835,6 +2189,20 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .payment-method-options,
+  .payment-method-date,
+  .bank-transfer-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bank-transfer-form-grid__full {
+    grid-column: auto;
+  }
+
+  .payment-method-date > p {
+    padding-bottom: 0;
   }
 
   .employee-photo-editor {

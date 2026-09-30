@@ -12,6 +12,20 @@ function evaluate(source, globals = {}) {
 
 function harness(body, duplicateRows = []) {
   const calls = []
+  const execute = async (sql, values) => {
+    calls.push({ sql, values: Array.from(values || []) })
+    if (sql.includes('FROM employee e') && sql.includes("DATE_FORMAT(e.Birthday")) return [duplicateRows]
+    if (sql.startsWith('SELECT ProfileID FROM employee_profile')) return [[]]
+    if (sql.startsWith('SELECT BankID, AccountName')) return [[]]
+    return [{ insertId: 12, affectedRows: 1 }]
+  }
+  const connection = {
+    execute,
+    beginTransaction: async () => undefined,
+    commit: async () => undefined,
+    rollback: async () => undefined,
+    release: () => undefined,
+  }
   const alertMessages = evaluate(fs.readFileSync('components/alertmessage/messages.ts', 'utf8'))
   const api = evaluate(fs.readFileSync('server/utils/employeeCrud.ts', 'utf8'), {
     require: name => name === 'h3'
@@ -23,11 +37,8 @@ function harness(body, duplicateRows = []) {
         }
       : name.includes('dbconnect')
         ? {
-            execute: async (sql, values) => {
-              calls.push({ sql, values: Array.from(values || []) })
-              if (sql.includes('FROM employee e') && sql.includes("DATE_FORMAT(e.Birthday")) return [duplicateRows]
-              return [{ insertId: 12, affectedRows: 1 }]
-            },
+            execute,
+            getConnection: async () => connection,
           }
         : name === './auth'
           ? { requireSession: () => ({ sub: 99 }) }
@@ -53,6 +64,8 @@ const validEmployee = {
   ContactNumber: '09171234567',
   DateHired: '2026-09-20',
   Status: 'Active',
+  PaymentMethod: 'Cash',
+  PaymentMethodEffectiveDate: '2026-09-20',
   PermanentUnitHouseNumber: '12-A',
   PermanentProvince: 'Davao del Sur',
   PermanentStreet: 'Rizal Street',
@@ -124,6 +137,29 @@ test('employee create accepts Basic Information while follow-up sections are emp
   assert.equal(values[35], '[]')
   assert.equal(values[36], null)
   assert.equal(values[39], null)
+})
+
+test('employee create stores a normalized bank-transfer disbursement record', async () => {
+  const { api, calls } = harness({
+    ...validEmployee,
+    PaymentMethod: 'bank transfer',
+    AccountName: ' Juan Santos dela Cruz ',
+    BankName: 'BDO',
+    AccountNumber: '1234-5678-9012',
+    AccountType: 'savings',
+  })
+  await api.createEmployee({})
+
+  const profileInsert = calls.find(call => call.sql.startsWith('INSERT INTO employee_profile'))
+  assert.deepEqual(profileInsert.values, [12, 'Bank Transfer', '2026-09-20', '2026-09-20'])
+  const bankInsert = calls.find(call => call.sql.startsWith('INSERT INTO bank'))
+  assert.deepEqual(bankInsert.values, [12, 'JUAN SANTOS DELA CRUZ', 'BDO', '123456789012', 'Savings'])
+})
+
+test('employee create requires complete bank details only for bank transfer', async () => {
+  const { api, calls } = harness({ ...validEmployee, PaymentMethod: 'Bank Transfer', BankName: 'BDO' })
+  await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /bank transfer details/.test(error.message))
+  assert.equal(calls.length, 0)
 })
 
 test('employee create rejects missing Basic Information before duplicate checking or insertion', async () => {
@@ -221,5 +257,5 @@ test('employee create requires confirmation for similar names and permits an int
 
   const allowed = harness({ ...validEmployee, ConfirmPossibleDuplicate: true }, [similar])
   assert.deepEqual(JSON.parse(JSON.stringify(await allowed.api.createEmployee({}))), { id: 12 })
-  assert.equal(allowed.calls.filter(call => call.sql.startsWith('INSERT INTO employee')).length, 1)
+  assert.equal(allowed.calls.filter(call => call.sql.startsWith('INSERT INTO employee (')).length, 1)
 })

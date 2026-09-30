@@ -29,15 +29,17 @@ const employeePhotoTypes: Record<string, string> = { 'image/png': 'png', 'image/
 const employeePhotoMaxBytes = 2 * 1024 * 1024
 const employeeGenderOptions = ['Male', 'Female', 'Non-binary', 'Prefer not to say'] as const
 const employeeCivilStatusOptions = ['Single', 'Married', 'Widowed', 'Separated', 'Divorced', 'Annulled'] as const
+const employeePaymentMethodOptions = ['Cash', 'Check', 'Bank Transfer'] as const
+const employeeBankAccountTypeOptions = ['Payroll', 'Savings', 'Checking'] as const
 
 const sectionConfigs: Record<EmployeeSection, SectionConfig> = {
-  profile: { table: 'employee_profile', id: 'ProfileID', label: 'Profile', single: true, fields: ['EmployeeID', 'Height', 'Weight', 'PostalCode', 'PaymentMethod', 'EntryDate'] },
+  profile: { table: 'employee_profile', id: 'ProfileID', label: 'Profile', single: true, fields: ['EmployeeID', 'Height', 'Weight', 'PostalCode', 'PaymentMethod', 'PaymentMethodEffectiveDate', 'EntryDate'] },
   government: { table: 'government', id: 'GovernmentID', label: 'Government', fields: ['EmployeeID', 'GovernmentType', 'GovernmentNumber'] },
   education: { table: 'education', id: 'EducationID', label: 'Education', fields: ['EmployeeID', 'EducationLevel', 'School', 'Course', 'YearGraduated', 'Attachment'] },
   license: { table: 'license', id: 'LicenseID', label: 'License', fields: ['EmployeeID', 'LicenseName', 'LicenseNumber', 'IssuedDate', 'ExpiryDate', 'Attachment'] },
   training: { table: 'training', id: 'TrainingID', label: 'Training', fields: ['EmployeeID', 'TrainingName', 'TrainingType', 'TrainingSchool', 'CompletedDate', 'Attachment'] },
   clearance: { table: 'clearance', id: 'ClearanceID', label: 'Clearance', fields: ['EmployeeID', 'ClearanceName', 'IssuedDate', 'ExpiryDate', 'Attachment'] },
-  bank: { table: 'bank', id: 'BankID', label: 'Bank', fields: ['EmployeeID', 'BankName', 'AccountNumber', 'AccountType', 'Status'] },
+  bank: { table: 'bank', id: 'BankID', label: 'Bank', fields: ['EmployeeID', 'AccountName', 'BankName', 'AccountNumber', 'AccountType', 'Status'] },
   insurance: { table: 'insurance', id: 'InsuranceID', label: 'Insurance', fields: ['EmployeeID', 'Beneficiary', 'Relationship', 'ContactNumber'] }
 }
 
@@ -151,6 +153,44 @@ function parseEmergencyContactNumber(value: unknown) {
     throw createError({ statusCode: 400, statusMessage: 'Emergency contact number must contain 7 to 15 digits.' })
   }
   return parsed
+}
+
+function parseBankAccountNumber(value: unknown) {
+  const parsed = parseText(value)
+  if (parsed === null) return null
+  const accountNumber = String(parsed).replace(/[\s-]+/g, '')
+  if (!/^\d{6,30}$/.test(accountNumber)) {
+    throw createError({ statusCode: 400, statusMessage: 'Bank account number must contain 6 to 30 digits.' })
+  }
+  return accountNumber
+}
+
+function payrollDisbursementDetails(body: Record<string, unknown>) {
+  const method = parseEmployeeChoice(body.PaymentMethod || 'Cash', 'Salary payment method', employeePaymentMethodOptions) as typeof employeePaymentMethodOptions[number]
+  const effectiveDate = parseDate(body.PaymentMethodEffectiveDate) || parseDate(body.DateHired)
+  const details = {
+    method,
+    effectiveDate,
+    accountName: null as string | null,
+    bankName: null as string | null,
+    accountNumber: null as string | null,
+    accountType: null as typeof employeeBankAccountTypeOptions[number] | null,
+  }
+  if (method !== 'Bank Transfer') return details
+
+  details.accountName = parseUppercaseText(body.AccountName) as string | null
+  details.bankName = parseText(body.BankName) as string | null
+  details.accountNumber = parseBankAccountNumber(body.AccountNumber)
+  details.accountType = parseEmployeeChoice(body.AccountType || 'Payroll', 'Bank account type', employeeBankAccountTypeOptions) as typeof employeeBankAccountTypeOptions[number]
+  const missing = [
+    !details.accountName && 'Account holder name',
+    !details.bankName && 'Bank name',
+    !details.accountNumber && 'Bank account number',
+  ].filter(Boolean)
+  if (missing.length) {
+    throw createError({ statusCode: 400, statusMessage: `Complete the bank transfer details before saving: ${missing.join(', ')}.` })
+  }
+  return details
 }
 
 function parseBooleanFlag(value: unknown) {
@@ -329,6 +369,56 @@ function employeeValues(body: Record<string, unknown>, beneficiaries = parseBene
     parseText(body.EmergencyAddress),
     parseEmergencyContactNumber(body.EmergencyContactNo)
   ]
+}
+
+async function savePayrollDisbursement(connection: any, employeeId: number, body: Record<string, unknown>) {
+  const details = payrollDisbursementDetails(body)
+  const [[profile]] = await connection.execute(
+    'SELECT ProfileID FROM employee_profile WHERE EmployeeID = ? ORDER BY ProfileID DESC LIMIT 1 FOR UPDATE',
+    [employeeId],
+  )
+
+  if (profile) {
+    await connection.execute(
+      'UPDATE employee_profile SET PaymentMethod = ?, PaymentMethodEffectiveDate = ? WHERE ProfileID = ? AND EmployeeID = ?',
+      [details.method, details.effectiveDate, profile.ProfileID, employeeId],
+    )
+  } else {
+    await connection.execute(
+      'INSERT INTO employee_profile (EmployeeID, PaymentMethod, PaymentMethodEffectiveDate, EntryDate) VALUES (?, ?, ?, ?)',
+      [employeeId, details.method, details.effectiveDate, details.effectiveDate],
+    )
+  }
+
+  const [[activeBank]] = await connection.execute(
+    "SELECT BankID, AccountName, BankName, AccountNumber, AccountType FROM bank WHERE EmployeeID = ? AND Status = 'Active' ORDER BY BankID DESC LIMIT 1 FOR UPDATE",
+    [employeeId],
+  )
+
+  if (details.method !== 'Bank Transfer') {
+    await connection.execute("UPDATE bank SET Status = 'Inactive' WHERE EmployeeID = ? AND Status = 'Active'", [employeeId])
+    return
+  }
+
+  const bankDetailsUnchanged = activeBank
+    && String(activeBank.AccountName || '') === String(details.accountName || '')
+    && String(activeBank.BankName || '') === String(details.bankName || '')
+    && String(activeBank.AccountNumber || '') === String(details.accountNumber || '')
+    && String(activeBank.AccountType || '') === String(details.accountType || '')
+
+  if (bankDetailsUnchanged) {
+    await connection.execute(
+      "UPDATE bank SET Status = 'Inactive' WHERE EmployeeID = ? AND Status = 'Active' AND BankID <> ?",
+      [employeeId, activeBank.BankID],
+    )
+    return
+  }
+
+  await connection.execute("UPDATE bank SET Status = 'Inactive' WHERE EmployeeID = ? AND Status = 'Active'", [employeeId])
+  await connection.execute(
+    "INSERT INTO bank (EmployeeID, AccountName, BankName, AccountNumber, AccountType, Status) VALUES (?, ?, ?, ?, ?, 'Active')",
+    [employeeId, details.accountName, details.bankName, details.accountNumber, details.accountType],
+  )
 }
 
 type EmployeeDuplicateMatch = {
@@ -512,7 +602,11 @@ function sectionValues(config: SectionConfig, body: Record<string, unknown>, emp
     if (field === 'EmployeeID') return employeeId
     if (field === 'Height' || field === 'Weight') return parseNumber(body[field], field)
     if (field === 'YearGraduated') return body[field] ? Number(body[field]) : null
-    if (field === 'IssuedDate' || field === 'ExpiryDate' || field === 'CompletedDate' || field === 'EntryDate') return parseDate(body[field])
+    if (field === 'IssuedDate' || field === 'ExpiryDate' || field === 'CompletedDate' || field === 'EntryDate' || field === 'PaymentMethodEffectiveDate') return parseDate(body[field])
+    if (field === 'PaymentMethod') return parseEmployeeChoice(body[field], 'Salary payment method', employeePaymentMethodOptions)
+    if (field === 'AccountName') return parseUppercaseText(body[field])
+    if (field === 'AccountNumber') return parseBankAccountNumber(body[field])
+    if (field === 'AccountType') return parseEmployeeChoice(body[field], 'Bank account type', employeeBankAccountTypeOptions)
     if (field === 'Status') return parseStatus(body[field])
     return parseText(body[field])
   })
@@ -540,6 +634,8 @@ function employeeListSql(filters: string[]) {
     '  e.PresentUnitHouseNumber, e.PresentProvince, e.PresentStreet, e.PresentCityMunicipality, e.PresentSubdivision, e.PresentBarangay, e.PresentRegion, e.PresentPostalCode,',
     '  e.BeneficiaryNotApplicable, e.Beneficiary1, e.Beneficiary1Relationship, e.Beneficiary2, e.Beneficiary2Relationship, e.Beneficiaries,',
     '  e.EmergencyName, e.EmergencyRelationship, e.EmergencyAddress, e.EmergencyContactNo,',
+    "  ep.PaymentMethod, DATE_FORMAT(ep.PaymentMethodEffectiveDate, '%Y-%m-%d') AS PaymentMethodEffectiveDate,",
+    '  eb.AccountName, eb.BankName, eb.AccountNumber, eb.AccountType,',
     '  ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName,',
     '  ld.DeploymentID AS CurrentDeploymentID,',
     '  ld.DeploymentType AS CurrentDeploymentType,',
@@ -552,6 +648,8 @@ function employeeListSql(filters: string[]) {
     '  sc.ShiftCode,',
     '  sc.ShiftName',
     'FROM employee e',
+    'LEFT JOIN employee_profile ep ON ep.ProfileID = (SELECT ep2.ProfileID FROM employee_profile ep2 WHERE ep2.EmployeeID = e.EmployeeID ORDER BY ep2.ProfileID DESC LIMIT 1)',
+    "LEFT JOIN bank eb ON eb.BankID = (SELECT eb2.BankID FROM bank eb2 WHERE eb2.EmployeeID = e.EmployeeID AND eb2.Status = 'Active' ORDER BY eb2.BankID DESC LIMIT 1)",
     'INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID',
     'INNER JOIN agency a ON a.AgencyID = ap.AgencyID',
     positionJoin,
@@ -706,22 +804,33 @@ export async function createEmployee(event: any) {
   const beneficiaries = validateEmployeeCompleteness(body)
   const photo = parseEmployeePhoto(body.PhotoDataUrl)
   const values = employeeValues(body, beneficiaries)
+  payrollDisbursementDetails(body)
+  let employeeId = 0
+  const connection = await pool.getConnection()
   try {
     const duplicateReview = await employeeDuplicateReview(body)
     assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
-    const [result] = await pool.execute<any>(`INSERT INTO employee (${employeeFields.join(', ')}, CreatedBy) VALUES (${employeeFields.map(() => '?').join(', ')}, ?)`, [...values, session.sub] as any[])
-    if (photo) {
-      try {
-        await saveEmployeePhoto(result.insertId, photo)
-      } catch (error) {
-        await pool.execute('DELETE FROM employee WHERE EmployeeID = ?', [result.insertId]).catch(() => undefined)
-        throw error
-      }
-    }
-    return { id: result.insertId }
+    await connection.beginTransaction()
+    const [result] = await connection.execute<any>(`INSERT INTO employee (${employeeFields.join(', ')}, CreatedBy) VALUES (${employeeFields.map(() => '?').join(', ')}, ?)`, [...values, session.sub] as any[])
+    employeeId = Number(result.insertId)
+    await savePayrollDisbursement(connection, employeeId, body)
+    await connection.commit()
   } catch (error) {
+    await connection.rollback().catch(() => undefined)
     throw employeeWriteError(error)
+  } finally {
+    connection.release()
   }
+
+  if (photo) {
+    try {
+      await saveEmployeePhoto(employeeId, photo)
+    } catch (error) {
+      await pool.execute('DELETE FROM employee WHERE EmployeeID = ?', [employeeId]).catch(() => undefined)
+      throw employeeWriteError(error)
+    }
+  }
+  return { id: employeeId }
 }
 
 export async function updateEmployee(event: any) {
@@ -731,24 +840,35 @@ export async function updateEmployee(event: any) {
   const beneficiaries = validateEmployeeCompleteness(body)
   const photo = parseEmployeePhoto(body.PhotoDataUrl)
   const removePhoto = parseBooleanFlag(body.RemovePhoto) === 1
+  payrollDisbursementDetails(body)
+  const duplicateReview = await employeeDuplicateReview(body, employeeId)
+  assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
+  const connection = await pool.getConnection()
+  let existing: any = null
   try {
-    const [[existing]] = await pool.execute<any[]>('SELECT PhotoPath FROM employee WHERE EmployeeID = ? LIMIT 1', [employeeId])
+    await connection.beginTransaction()
+    const [[lockedEmployee]] = await connection.execute<any[]>('SELECT PhotoPath FROM employee WHERE EmployeeID = ? LIMIT 1 FOR UPDATE', [employeeId])
+    existing = lockedEmployee
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
-    const duplicateReview = await employeeDuplicateReview(body, employeeId)
-    assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
-    const [result] = await pool.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body, beneficiaries), session.sub, employeeId] as any[])
+    const [result] = await connection.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body, beneficiaries), session.sub, employeeId] as any[])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
-    if (photo) {
-      await saveEmployeePhoto(employeeId, photo)
-      await removeEmployeePhoto(existing.PhotoPath).catch(() => undefined)
-    } else if (removePhoto && existing.PhotoPath) {
-      await pool.execute('UPDATE employee SET PhotoPath = NULL WHERE EmployeeID = ?', [employeeId])
-      await removeEmployeePhoto(existing.PhotoPath).catch(() => undefined)
-    }
-    return { success: true }
+    await savePayrollDisbursement(connection, employeeId, body)
+    await connection.commit()
   } catch (error) {
+    await connection.rollback().catch(() => undefined)
     throw employeeWriteError(error)
+  } finally {
+    connection.release()
   }
+
+  if (photo) {
+    await saveEmployeePhoto(employeeId, photo)
+    await removeEmployeePhoto(existing.PhotoPath).catch(() => undefined)
+  } else if (removePhoto && existing.PhotoPath) {
+    await pool.execute('UPDATE employee SET PhotoPath = NULL WHERE EmployeeID = ?', [employeeId])
+    await removeEmployeePhoto(existing.PhotoPath).catch(() => undefined)
+  }
+  return { success: true }
 }
 
 export async function deleteEmployee(event: any) {
