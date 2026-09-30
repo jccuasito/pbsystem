@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import ModernDateField from '~~/components/ModernDateField.vue'
+
+type RepaymentCutoff = 'First' | 'Second' | 'Both'
 type EmployeeRow = {
   EmployeeID: number
   EmployeeNumber: string | null
@@ -39,7 +42,7 @@ type RecordItem = {
   RepaymentEndDate: string | null
   RepaymentMonths: number
   RepaymentPeriods: number
-  RepaymentCutoff: 'First' | 'Second'
+  RepaymentCutoff: RepaymentCutoff
   InstallmentAmount: number
   FinalInstallmentAmount: number
   IsPaused: number
@@ -47,6 +50,8 @@ type RecordItem = {
   ResumeDate: string | null
   PauseReason: string | null
   FifoPosition: number | null
+  FifoPositionFirst: number | null
+  FifoPositionSecond: number | null
   PlanStatus: string
   RepaymentSchedule: SchedulePeriod[]
 }
@@ -72,14 +77,19 @@ const pauseOpen = ref(false)
 const pauseRecord = ref<RecordItem | null>(null)
 const planOpen = ref(false)
 const planRecord = ref<RecordItem | null>(null)
+const historyScope = ref<'Active' | 'Archive'>('Active')
 const historyType = ref<'All' | 'Loan' | 'Deduction'>('All')
 const today = () => new Date().toISOString().slice(0, 10)
-const form = reactive({ EntryType: 'Loan' as 'Loan' | 'Deduction', CatalogItemID: '', IssuanceCode: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: 'Second' as 'First' | 'Second', Remarks: '' })
+const form = reactive({ EntryType: 'Loan' as 'Loan' | 'Deduction', CatalogItemID: '', IssuanceCode: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: 'Second' as RepaymentCutoff, Remarks: '' })
 const pauseForm = reactive({ PauseStartDate: today(), ResumeDate: '', PauseReason: '' })
 
-const filteredHistory = computed(() => historyType.value === 'All' ? profileRecords.value : profileRecords.value.filter(item => item.EntryType === historyType.value))
+const scopedHistory = computed(() => profileRecords.value.filter(item => historyScope.value === 'Active' ? item.Status === 'Active' : item.Status !== 'Active'))
+const filteredHistory = computed(() => historyType.value === 'All' ? scopedHistory.value : scopedHistory.value.filter(item => item.EntryType === historyType.value))
 function historyCount(kind: 'All' | 'Loan' | 'Deduction') {
-  return kind === 'All' ? profileRecords.value.length : profileRecords.value.filter(item => item.EntryType === kind).length
+  return kind === 'All' ? scopedHistory.value.length : scopedHistory.value.filter(item => item.EntryType === kind).length
+}
+function historyScopeCount(scope: 'Active' | 'Archive') {
+  return profileRecords.value.filter(item => scope === 'Active' ? item.Status === 'Active' : item.Status !== 'Active').length
 }
 const availableCatalog = computed(() => catalogItems.value.filter(item => item.EntryType === form.EntryType))
 const catalogGroups = computed(() => {
@@ -91,39 +101,62 @@ const catalogGroups = computed(() => {
   return [...groups.entries()].map(([name, entries]) => ({ name, entries }))
 })
 const profileTotals = computed(() => profileRecords.value.reduce((totals, item) => {
-  totals.issued += Number(item.OriginalAmount || 0)
+  if (item.Status !== 'Cancelled' && item.Status !== 'Inactive') {
+    totals.issued += Number(item.OriginalAmount || 0)
+  }
   if (item.Status === 'Active') {
     totals.balance += Number(item.OutstandingAmount || 0)
     totals.active += 1
   }
   return totals
 }, { issued: 0, balance: 0, active: 0 }))
+
+function scheduleWindow(startDate: string, cutoff: RepaymentCutoff, periodIndex: number) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDate)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2]) - 1
+  const day = Number(match[3])
+  let selectedCutoff: 'First' | 'Second'
+  let monthOffset: number
+  if (cutoff === 'Both') {
+    const sequenceIndex = periodIndex + (day <= 15 ? 0 : 1)
+    selectedCutoff = sequenceIndex % 2 === 0 ? 'First' : 'Second'
+    monthOffset = Math.floor(sequenceIndex / 2)
+  } else {
+    selectedCutoff = cutoff
+    monthOffset = periodIndex + (cutoff === 'First' && day > 15 ? 1 : 0)
+  }
+  const targetMonth = new Date(Date.UTC(year, month + monthOffset, 1))
+  const targetYear = targetMonth.getUTCFullYear()
+  const targetMonthIndex = targetMonth.getUTCMonth()
+  const lastDay = new Date(Date.UTC(targetYear, targetMonthIndex + 1, 0)).getUTCDate()
+  const iso = (value: number) => `${targetYear}-${String(targetMonthIndex + 1).padStart(2, '0')}-${String(value).padStart(2, '0')}`
+  return {
+    start: iso(selectedCutoff === 'First' ? 1 : 16),
+    end: iso(selectedCutoff === 'First' ? 15 : lastDay),
+  }
+}
+
 const planPreview = computed(() => {
   const amountInCents = Math.round(Number(form.OriginalAmount || 0) * 100)
   const periods = Number(form.RepaymentPeriods || 0)
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(form.RepaymentStartDate)
   if (!amountInCents || !Number.isInteger(periods) || periods < 1 || !match) return null
-  const startDay = Number(match[3])
-  const monthOffset = periods - 1 + (form.RepaymentCutoff === 'First' && startDay > 15 ? 1 : 0)
-  const targetMonth = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + monthOffset, 1))
-  const endDay = form.RepaymentCutoff === 'First' ? 15 : new Date(Date.UTC(targetMonth.getUTCFullYear(), targetMonth.getUTCMonth() + 1, 0)).getUTCDate()
-  const endDate = `${targetMonth.getUTCFullYear()}-${String(targetMonth.getUTCMonth() + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`
+  const finalWindow = scheduleWindow(form.RepaymentStartDate, form.RepaymentCutoff, periods - 1)
+  if (!finalWindow) return null
+  const endDate = finalWindow.end
   const installmentCents = Math.round(amountInCents / periods)
   const finalInstallmentCents = amountInCents - installmentCents * (periods - 1)
-  const firstMonthOffset = form.RepaymentCutoff === 'First' && startDay > 15 ? 1 : 0
   let projectedBalanceCents = amountInCents
   const schedule: SchedulePeriod[] = Array.from({ length: periods }, (_, index) => {
-    const periodMonth = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + firstMonthOffset + index, 1))
-    const year = periodMonth.getUTCFullYear()
-    const month = periodMonth.getUTCMonth()
-    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+    const window = scheduleWindow(form.RepaymentStartDate, form.RepaymentCutoff, index)!
     const scheduledCents = index === periods - 1 ? finalInstallmentCents : installmentCents
     projectedBalanceCents = Math.max(0, projectedBalanceCents - scheduledCents)
-    const iso = (day: number) => `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     return {
       Period: index + 1,
-      CutoffStartDate: iso(form.RepaymentCutoff === 'First' ? 1 : 16),
-      CutoffEndDate: iso(form.RepaymentCutoff === 'First' ? 15 : lastDay),
+      CutoffStartDate: window.start,
+      CutoffEndDate: window.end,
       ScheduledAmount: scheduledCents / 100,
       RecordedPaidAmount: 0,
       ProjectedBalance: projectedBalanceCents / 100,
@@ -159,6 +192,20 @@ function date(value: string | null) {
 }
 function employeeNumber(employee: { EmployeeID: number; EmployeeNumber?: string | null }) {
   return employee.EmployeeNumber || `EMP-${String(employee.EmployeeID).padStart(4, '0')}`
+}
+function cutoffLabel(cutoff: RepaymentCutoff) {
+  if (cutoff === 'Both') return 'Both cutoffs'
+  return cutoff === 'First' ? '1st cutoff' : '2nd cutoff'
+}
+function cutoffDescription(cutoff: RepaymentCutoff) {
+  if (cutoff === 'Both') return 'every payroll cutoff (1st and 2nd)'
+  return cutoff === 'First' ? 'the 1st cutoff (days 1–15)' : 'the 2nd cutoff (day 16–month end)'
+}
+function fifoLabel(record: RecordItem) {
+  if (record.RepaymentCutoff === 'Both') {
+    return `FIFO 1st #${record.FifoPositionFirst || '—'} · 2nd #${record.FifoPositionSecond || '—'}`
+  }
+  return `FIFO #${record.FifoPosition || '—'}`
 }
 
 async function load() {
@@ -198,6 +245,7 @@ async function openProfile(employee: EmployeeRow) {
   selectedEmployee.value = employee
   profileEmployee.value = employee
   profileRecords.value = []
+  historyScope.value = 'Active'
   historyType.value = 'All'
   profileOpen.value = true
   await loadProfile(employee)
@@ -353,7 +401,7 @@ onMounted(load)
 
     <div class="table-wrap desktop-list">
       <table>
-        <thead><tr><th>Employee</th><th>Agency / Position</th><th>Active accounts</th><th>Total issued</th><th>Outstanding balance</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Employee</th><th>Agency / Position</th><th>Active accounts</th><th>Lifetime issued</th><th>Outstanding balance</th><th>Actions</th></tr></thead>
         <tbody>
           <tr v-if="loading"><td colspan="6" class="empty">Loading employees…</td></tr>
           <tr v-else-if="!items.length"><td colspan="6" class="empty">No employees match the selected filters.</td></tr>
@@ -389,12 +437,18 @@ onMounted(load)
           <div><span class="eyebrow">EMPLOYEE ACCOUNT</span><h2>{{ profileEmployee?.EmployeeName }}</h2><p>{{ employeeNumber(profileEmployee || selectedEmployee || {}) }} · {{ profileEmployee?.AgencyName || 'Unassigned' }} · {{ profileEmployee?.PositionName || 'No position' }}</p></div>
           <button class="primary" @click="openIssuance(profileEmployee || selectedEmployee)">+ Add issuance</button>
         </header>
-        <div class="summary-cards"><div><span>Total issued</span><strong>{{ money(profileTotals.issued) }}</strong></div><div><span>Outstanding balance</span><strong>{{ money(profileTotals.balance) }}</strong></div><div><span>Active plans</span><strong>{{ profileTotals.active }}</strong></div></div>
-        <div class="history-toolbar"><h3>Issuance history</h3><div role="tablist" aria-label="Filter issuance history"><button v-for="kind in (['All','Loan','Deduction'] as const)" :key="kind" type="button" role="tab" class="history-filter" :class="[`filter-${kind.toLowerCase()}`,{active:historyType===kind}]" :aria-selected="historyType===kind" @click="historyType=kind"><span class="filter-dot"></span>{{ kind }}<small>{{ historyCount(kind) }}</small></button></div></div>
+        <div class="summary-cards"><div><span>Lifetime issued</span><strong>{{ money(profileTotals.issued) }}</strong></div><div><span>Outstanding balance</span><strong>{{ money(profileTotals.balance) }}</strong></div><div><span>Active plans</span><strong>{{ profileTotals.active }}</strong></div></div>
+        <div class="history-heading">
+          <div><h3>Issuance history</h3><p>Active records are separated from completed or voided records.</p></div>
+          <div class="scope-tabs" role="tablist" aria-label="Choose issuance status">
+            <button v-for="scope in (['Active','Archive'] as const)" :key="scope" type="button" role="tab" class="scope-filter" :class="{active:historyScope===scope}" :aria-selected="historyScope===scope" @click="historyScope=scope; historyType='All'"><span>{{ scope }}</span><small>{{ historyScopeCount(scope) }}</small></button>
+          </div>
+        </div>
+        <div class="history-toolbar"><strong>{{ historyScope }} {{ historyScope === 'Active' ? 'accounts' : 'records' }}</strong><div role="tablist" aria-label="Filter issuance type"><button v-for="kind in (['All','Loan','Deduction'] as const)" :key="kind" type="button" role="tab" class="history-filter" :class="[`filter-${kind.toLowerCase()}`,{active:historyType===kind}]" :aria-selected="historyType===kind" @click="historyType=kind"><span class="filter-dot"></span>{{ kind }}<small>{{ historyCount(kind) }}</small></button></div></div>
         <p v-if="profileError" class="error">{{ profileError }}</p>
         <div class="record-list">
           <p v-if="profileLoading" class="empty">Loading history…</p>
-          <p v-else-if="!filteredHistory.length" class="empty">No issuance records yet.</p>
+          <p v-else-if="!filteredHistory.length" class="empty">{{ historyScope === 'Active' ? 'No active loans or deductions.' : 'No archived issuance records.' }}</p>
           <article v-for="record in filteredHistory" v-else :key="`${record.EntryType}-${record.RecordID}`" class="record-card">
             <header>
               <div class="record-heading"><span class="kind" :class="record.EntryType.toLowerCase()">{{ record.EntryType }}</span><div><strong>{{ record.ItemName }}</strong><small>{{ record.ClassificationName || 'Unclassified' }} · {{ record.IssuanceCode || 'Legacy record' }}</small></div></div>
@@ -402,7 +456,7 @@ onMounted(load)
             </header>
             <div class="record-details">
               <div><span>Issued</span><strong>{{ date(record.IssuanceDate) }}</strong><small>Original amount {{ money(record.OriginalAmount) }}</small></div>
-              <div><span>Schedule</span><strong>{{ record.RepaymentCutoff }} cutoff · {{ record.RepaymentPeriods }} period{{ Number(record.RepaymentPeriods) === 1 ? '' : 's' }}</strong><small>{{ date(record.RepaymentStartDate) }} – {{ date(record.RepaymentEndDate) }} · FIFO #{{ record.FifoPosition || '—' }}</small></div>
+              <div><span>Schedule</span><strong>{{ cutoffLabel(record.RepaymentCutoff) }} · {{ record.RepaymentPeriods }} period{{ Number(record.RepaymentPeriods) === 1 ? '' : 's' }}</strong><small>{{ date(record.RepaymentStartDate) }} – {{ date(record.RepaymentEndDate) }} · {{ fifoLabel(record) }}</small></div>
               <div><span>Installment</span><strong>{{ money(record.InstallmentAmount) }}</strong><small>Per selected cutoff<span v-if="Number(record.FinalInstallmentAmount) !== Number(record.InstallmentAmount)"> · final {{ money(record.FinalInstallmentAmount) }}</span></small></div>
               <div><span>Outstanding balance</span><strong>{{ record.Status === 'Active' ? money(record.OutstandingAmount) : money(0) }}</strong><small v-if="Number(record.IsPaused)">{{ record.ResumeDate ? `Resumes ${date(record.ResumeDate)}` : 'Manual resume required' }}</small><small v-else>{{ record.PlanStatus }}</small></div>
             </div>
@@ -419,21 +473,21 @@ onMounted(load)
       <form class="issuance-modal" @submit.prevent="saveIssuance">
         <button class="close" type="button" aria-label="Close" @click="issuanceOpen=false">×</button>
         <header><span class="eyebrow">MANUAL ISSUANCE</span><h2>Add loan or deduction</h2><p>For {{ selectedEmployee?.EmployeeName }} · {{ selectedEmployee ? employeeNumber(selectedEmployee) : '' }}</p></header>
-        <div class="form-grid">
-          <label>Type<select v-model="form.EntryType" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option></select></label>
-          <label>Catalog entry<select v-model="form.CatalogItemID" required><option disabled value="">Select {{ form.EntryType.toLowerCase() }}</option><optgroup v-for="group in catalogGroups" :key="group.name" :label="group.name"><option v-for="item in group.entries" :key="item.CatalogItemID" :value="String(item.CatalogItemID)">{{ item.ItemName }}</option></optgroup></select></label>
-          <label>Issuance date<input v-model="form.IssuanceDate" type="date" required></label>
-          <label>Issuance code<input v-model="form.IssuanceCode" maxlength="100" placeholder="e.g. SSS-SL-2026-001" required></label>
-          <label class="wide">Original value / amount received<input v-model="form.OriginalAmount" type="number" min="0.01" max="99999999.99" step="0.01" placeholder="0.00" required></label>
+        <div class="form-grid issuance-form-grid">
+          <label class="form-field">Type<select v-model="form.EntryType" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option></select></label>
+          <label class="form-field">Catalog entry<select v-model="form.CatalogItemID" required><option disabled value="">Select {{ form.EntryType.toLowerCase() }}</option><optgroup v-for="group in catalogGroups" :key="group.name" :label="group.name"><option v-for="item in group.entries" :key="item.CatalogItemID" :value="String(item.CatalogItemID)">{{ item.ItemName }}</option></optgroup></select></label>
+          <ModernDateField v-model="form.IssuanceDate" label="Issuance date" placeholder="Select issuance date" align="start" required />
+          <label class="form-field">Issuance code<input v-model="form.IssuanceCode" maxlength="100" placeholder="e.g. SSS-SL-2026-001" required></label>
+          <label class="wide form-field">Original value / amount received<input v-model="form.OriginalAmount" type="number" min="0.01" max="99999999.99" step="0.01" placeholder="0.00" required></label>
           <div class="section-label wide"><strong>Repayment plan</strong><span>Deduction defaults to 1st cutoff; loan defaults to 2nd cutoff. You can change either.</span></div>
-          <label>Repayment starts<input v-model="form.RepaymentStartDate" type="date" :min="form.IssuanceDate" required></label>
-          <label>Number of periods<input v-model="form.RepaymentPeriods" type="number" min="1" max="120" step="1" required><small>1 period means one selected cutoff in a month.</small></label>
-          <label class="wide">Deduct every<select v-model="form.RepaymentCutoff" required><option value="First">1st cutoff (days 1–15)</option><option value="Second">2nd cutoff (day 16–month end)</option></select></label>
+          <ModernDateField v-model="form.RepaymentStartDate" label="Repayment starts" placeholder="Select repayment start" :min="form.IssuanceDate || undefined" align="start" required />
+          <label class="form-field">Number of periods<input v-model="form.RepaymentPeriods" type="number" min="1" max="120" step="1" required><small class="field-help">A period is one scheduled payroll cutoff.</small></label>
+          <label class="wide form-field">Deduct every<select v-model="form.RepaymentCutoff" required><option value="First">1st cutoff (days 1–15)</option><option value="Second">2nd cutoff (day 16–month end)</option><option value="Both">Both cutoffs (every payroll cutoff)</option></select><small class="field-help">Choose Both to deduct on consecutive 1st and 2nd payroll cutoffs.</small></label>
           <div v-if="planPreview" class="plan-preview wide"><div><span>Installment per cutoff</span><strong>{{ money(planPreview.installment) }}</strong></div><div><span>Planned completion</span><strong>{{ date(planPreview.endDate) }}</strong></div><div><span>Final installment</span><strong>{{ money(planPreview.finalInstallment) }}</strong></div></div>
           <button class="review-plan wide" type="button" :disabled="!planPreview" @click="openRepaymentPreview">Review repayment plan</button>
           <label class="wide">Remarks <em>Optional</em><textarea v-model="form.Remarks" maxlength="255" placeholder="Reference, purpose, or supporting note"></textarea></label>
         </div>
-        <p class="form-note">FIFO is automatic per employee and selected cutoff: the oldest active issuance is processed before newer ones. A paused plan is skipped until its resume date or manual resume.</p>
+        <p class="form-note">FIFO is automatic per employee and eligible cutoff: the oldest active issuance is processed before newer ones. A Both-cutoffs plan joins both queues. A paused plan is skipped until its resume date or manual resume.</p>
         <p v-if="profileError" class="error">{{ profileError }}</p>
         <footer><button type="button" @click="issuanceOpen=false">Cancel</button><button class="primary" :disabled="saving">{{ saving ? 'Saving…' : 'Save issuance' }}</button></footer>
       </form>
@@ -442,14 +496,14 @@ onMounted(load)
     <div v-if="planOpen && repaymentPlanView" class="modal-backdrop plan-layer" @click.self="planOpen=false">
       <section class="plan-modal">
         <button class="close" type="button" aria-label="Close" @click="planOpen=false">×</button>
-        <header><span class="eyebrow">{{ planRecord ? 'REPAYMENT PLAN' : 'REPAYMENT PLAN REVIEW' }}</span><h2>{{ repaymentPlanView.ItemName }}</h2><p>{{ repaymentPlanView.IssuanceCode || 'Legacy record' }} · {{ repaymentPlanView.EntryType }} · {{ repaymentPlanView.RepaymentCutoff }} cutoff only</p></header>
+        <header><span class="eyebrow">{{ planRecord ? 'REPAYMENT PLAN' : 'REPAYMENT PLAN REVIEW' }}</span><h2>{{ repaymentPlanView.ItemName }}</h2><p>{{ repaymentPlanView.IssuanceCode || 'Legacy record' }} · {{ repaymentPlanView.EntryType }} · {{ cutoffLabel(repaymentPlanView.RepaymentCutoff) }}</p></header>
         <div class="plan-summary">
           <div><span>Original amount</span><strong>{{ money(repaymentPlanView.OriginalAmount) }}</strong></div>
           <div><span>Periods</span><strong>{{ repaymentPlanView.RepaymentPeriods }}</strong></div>
           <div><span>Per cutoff</span><strong>{{ money(repaymentPlanView.InstallmentAmount) }}</strong></div>
           <div><span>{{ planRecord ? 'Current balance' : 'Starting balance' }}</span><strong>{{ money(repaymentPlanView.OutstandingAmount) }}</strong></div>
         </div>
-        <p class="schedule-note">This plan is deducted once per month during the {{ repaymentPlanView.RepaymentCutoff === 'First' ? '1st cutoff (days 1–15)' : '2nd cutoff (day 16–month end)' }}.</p>
+        <p class="schedule-note">This plan is deducted during {{ cutoffDescription(repaymentPlanView.RepaymentCutoff) }}.</p>
         <div class="schedule-wrap">
           <table>
             <thead><tr><th>Period</th><th>Cutoff start</th><th>Cutoff end</th><th>Scheduled installment</th><th>Recorded paid</th><th>Projected balance</th><th>Remaining periods</th><th>Status</th></tr></thead>
@@ -487,5 +541,7 @@ onMounted(load)
 .record-list{display:grid;gap:12px}.record-card{overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#fff}.record-card>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:15px 17px;border-bottom:1px solid #e4eaf2;background:#f8faff}.record-heading{display:flex;align-items:flex-start;gap:10px}.record-heading strong,.record-heading small{display:block}.record-heading strong{font-size:.9rem}.record-heading small{margin-top:4px;color:var(--muted);font-size:.7rem}.record-details{display:grid;grid-template-columns:1fr 1.5fr 1fr 1fr;gap:0}.record-details>div{display:grid;align-content:start;gap:5px;min-height:74px;padding:14px 17px;border-right:1px solid #e4eaf2}.record-details>div:last-child{border-right:0}.record-details span{color:#607392;font-size:.65rem;font-weight:800;text-transform:uppercase}.record-details strong{font-size:.82rem}.record-details small{color:var(--muted);font-size:.68rem;line-height:1.4}.record-card>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 17px;border-top:1px solid #e4eaf2;background:#fbfcfe}.record-card button,.review-plan{min-height:36px;border:1px solid #cbd8ea;border-radius:8px;background:#fff;padding:7px 11px;color:#254975;font:inherit;font-size:.72rem;font-weight:800;cursor:pointer}.record-card .view-plan,.review-plan{border-color:#b9cef5;background:#edf4ff;color:#1d54c6}.record-card .record-actions{justify-content:flex-end;max-width:none}.record-card .danger-action{border-color:#fecaca;color:#b42318}.review-plan{justify-self:start}.review-plan:disabled{opacity:.45;cursor:not-allowed}.plan-layer{z-index:570;background:rgba(13,30,59,.3)}.plan-modal{position:relative;box-sizing:border-box;width:min(1120px,calc(100vw - 70px));max-height:calc(100vh - 56px);overflow:auto;border-radius:16px;background:#fff;padding:28px 32px;box-shadow:0 24px 70px rgba(13,30,59,.25)}.plan-modal h2{margin:5px 0;font-size:1.65rem}.plan-modal header p{margin:0;color:var(--muted)}.plan-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0 12px}.plan-summary div{display:grid;gap:5px;padding:13px;border:1px solid var(--line);border-radius:9px;background:#f8faff}.plan-summary span{color:var(--muted);font-size:.66rem;font-weight:800;text-transform:uppercase}.plan-summary strong{font-size:1rem}.schedule-note,.schedule-help{margin:0 0 12px;padding:11px 13px;border-radius:8px;background:#f1f6ff;color:#36577f;font-size:.75rem;line-height:1.45}.schedule-help{margin:12px 0 0;background:#f8faff}.schedule-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}.schedule-wrap table{width:100%;min-width:940px;border-collapse:collapse}.schedule-wrap th,.schedule-wrap td{padding:12px 13px;border-bottom:1px solid #e4eaf2;text-align:left;white-space:nowrap}.schedule-wrap th{background:#f5f8fc;color:#405371;font-size:.67rem;text-transform:uppercase}.schedule-wrap td{font-size:.76rem}.period-status{display:inline-flex;border-radius:999px;background:#edf4ff;padding:4px 8px;color:#2456b7;font-size:.66rem;font-weight:800}.plan-modal footer{display:flex;justify-content:flex-end;margin-top:16px}.plan-modal footer button{min-height:40px;border:1px solid #cbd8ea;border-radius:8px;background:#fff;padding:6px 18px;color:#254975;font:inherit;font-size:.75rem;font-weight:800;cursor:pointer}.form-grid label>small{color:var(--muted);font-size:.67rem;font-weight:500;line-height:1.35}
 @media(max-width:950px){.employee-accounts-page{padding:24px 18px}.desktop-list{display:none}.mobile-list{display:grid;gap:10px}.mobile-list article{display:grid;gap:12px;padding:14px;border:1px solid var(--line);border-radius:11px;background:#fff}.mobile-list article header{display:flex;justify-content:space-between;gap:10px}.mobile-list article header strong,.mobile-list article header small{display:block}.mobile-list article header small{margin-top:4px;color:var(--muted);font-size:.68rem}.mobile-list article header>span{font-size:.76rem;font-weight:850}.mobile-list footer{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mobile-list footer button{min-height:38px;border:1px solid #cbd8ea;border-radius:8px;background:#fff;color:#254975;font:inherit;font-size:.72rem;font-weight:800}.filters{grid-template-columns:1fr 220px auto}.history-wrap table{min-width:920px}.plan-summary{grid-template-columns:repeat(2,1fr)}.record-details{grid-template-columns:1fr 1fr}.record-details>div:nth-child(2){border-right:0}.record-details>div:nth-child(-n+2){border-bottom:1px solid #e4eaf2}}
 @media(max-width:650px){.employee-accounts-page{padding:18px 12px}.page-head h1{font-size:1.65rem}.filters{grid-template-columns:1fr}.workflow-note{line-height:1.5}.pagination{align-items:stretch;flex-direction:column}.pagination div{justify-content:space-between}.modal-backdrop{align-items:stretch;padding:0}.profile-modal,.issuance-modal,.pause-modal,.plan-modal{width:100%;max-height:100dvh;border-radius:0;padding:58px 14px 24px}.profile-head{display:grid;padding-right:0}.profile-head .primary{width:100%}.summary-cards{grid-template-columns:1fr}.history-toolbar{align-items:stretch;flex-direction:column}.history-toolbar div{display:grid;grid-template-columns:repeat(3,1fr)}.form-grid{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.section-label{align-items:flex-start;flex-direction:column}.plan-preview,.plan-summary{grid-template-columns:1fr}.issuance-modal footer,.pause-modal footer{display:grid;grid-template-columns:1fr 1fr}.issuance-modal footer button,.pause-modal footer button{width:100%}.record-card>header,.record-card>footer{align-items:stretch;flex-direction:column}.record-details{grid-template-columns:1fr}.record-details>div{min-height:auto;border-right:0;border-bottom:1px solid #e4eaf2}.record-card .record-actions{display:grid;grid-template-columns:1fr 1fr}.record-card .record-actions button,.record-card .view-plan{width:100%}}
-.employee-accounts-page button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}.employee-accounts-page button:not(:disabled){cursor:pointer}.employee-accounts-page button:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(30,64,115,.13)}.employee-accounts-page button:focus-visible{outline:3px solid rgba(40,103,232,.24);outline-offset:2px}.primary:not(:disabled):hover{border-color:#174fc7;background:#174fc7}.close:hover{background:#edf4ff;color:#174fc7;box-shadow:none!important}.history-toolbar>div{display:flex;gap:4px;padding:4px;border:1px solid #d8e2ef;border-radius:11px;background:#f1f5f9}.history-toolbar .history-filter{display:flex;align-items:center;gap:7px;min-height:38px;border:1px solid transparent;border-radius:8px;background:transparent;padding:7px 11px;color:#526783}.history-toolbar .history-filter small{display:inline-grid;min-width:20px;height:20px;place-items:center;border-radius:999px;background:rgba(96,115,146,.12);font-size:.62rem}.history-toolbar .history-filter:not(.active):hover{border-color:#cbd8ea;background:#fff;color:#173e78}.history-toolbar .history-filter.active{border-color:transparent;color:#fff;box-shadow:0 4px 11px rgba(30,64,115,.2)}.history-toolbar .filter-all.active{background:#2867e8}.history-toolbar .filter-loan.active{background:#2456b7}.history-toolbar .filter-deduction.active{background:#7e22ce}.history-toolbar .history-filter.active small{background:rgba(255,255,255,.22)}.filter-dot{width:7px;height:7px;border-radius:50%;background:#74849c}.filter-loan .filter-dot{background:#3b82f6}.filter-deduction .filter-dot{background:#a855f7}.history-filter.active .filter-dot{background:#fff}.record-card{transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}.record-card:hover{border-color:#b9ccec;box-shadow:0 8px 22px rgba(30,64,115,.09);transform:translateY(-1px)}.record-card button:hover{border-color:#9db9e8;background:#f5f8ff;color:#174fc7}.record-card .view-plan:hover,.review-plan:not(:disabled):hover{border-color:#2867e8;background:#2867e8;color:#fff}.record-card .danger-action:hover{border-color:#ef4444;background:#fff1f2;color:#b42318}@media(max-width:650px){.history-toolbar>div{display:grid;grid-template-columns:repeat(3,1fr)}.history-toolbar .history-filter{justify-content:center;padding:7px 6px}}
+.employee-accounts-page button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}.employee-accounts-page button:not(:disabled){cursor:pointer}.employee-accounts-page button:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(30,64,115,.13)}.employee-accounts-page button:focus-visible{outline:3px solid rgba(40,103,232,.24);outline-offset:2px}.primary:not(:disabled):hover{border-color:#174fc7;background:#174fc7}.close:hover{background:#edf4ff;color:#174fc7;box-shadow:none!important}.history-toolbar>div{display:flex;gap:4px;padding:4px;border:1px solid #d8e2ef;border-radius:11px;background:#f1f5f9}.history-toolbar .history-filter{display:flex;align-items:center;gap:7px;min-height:38px;border:1px solid transparent;border-radius:8px;background:transparent;padding:7px 11px;color:#526783}.history-toolbar .history-filter small{display:inline-grid;min-width:20px;height:20px;place-items:center;border-radius:999px;background:rgba(96,115,146,.12);font-size:.62rem}.history-toolbar .history-filter:not(.active):hover{border-color:#cbd8ea;background:#fff;color:#173e78}.history-toolbar .history-filter.active{border-color:transparent;color:#fff;box-shadow:0 4px 11px rgba(30,64,115,.2)}.history-toolbar .filter-all.active{background:#2867e8}.history-toolbar .filter-loan.active{background:#2456b7}.history-toolbar .filter-deduction.active{background:#7e22ce}.history-toolbar .history-filter.active small{background:rgba(255,255,255,.22)}.filter-dot{width:7px;height:7px;border-radius:50%;background:#74849c}.filter-loan .filter-dot{background:#3b82f6}.filter-deduction .filter-dot{background:#a855f7}.history-filter.active .filter-dot{background:#fff}.record-card{transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}.record-card:hover{border-color:#b9ccec;box-shadow:0 8px 22px rgba(30,64,115,.09);transform:translateY(-1px)}.record-card button:hover{border-color:#9db9e8;background:#f5f8ff;color:#174fc7}.record-card .view-plan:hover,.review-plan:not(:disabled):hover{border-color:#2867e8;background:#2867e8;color:#fff}.record-card .danger-action:hover{border-color:#ef4444;background:#fff1f2;color:#b42318}
+.history-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:12px}.history-heading h3{margin:0 0 4px}.history-heading p{margin:0;color:var(--muted);font-size:.72rem}.scope-tabs{display:flex;gap:4px;padding:4px;border:1px solid #d8e2ef;border-radius:11px;background:#f1f5f9}.scope-filter{display:flex;align-items:center;gap:8px;min-height:38px;border:1px solid transparent;border-radius:8px;background:transparent;padding:7px 13px;color:#526783;font:inherit;font-size:.74rem;font-weight:800}.scope-filter small{display:inline-grid;min-width:21px;height:21px;place-items:center;border-radius:999px;background:rgba(96,115,146,.12);font-size:.62rem}.scope-filter:not(.active):hover{border-color:#cbd8ea;background:#fff;color:#173e78}.scope-filter.active{border-color:#2867e8;background:#2867e8;color:#fff;box-shadow:0 4px 11px rgba(30,64,115,.18)}.scope-filter.active small{background:rgba(255,255,255,.22)}.history-toolbar>strong{color:#405371;font-size:.76rem}.issuance-modal{width:min(900px,calc(100vw - 50px))}.issuance-form-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:16px}.form-field{align-content:start}.field-help{min-height:18px;color:var(--muted);font-size:.67rem;font-weight:500;line-height:1.35}.issuance-form-grid :deep(.modern-date-field){align-content:start;gap:7px;font-size:.76rem}.issuance-form-grid :deep(.modern-date-field__trigger){min-height:48px;border-color:#cbd8ea;border-radius:9px;padding:0 13px;font-size:.86rem}.issuance-form-grid :deep(.modern-date-field__panel){z-index:60}
+@media(max-width:650px){.history-heading{align-items:stretch;flex-direction:column}.scope-tabs{display:grid;grid-template-columns:1fr 1fr}.scope-filter{justify-content:center}.history-toolbar>div{display:grid;grid-template-columns:repeat(3,1fr)}.history-toolbar .history-filter{justify-content:center;padding:7px 6px}.issuance-form-grid{grid-template-columns:1fr}.issuance-form-grid .wide{grid-column:auto}}
 </style>

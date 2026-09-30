@@ -3,12 +3,12 @@ import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 
 type EntryType = 'Loan' | 'Deduction'
-type RepaymentCutoff = 'First' | 'Second'
+type RepaymentCutoff = 'First' | 'Second' | 'Both'
 
 const validEntryTypes = new Set<EntryType>(['Loan', 'Deduction'])
 const validLoanStatuses = new Set(['Active', 'Paid', 'Cancelled'])
 const validDeductionStatuses = new Set(['Active', 'Completed', 'Inactive'])
-const validRepaymentCutoffs = new Set<RepaymentCutoff>(['First', 'Second'])
+const validRepaymentCutoffs = new Set<RepaymentCutoff>(['First', 'Second', 'Both'])
 
 function positiveId(value: unknown, label: string) {
   const id = Number(value)
@@ -67,15 +67,9 @@ function repaymentPlan(body: Record<string, unknown>, amount: number, kind: Entr
   }
   const cutoff = String(body.RepaymentCutoff || (kind === 'Deduction' ? 'First' : 'Second')) as RepaymentCutoff
   if (!validRepaymentCutoffs.has(cutoff)) {
-    throw createError({ statusCode: 400, statusMessage: 'Select the 1st or 2nd payroll cutoff.' })
+    throw createError({ statusCode: 400, statusMessage: 'Select the 1st cutoff, 2nd cutoff, or both payroll cutoffs.' })
   }
-  const [year, month, day] = startDate.split('-').map(Number)
-  const monthOffset = periods - 1 + (cutoff === 'First' && day > 15 ? 1 : 0)
-  const targetMonth = new Date(Date.UTC(year, month - 1 + monthOffset, 1))
-  const endDay = cutoff === 'First'
-    ? 15
-    : new Date(Date.UTC(targetMonth.getUTCFullYear(), targetMonth.getUTCMonth() + 1, 0)).getUTCDate()
-  const endDate = `${targetMonth.getUTCFullYear()}-${String(targetMonth.getUTCMonth() + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`
+  const endDate = cutoffWindow(startDate, cutoff, periods - 1).end
   const installmentCents = Math.round(amountInCents / periods)
   const finalInstallmentCents = amountInCents - installmentCents * (periods - 1)
   return {
@@ -93,35 +87,53 @@ function isoDate(year: number, monthIndex: number, day: number) {
   return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, '0')}-${String(value.getUTCDate()).padStart(2, '0')}`
 }
 
+function cutoffWindow(startDate: string, cutoff: RepaymentCutoff, periodIndex: number) {
+  const [year, month, day] = startDate.split('-').map(Number)
+  let selectedCutoff: 'First' | 'Second'
+  let monthOffset: number
+
+  if (cutoff === 'Both') {
+    const startsOnFirst = day <= 15
+    const sequenceIndex = periodIndex + (startsOnFirst ? 0 : 1)
+    selectedCutoff = sequenceIndex % 2 === 0 ? 'First' : 'Second'
+    monthOffset = Math.floor(sequenceIndex / 2)
+  } else {
+    selectedCutoff = cutoff
+    monthOffset = periodIndex + (cutoff === 'First' && day > 15 ? 1 : 0)
+  }
+
+  const periodMonth = new Date(Date.UTC(year, month - 1 + monthOffset, 1))
+  const periodYear = periodMonth.getUTCFullYear()
+  const periodMonthIndex = periodMonth.getUTCMonth()
+  const lastDay = new Date(Date.UTC(periodYear, periodMonthIndex + 1, 0)).getUTCDate()
+  return {
+    start: isoDate(periodYear, periodMonthIndex, selectedCutoff === 'First' ? 1 : 16),
+    end: isoDate(periodYear, periodMonthIndex, selectedCutoff === 'First' ? 15 : lastDay),
+  }
+}
+
 function repaymentSchedule(row: any) {
   const periodCount = Math.max(1, Number(row.RepaymentMonths || 1))
   const start = String(row.RepaymentStartDate || row.IssuanceDate || '')
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start)
   if (!match) return []
 
-  const cutoff = row.RepaymentCutoff === 'First' ? 'First' : 'Second'
-  const baseYear = Number(match[1])
-  const baseMonth = Number(match[2]) - 1
-  const baseDay = Number(match[3])
-  const firstMonthOffset = cutoff === 'First' && baseDay > 15 ? 1 : 0
+  const cutoff: RepaymentCutoff = validRepaymentCutoffs.has(row.RepaymentCutoff) ? row.RepaymentCutoff : 'Second'
   const originalCents = Math.round(Number(row.OriginalAmount || 0) * 100)
   const outstandingCents = Math.max(0, Math.min(originalCents, Math.round(Number(row.OutstandingAmount || 0) * 100)))
   let unappliedPaidCents = Math.max(0, originalCents - outstandingCents)
   let projectedBalanceCents = originalCents
 
   return Array.from({ length: periodCount }, (_, index) => {
-    const periodMonth = new Date(Date.UTC(baseYear, baseMonth + firstMonthOffset + index, 1))
-    const year = periodMonth.getUTCFullYear()
-    const month = periodMonth.getUTCMonth()
-    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+    const window = cutoffWindow(start, cutoff, index)
     const scheduledCents = Math.round(Number(index === periodCount - 1 ? row.FinalInstallmentAmount : row.InstallmentAmount) * 100)
     const recordedPaidCents = Math.min(scheduledCents, unappliedPaidCents)
     unappliedPaidCents -= recordedPaidCents
     projectedBalanceCents = Math.max(0, projectedBalanceCents - scheduledCents)
     return {
       Period: index + 1,
-      CutoffStartDate: isoDate(year, month, cutoff === 'First' ? 1 : 16),
-      CutoffEndDate: isoDate(year, month, cutoff === 'First' ? 15 : lastDay),
+      CutoffStartDate: window.start,
+      CutoffEndDate: window.end,
       ScheduledAmount: scheduledCents / 100,
       RecordedPaidAmount: recordedPaidCents / 100,
       ProjectedBalance: projectedBalanceCents / 100,
@@ -216,21 +228,27 @@ async function employeeRecords(employeeId: number) {
   const queue = rows
     .filter(row => row.Status === 'Active')
     .sort((a, b) => String(a.IssuanceDate || '').localeCompare(String(b.IssuanceDate || '')) || String(a.CreatedAt).localeCompare(String(b.CreatedAt)) || Number(a.RecordID) - Number(b.RecordID))
-  const positions = new Map<string, number>()
-  const counters = new Map<string, number>()
+  const positions = new Map<string, { first: number | null; second: number | null }>()
+  let firstCounter = 0
+  let secondCounter = 0
   for (const row of queue) {
-    const group = String(row.RepaymentCutoff || '')
-    const position = (counters.get(group) || 0) + 1
-    counters.set(group, position)
-    positions.set(`${row.EntryType}-${row.RecordID}`, position)
+    const cutoff: RepaymentCutoff = validRepaymentCutoffs.has(row.RepaymentCutoff) ? row.RepaymentCutoff : 'Second'
+    const first = cutoff === 'First' || cutoff === 'Both' ? ++firstCounter : null
+    const second = cutoff === 'Second' || cutoff === 'Both' ? ++secondCounter : null
+    positions.set(`${row.EntryType}-${row.RecordID}`, { first, second })
   }
-  return rows.map(row => ({
-    ...row,
-    RepaymentPeriods: Number(row.RepaymentMonths || 1),
-    RepaymentSchedule: repaymentSchedule(row),
-    FifoPosition: positions.get(`${row.EntryType}-${row.RecordID}`) || null,
-    PlanStatus: Number(row.IsPaused) ? (row.ResumeDate ? 'Paused until resume date' : 'Paused') : row.Status === 'Active' ? 'Scheduled' : row.Status,
-  }))
+  return rows.map(row => {
+    const position = positions.get(`${row.EntryType}-${row.RecordID}`) || { first: null, second: null }
+    return {
+      ...row,
+      RepaymentPeriods: Number(row.RepaymentMonths || 1),
+      RepaymentSchedule: repaymentSchedule(row),
+      FifoPosition: position.first ?? position.second,
+      FifoPositionFirst: position.first,
+      FifoPositionSecond: position.second,
+      PlanStatus: Number(row.IsPaused) ? (row.ResumeDate ? 'Paused until resume date' : 'Paused') : row.Status === 'Active' ? 'Scheduled' : row.Status,
+    }
+  })
 }
 
 export async function listEmployeeLoanDeductions(event: any) {
@@ -282,14 +300,14 @@ export async function listEmployeeLoanDeductions(event: any) {
        LEFT JOIN (
          SELECT EmployeeID,
                 SUM(CASE WHEN Status = 'Active' THEN 1 ELSE 0 END) AS ActiveCount,
-                SUM(COALESCE(LoanAmount, 0)) AS TotalIssued,
+                SUM(CASE WHEN Status <> 'Cancelled' THEN COALESCE(LoanAmount, 0) ELSE 0 END) AS TotalIssued,
                 SUM(CASE WHEN Status = 'Active' THEN COALESCE(RemainingBalance, 0) ELSE 0 END) AS Outstanding
            FROM employee_loan GROUP BY EmployeeID
        ) loans ON loans.EmployeeID = e.EmployeeID
        LEFT JOIN (
          SELECT EmployeeID,
                 SUM(CASE WHEN Status = 'Active' THEN 1 ELSE 0 END) AS ActiveCount,
-                SUM(COALESCE(Amount, 0)) AS TotalIssued,
+                SUM(CASE WHEN Status <> 'Inactive' THEN COALESCE(Amount, 0) ELSE 0 END) AS TotalIssued,
                 SUM(CASE WHEN Status = 'Active' THEN COALESCE(RemainingBalance, 0) ELSE 0 END) AS Outstanding
            FROM employee_deduction GROUP BY EmployeeID
        ) deductions ON deductions.EmployeeID = e.EmployeeID

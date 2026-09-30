@@ -17,6 +17,14 @@ async function hasColumn(table, column) {
   return Number(rows[0]?.count || 0) > 0
 }
 
+async function columnType(table, column) {
+  const [rows] = await connection.execute(
+    'SELECT COLUMN_TYPE AS columnType FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [database, table, column],
+  )
+  return String(rows[0]?.columnType || '').toLowerCase()
+}
+
 async function hasIndex(table, index) {
   const [rows] = await connection.execute(
     'SELECT COUNT(*) AS count FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?',
@@ -30,7 +38,7 @@ try {
     ['employee_loan', 'IssuanceCode', 'VARCHAR(100) NULL AFTER LoanTypeID'],
     ['employee_loan', 'RepaymentStartDate', 'DATE NULL AFTER ReleaseDate'],
     ['employee_loan', 'RepaymentMonths', 'SMALLINT UNSIGNED NOT NULL DEFAULT 1 AFTER RepaymentStartDate'],
-    ['employee_loan', 'RepaymentCutoff', "ENUM('First','Second') NOT NULL DEFAULT 'Second' AFTER RepaymentMonths"],
+    ['employee_loan', 'RepaymentCutoff', "ENUM('First','Second','Both') NOT NULL DEFAULT 'Second' AFTER RepaymentMonths"],
     ['employee_loan', 'FinalInstallmentAmount', 'DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER MonthlyDeduction'],
     ['employee_loan', 'IsPaused', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER EndDate'],
     ['employee_loan', 'PauseStartDate', 'DATE NULL AFTER IsPaused'],
@@ -46,7 +54,7 @@ try {
     ['employee_deduction', 'FinalInstallmentAmount', 'DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER InstallmentAmount'],
     ['employee_deduction', 'RepaymentStartDate', 'DATE NULL AFTER StartDate'],
     ['employee_deduction', 'RepaymentMonths', 'SMALLINT UNSIGNED NOT NULL DEFAULT 1 AFTER RepaymentStartDate'],
-    ['employee_deduction', 'RepaymentCutoff', "ENUM('First','Second') NOT NULL DEFAULT 'First' AFTER RepaymentMonths"],
+    ['employee_deduction', 'RepaymentCutoff', "ENUM('First','Second','Both') NOT NULL DEFAULT 'First' AFTER RepaymentMonths"],
     ['employee_deduction', 'IsPaused', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER EndDate'],
     ['employee_deduction', 'PauseStartDate', 'DATE NULL AFTER IsPaused'],
     ['employee_deduction', 'ResumeDate', 'DATE NULL AFTER PauseStartDate'],
@@ -57,6 +65,14 @@ try {
   for (const [table, column, definition] of columns) {
     if (!await hasColumn(table, column)) {
       await connection.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+    }
+  }
+
+  for (const [table, defaultValue] of [['employee_loan', 'Second'], ['employee_deduction', 'First']]) {
+    if (!(await columnType(table, 'RepaymentCutoff')).includes("'both'")) {
+      await connection.query(
+        `ALTER TABLE \`${table}\` MODIFY COLUMN \`RepaymentCutoff\` ENUM('First','Second','Both') NOT NULL DEFAULT '${defaultValue}'`,
+      )
     }
   }
 

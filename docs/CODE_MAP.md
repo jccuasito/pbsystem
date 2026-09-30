@@ -297,7 +297,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/deductions-loans/employees/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
 - Related frontend files:
-  - None detected.
+  - `components/ModernDateField.vue`
 - API calls and handlers:
   - `GET /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.get.ts`
   - `POST /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.post.ts`
