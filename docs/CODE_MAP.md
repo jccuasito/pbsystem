@@ -137,6 +137,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/attendance/holiday-manager/index.vue`
   - `app/pages/attendance/shift-code/index.vue`
   - `app/pages/deductions-loans/catalog/index.vue`
+  - `app/pages/deductions-loans/employees/index.vue`
   - `app/pages/employees/deployment-history/index.vue`
   - `app/pages/employees/documents/index.vue`
   - `app/pages/employees/index.vue`
@@ -199,6 +200,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].post.ts`
   - `PUT /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].put.ts`
   - `GET /api/deductions-loans/deduction-type` → `server/api/deductions-loans/[resource].get.ts`
+  - `GET /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.get.ts`
+  - `POST /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.post.ts`
+  - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
   - `GET /api/deductions-loans/loan-type` → `server/api/deductions-loans/[resource].get.ts`
   - `GET /api/employees` → `server/api/employees/index.get.ts`
   - `POST /api/employees` → `server/api/employees/index.post.ts`
@@ -249,6 +253,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/dtrBtrCrud.ts`
   - `server/utils/dtrCrud.ts`
   - `server/utils/employeeCrud.ts`
+  - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/employeeStatusCrud.ts`
   - `server/utils/holidayCrud.ts`
   - `server/utils/jwt.ts`
@@ -282,6 +287,25 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/deductionLoanCatalogCrud.ts`
+  - `server/utils/jwt.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/deductions-loans/employees`
+
+- Page: `app/pages/deductions-loans/employees/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
+- Related frontend files:
+  - None detected.
+- API calls and handlers:
+  - `GET /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.get.ts`
+  - `POST /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.post.ts`
+  - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - None detected.

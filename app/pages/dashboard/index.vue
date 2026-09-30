@@ -18,6 +18,7 @@ import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
 import ShiftCodePage from '../attendance/shift-code/index.vue'
 import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
 import DeductionLoanCatalogPage from '../deductions-loans/catalog/index.vue'
+import EmployeeLoanDeductionPage from '../deductions-loans/employees/index.vue'
 import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 
 const route = useRoute()
@@ -36,13 +37,13 @@ type WorkspaceView =
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
   | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
-  | 'deductions' | 'loans' | 'deductions-loans-catalog' | 'reports' | 'settings'
+  | 'employee-loans-deductions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
   'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
-  'deductions', 'loans', 'deductions-loans-catalog', 'reports', 'settings'
+  'employee-loans-deductions', 'deductions-loans-catalog', 'reports', 'settings'
 ])
 const activeWorkspaceView = computed<WorkspaceView | null>(() => {
   const value = Array.isArray(route.query.view) ? route.query.view[0] : route.query.view
@@ -133,6 +134,8 @@ const ICON_PATHS = {
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   peso: '<path d="M7 21V4h6a4.2 4.2 0 0 1 0 8.4H7M4.5 11h11M4.5 14h11"/>',
   'file-text': '<path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
+  wallet: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H18v16H6.5A2.5 2.5 0 0 1 4 17.5Z"/><path d="M4 7h14M14 11h7v5h-7a2.5 2.5 0 0 1 0-5Z"/><circle cx="16.5" cy="13.5" r=".6"/>',
+  tag: '<path d="M4 5v6.2L12.8 20 20 12.8 11.2 4H5a1 1 0 0 0-1 1Z"/><circle cx="8" cy="8" r="1.2"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.36a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.64 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.64 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.64c.6-.26 1-.85 1-1.55V3a2 2 0 1 1 4 0v.09c0 .7.4 1.29 1 1.55.66.28 1.4.15 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06c-.49.47-.62 1.21-.34 1.87.26.6.85 1 1.55 1H21a2 2 0 1 1 0 4h-.09c-.7 0-1.29.4-1.55 1Z"/>'
 }
 
@@ -194,11 +197,10 @@ const navGroups = [
     ]
   },
   {
-    label: 'Deductions & Loans', icon: 'file-text', key: 'deductions',
+    label: 'Deductions & Loans', icon: 'wallet', key: 'deductions',
     children: [
-      { label: 'Deductions', to: '/deductions-loans/deduction', icon: 'file-text', view: 'deductions' },
-      { label: 'Loans', to: '/deductions-loans/loan', icon: 'peso', view: 'loans' },
-      { label: 'Catalog', to: '/deductions-loans/catalog', icon: 'settings', view: 'deductions-loans-catalog' }
+      { label: 'Employee Accounts', to: '/deductions-loans/employees', icon: 'user', view: 'employee-loans-deductions' },
+      { label: 'Catalog', to: '/deductions-loans/catalog', icon: 'tag', view: 'deductions-loans-catalog' }
     ]
   },
   { label: 'Reports', to: '/reports', icon: 'chart-bar', view: 'reports' },
@@ -246,6 +248,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'attendance-shift-code': ShiftCodePage,
   'attendance-holiday-manager': HolidayManagerPage,
   'payroll-adjustments': PayrollAdjustmentsPage,
+  'employee-loans-deductions': EmployeeLoanDeductionPage,
   'deductions-loans-catalog': DeductionLoanCatalogPage
 }
 const activePageComponent = computed(() => activeWorkspaceView.value ? workspaceComponents[activeWorkspaceView.value] : null)
