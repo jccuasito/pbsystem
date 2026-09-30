@@ -188,13 +188,42 @@ export async function computeDtr(event: any) {
 export async function dtrSummary(event: any) {
   const session = requireSession(event); void session.sub
   const id = batchId(event)
-  const [[summary]] = await pool.execute<any[]>(`SELECT d.BatchID, d.Status,
-    (SELECT COUNT(*) FROM attendance_dtr_employee roster WHERE roster.BatchID = d.BatchID) AS PeopleCount,
-    COUNT(at.AttendanceID) AS AttendanceCount,
-    COALESCE(SUM(at.RegularHours), 0) AS RegularHours, COALESCE(SUM(at.OTHours), 0) AS OTHours, COALESCE(SUM(at.NightDiffHours), 0) AS NightDiffHours
-    FROM attendance_dtr d LEFT JOIN attendance at ON at.BatchID = d.BatchID WHERE d.BatchID = ? GROUP BY d.BatchID`, [id])
-  if (!summary) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
-  return { summary }
+  const [[batchRows], [summaryRows], [records], [attendanceRows]] = await Promise.all([
+    pool.execute<any[]>(`SELECT d.BatchID, d.AgencyID, a.AgencyName, a.AgencyAddress, a.AgencyContact,
+      d.ClientID, c.ClientName, d.SiteID, s.SiteName, s.SiteAddress, d.PeriodStart, d.PeriodEnd, d.Status,
+      CASE WHEN a.LogoData IS NULL THEN 0 ELSE 1 END AS AgencyHasLogo,
+      CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END AS SiteHasLogo
+      FROM attendance_dtr d
+      INNER JOIN agency a ON a.AgencyID = d.AgencyID
+      INNER JOIN client c ON c.ClientID = d.ClientID
+      INNER JOIN site s ON s.SiteID = d.SiteID
+      WHERE d.BatchID = ? LIMIT 1`, [id]),
+    pool.execute<any[]>(`SELECT d.BatchID, d.Status,
+      (SELECT COUNT(*) FROM attendance_dtr_employee roster WHERE roster.BatchID = d.BatchID) AS PeopleCount,
+      COUNT(at.AttendanceID) AS AttendanceCount,
+      COALESCE(SUM(at.RegularHours), 0) AS RegularHours, COALESCE(SUM(at.OTHours), 0) AS OTHours, COALESCE(SUM(at.NightDiffHours), 0) AS NightDiffHours
+      FROM attendance_dtr d LEFT JOIN attendance at ON at.BatchID = d.BatchID WHERE d.BatchID = ? GROUP BY d.BatchID`, [id]),
+    pool.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
+      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
+      p.PositionName, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID
+      FROM attendance_dtr_employee de
+      INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
+      INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+      INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
+      WHERE de.BatchID = ?
+      ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]),
+    pool.execute<any[]>(`SELECT at.EmployeeID, at.AttendanceDate, at.AttendanceStatus, at.WorkdayCount, at.IsWDO,
+      at.TimeIn, at.TimeOut, ${hourColumns.map(column => `at.${column}`).join(', ')},
+      sc.ShiftCode, sc.ShiftType
+      FROM attendance at
+      LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
+      WHERE at.BatchID = ?
+      ORDER BY at.EmployeeID, at.AttendanceDate`, [id])
+  ])
+  const batch = batchRows[0]
+  const summary = summaryRows[0]
+  if (!batch || !summary) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
+  return { batch, summary, records, attendanceRows }
 }
 
 const hourColumns = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours', 'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours', 'LateHours', 'UndertimeHours', 'BreakHours'] as const
