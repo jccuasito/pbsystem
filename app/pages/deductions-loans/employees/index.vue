@@ -487,7 +487,7 @@ onMounted(load)
           <button class="review-plan wide" type="button" :disabled="!planPreview" @click="openRepaymentPreview">Review repayment plan</button>
           <label class="wide">Remarks <em>Optional</em><textarea v-model="form.Remarks" maxlength="255" placeholder="Reference, purpose, or supporting note"></textarea></label>
         </div>
-        <p class="form-note">FIFO is automatic per employee and eligible cutoff: the oldest active issuance is processed before newer ones. A Both-cutoffs plan joins both queues. A paused plan is skipped until its resume date or manual resume.</p>
+        <p class="form-note">FIFO applies only to repeated issuances of the same catalog entry and eligible cutoff. The oldest matching issuance is processed first; different loan or deduction entries keep separate queues. A Both-cutoffs plan joins both of its catalog entry's queues.</p>
         <p v-if="profileError" class="error">{{ profileError }}</p>
         <footer><button type="button" @click="issuanceOpen=false">Cancel</button><button class="primary" :disabled="saving">{{ saving ? 'Saving…' : 'Save issuance' }}</button></footer>
       </form>

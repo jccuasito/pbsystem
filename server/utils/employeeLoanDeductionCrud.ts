@@ -229,12 +229,18 @@ async function employeeRecords(employeeId: number) {
     .filter(row => row.Status === 'Active')
     .sort((a, b) => String(a.IssuanceDate || '').localeCompare(String(b.IssuanceDate || '')) || String(a.CreatedAt).localeCompare(String(b.CreatedAt)) || Number(a.RecordID) - Number(b.RecordID))
   const positions = new Map<string, { first: number | null; second: number | null }>()
-  let firstCounter = 0
-  let secondCounter = 0
+  const counters = new Map<string, number>()
   for (const row of queue) {
     const cutoff: RepaymentCutoff = validRepaymentCutoffs.has(row.RepaymentCutoff) ? row.RepaymentCutoff : 'Second'
-    const first = cutoff === 'First' || cutoff === 'Both' ? ++firstCounter : null
-    const second = cutoff === 'Second' || cutoff === 'Both' ? ++secondCounter : null
+    const catalogQueue = `${row.EntryType}-${row.CatalogItemID}`
+    const nextPosition = (eligibleCutoff: 'First' | 'Second') => {
+      const key = `${catalogQueue}-${eligibleCutoff}`
+      const position = (counters.get(key) || 0) + 1
+      counters.set(key, position)
+      return position
+    }
+    const first = cutoff === 'First' || cutoff === 'Both' ? nextPosition('First') : null
+    const second = cutoff === 'Second' || cutoff === 'Both' ? nextPosition('Second') : null
     positions.set(`${row.EntryType}-${row.RecordID}`, { first, second })
   }
   return rows.map(row => {
