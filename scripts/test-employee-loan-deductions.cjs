@@ -32,6 +32,8 @@ test('employee loan and deduction page compiles with one employee-centered issua
   assert.match(descriptor.template.content, /Employee Loans &amp; Deductions/)
   assert.match(descriptor.template.content, /Issuance date/)
   assert.match(descriptor.template.content, /Issuance code/)
+  assert.match(descriptor.template.content, /No approved payroll deduction receipts yet/)
+  assert.match(descriptor.template.content, /Account/)
   assert.match(descriptor.template.content, /Original value \/ amount received/)
   assert.match(descriptor.template.content, /Repayment starts/)
   assert.match(descriptor.template.content, /Number of periods/)
@@ -49,7 +51,7 @@ test('employee loan and deduction page compiles with one employee-centered issua
   assert.match(descriptor.template.content, /No active loans or deductions/)
 })
 
-test('MySQL issuance CRUD creates loan and deduction history without payroll posting', { skip: process.env.EMPLOYEE_FINANCIAL_TEST_DATABASE !== '1' }, async () => {
+test('MySQL issuance CRUD and posted-deduction receipts keep separate audit records', { skip: process.env.EMPLOYEE_FINANCIAL_TEST_DATABASE !== '1' }, async () => {
   const env = { ...require('node:util').parseEnv(fs.readFileSync('.env', 'utf8')), ...process.env }
   const connection = await require('mysql2/promise').createConnection({
     host: env.DB_HOST || '127.0.0.1',
@@ -80,8 +82,20 @@ test('MySQL issuance CRUD creates loan and deduction history without payroll pos
         readBody: async event => event.body,
       },
     })
-    const [[employee]] = await connection.execute("SELECT EmployeeID FROM employee WHERE Status = 'Active' ORDER BY EmployeeID LIMIT 1")
-    assert.ok(employee, 'An active employee is required for the issuance test.')
+    const transactionApi = evaluate(fs.readFileSync('server/utils/employeeAccountTransactionCrud.ts', 'utf8'), {
+      '../connection/dbconnect': pool,
+      './auth': { requireSession: () => ({ sub: 1 }) },
+      h3: {
+        createError: options => Object.assign(new Error(options.statusMessage), options),
+        getQuery: event => event.query || {},
+      },
+    })
+    const [[employee]] = await connection.execute(`SELECT e.EmployeeID, ed.DeploymentID
+      FROM employee e
+      INNER JOIN employee_deployment ed ON ed.EmployeeID = e.EmployeeID
+      WHERE e.Status = 'Active'
+      ORDER BY e.EmployeeID, ed.DeploymentID DESC LIMIT 1`)
+    assert.ok(employee, 'An active employee with a deployment is required for the issuance test.')
     const [[baseline]] = await connection.execute(
       `SELECT
          COALESCE((SELECT SUM(LoanAmount) FROM employee_loan WHERE EmployeeID = ? AND Status <> 'Cancelled'), 0) +
@@ -97,10 +111,11 @@ test('MySQL issuance CRUD creates loan and deduction history without payroll pos
     const [deductionType] = await connection.execute("INSERT INTO deduction_type (DeductionName, ClassificationID, Status) VALUES (?, ?, 'Active')", [`TEST DEDUCTION ITEM ${suffix}`, deductionClass.insertId])
     const [otherDeductionType] = await connection.execute("INSERT INTO deduction_type (DeductionName, ClassificationID, Status) VALUES (?, ?, 'Active')", [`TEST OTHER DEDUCTION ${suffix}`, deductionClass.insertId])
 
-    const loanCode = `TEST-L-${suffix}`
-    const deductionCode = `TEST-D-${suffix}`
-    const bothCode = `TEST-B-${suffix}`
-    const otherDeductionCode = `TEST-OD-${suffix}`
+    const referenceBase = String(Date.now()).slice(-10)
+    const loanCode = `PB-${referenceBase}1`
+    const deductionCode = `CASH-${referenceBase}2`
+    const bothCode = `PB-BOTH-${referenceBase}3`
+    const otherDeductionCode = `MED-${referenceBase}4`
     const loan = await api.createEmployeeLoanDeduction({ body: { EmployeeID: employee.EmployeeID, EntryType: 'Loan', CatalogItemID: loanType.insertId, IssuanceCode: loanCode, IssuanceDate: '2026-09-01', OriginalAmount: 5000, RepaymentStartDate: '2026-09-01', RepaymentPeriods: 3, RepaymentCutoff: 'Second' } })
     const deduction = await api.createEmployeeLoanDeduction({ body: { EmployeeID: employee.EmployeeID, EntryType: 'Deduction', CatalogItemID: deductionType.insertId, IssuanceCode: deductionCode, IssuanceDate: '2026-09-01', OriginalAmount: 2000, RepaymentStartDate: '2026-09-01', RepaymentPeriods: 4, RepaymentCutoff: 'First', Remarks: 'Test manual issuance' } })
     const both = await api.createEmployeeLoanDeduction({ body: { EmployeeID: employee.EmployeeID, EntryType: 'Loan', CatalogItemID: loanType.insertId, IssuanceCode: bothCode, IssuanceDate: '2026-09-02', OriginalAmount: 1200, RepaymentStartDate: '2026-09-02', RepaymentPeriods: 4, RepaymentCutoff: 'Both' } })
@@ -109,8 +124,10 @@ test('MySQL issuance CRUD creates loan and deduction history without payroll pos
     assert.ok(Number(deduction.id) > 0)
     assert.ok(Number(both.id) > 0)
     assert.ok(Number(otherDeduction.id) > 0)
+    assert.match(loan.accountReference, /^LN\d{6,}$/)
+    assert.match(deduction.accountReference, /^DED\d{6,}$/)
     await assert.rejects(
-      api.createEmployeeLoanDeduction({ body: { EmployeeID: employee.EmployeeID, EntryType: 'Deduction', CatalogItemID: deductionType.insertId, IssuanceCode: loanCode, IssuanceDate: '2026-09-03', OriginalAmount: 100, RepaymentStartDate: '2026-09-03', RepaymentPeriods: 1, RepaymentCutoff: 'First' } }),
+      api.createEmployeeLoanDeduction({ body: { EmployeeID: employee.EmployeeID, EntryType: 'Loan', CatalogItemID: loanType.insertId, IssuanceCode: loanCode, IssuanceDate: '2026-09-03', OriginalAmount: 100, RepaymentStartDate: '2026-09-03', RepaymentPeriods: 1, RepaymentCutoff: 'Second' } }),
       error => error.statusCode === 409,
     )
 
@@ -120,6 +137,7 @@ test('MySQL issuance CRUD creates loan and deduction history without payroll pos
     const savedBoth = detail.records.find(item => item.EntryType === 'Loan' && item.IssuanceCode === bothCode.toUpperCase())
     const savedOtherDeduction = detail.records.find(item => item.EntryType === 'Deduction' && item.IssuanceCode === otherDeductionCode.toUpperCase())
     assert.equal(Number(savedLoan.OriginalAmount), 5000)
+    assert.equal(savedLoan.AccountReference, loan.accountReference)
     assert.equal(Number(savedLoan.OutstandingAmount), 5000)
     assert.equal(savedLoan.RepaymentEndDate, '2026-11-30')
     assert.equal(savedLoan.RepaymentCutoff, 'Second')
@@ -157,6 +175,52 @@ test('MySQL issuance CRUD creates loan and deduction history without payroll pos
         { Period: 4, CutoffStartDate: '2026-10-16', CutoffEndDate: '2026-10-31', ScheduledAmount: 300, RecordedPaidAmount: 0, ProjectedBalance: 0, RemainingPeriods: 0, Status: 'Scheduled' },
       ],
     )
+
+    const [draftPayroll] = await connection.execute(`INSERT INTO payroll
+      (EmployeeID, DeploymentID, PayrollType, StartDate, EndDate, PayrollDate, Status)
+      VALUES (?, ?, 'Regular', '2026-09-16', '2026-09-30', '2026-09-30', 'Draft')`,
+    [employee.EmployeeID, employee.DeploymentID])
+    await assert.rejects(
+      transactionApi.postEmployeeAccountTransaction(connection, {
+        employeeId: employee.EmployeeID,
+        entryType: 'Loan',
+        sourceRecordId: loan.id,
+        payrollId: draftPayroll.insertId,
+        transactionDate: '2026-09-30',
+        amount: 1666.67,
+      }),
+      error => error.statusCode === 409,
+    )
+    const [approvedPayroll] = await connection.execute(`INSERT INTO payroll
+      (EmployeeID, DeploymentID, PayrollType, StartDate, EndDate, PayrollDate, Status)
+      VALUES (?, ?, 'Regular', '2026-09-16', '2026-09-30', '2026-09-30', 'Approved')`,
+    [employee.EmployeeID, employee.DeploymentID])
+    const posted = await transactionApi.postEmployeeAccountTransaction(connection, {
+      employeeId: employee.EmployeeID,
+      entryType: 'Loan',
+      sourceRecordId: loan.id,
+      payrollId: approvedPayroll.insertId,
+      transactionDate: '2026-09-30',
+      cutoffStartDate: '2026-09-16',
+      cutoffEndDate: '2026-09-30',
+      amount: 1666.67,
+      remarks: 'Automated payroll deduction test',
+    })
+    assert.match(posted.transactionId, /^TXN20260930-\d{6,}$/)
+    assert.equal(posted.accountReference, loan.accountReference)
+    assert.equal(Number(posted.balanceBefore), 5000)
+    assert.equal(Number(posted.balanceAfter), 3333.33)
+    const receipts = await transactionApi.listEmployeeAccountTransactions({ query: { search: posted.transactionId } })
+    assert.equal(Number(receipts.summary.Total), 1)
+    assert.equal(receipts.items[0].TransactionID, posted.transactionId)
+    assert.equal(receipts.items[0].IssuanceCode, loanCode)
+    assert.equal(receipts.items[0].AccountReference, loan.accountReference)
+    assert.equal(receipts.items[0].PayrollStatus, 'Approved')
+    assert.equal(Number(receipts.items[0].Amount), 1666.67)
+    const detailAfterPosting = await api.listEmployeeLoanDeductions({ query: { employeeId: String(employee.EmployeeID) } })
+    const loanAfterPosting = detailAfterPosting.records.find(item => item.EntryType === 'Loan' && Number(item.RecordID) === Number(loan.id))
+    assert.equal(Number(loanAfterPosting.OutstandingAmount), 3333.33)
+    assert.equal(loanAfterPosting.Transactions[0].TransactionID, posted.transactionId)
 
     await api.updateEmployeeLoanDeduction({ body: { EntryType: 'Deduction', RecordID: deduction.id, PlanAction: 'pause', PauseStartDate: '2026-09-16', ResumeDate: '2026-10-01', PauseReason: 'Skip one cutoff' } })
     let [pausedRows] = await connection.execute('SELECT IsPaused, PauseStartDate, ResumeDate, PauseReason FROM employee_deduction WHERE EmployeeDeductionID = ?', [deduction.id])

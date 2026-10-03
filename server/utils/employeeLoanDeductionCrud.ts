@@ -190,7 +190,7 @@ async function employeeRecords(employeeId: number) {
   const [rows] = await pool.execute<any[]>(
     `SELECT records.*
        FROM (
-         SELECT 'Loan' AS EntryType, el.EmployeeID, el.LoanID AS RecordID, el.IssuanceCode,
+         SELECT 'Loan' AS EntryType, el.EmployeeID, el.LoanID AS RecordID, el.AccountReference, el.IssuanceCode,
                 DATE_FORMAT(el.ReleaseDate, '%Y-%m-%d') AS IssuanceDate,
                 el.LoanAmount AS OriginalAmount, el.RemainingBalance AS OutstandingAmount,
                 DATE_FORMAT(el.RepaymentStartDate, '%Y-%m-%d') AS RepaymentStartDate,
@@ -206,7 +206,7 @@ async function employeeRecords(employeeId: number) {
            LEFT JOIN deduction_loan_classification c ON c.ClassificationID = lt.ClassificationID
           WHERE el.EmployeeID = ?
          UNION ALL
-         SELECT 'Deduction' AS EntryType, ed.EmployeeID, ed.EmployeeDeductionID AS RecordID, ed.IssuanceCode,
+         SELECT 'Deduction' AS EntryType, ed.EmployeeID, ed.EmployeeDeductionID AS RecordID, ed.AccountReference, ed.IssuanceCode,
                 DATE_FORMAT(COALESCE(ed.IssuanceDate, ed.StartDate), '%Y-%m-%d') AS IssuanceDate,
                 ed.Amount AS OriginalAmount, ed.RemainingBalance AS OutstandingAmount,
                 DATE_FORMAT(ed.RepaymentStartDate, '%Y-%m-%d') AS RepaymentStartDate,
@@ -225,6 +225,21 @@ async function employeeRecords(employeeId: number) {
       ORDER BY records.IssuanceDate DESC, records.CreatedAt DESC, records.RecordID DESC`,
     [employeeId, employeeId],
   )
+  const [transactionRows] = await pool.execute<any[]>(
+    `SELECT t.TransactionRecordID, t.TransactionID, t.EntryType, t.SourceRecordID,
+            DATE_FORMAT(TransactionDate, '%Y-%m-%d') AS TransactionDate,
+            t.Amount, t.BalanceAfter, t.Status
+       FROM employee_account_transaction t
+       INNER JOIN payroll py ON py.PayrollID = t.PayrollID AND py.Status IN ('Approved', 'Released')
+      WHERE t.EmployeeID = ?
+      ORDER BY t.TransactionDate DESC, t.TransactionRecordID DESC`,
+    [employeeId],
+  )
+  const transactionsByIssuance = new Map<string, any[]>()
+  for (const transaction of transactionRows) {
+    const key = `${transaction.EntryType}-${transaction.SourceRecordID}`
+    transactionsByIssuance.set(key, [...(transactionsByIssuance.get(key) || []), transaction])
+  }
   const queue = rows
     .filter(row => row.Status === 'Active')
     .sort((a, b) => String(a.IssuanceDate || '').localeCompare(String(b.IssuanceDate || '')) || String(a.CreatedAt).localeCompare(String(b.CreatedAt)) || Number(a.RecordID) - Number(b.RecordID))
@@ -247,6 +262,7 @@ async function employeeRecords(employeeId: number) {
     const position = positions.get(`${row.EntryType}-${row.RecordID}`) || { first: null, second: null }
     return {
       ...row,
+      Transactions: transactionsByIssuance.get(`${row.EntryType}-${row.RecordID}`) || [],
       RepaymentPeriods: Number(row.RepaymentMonths || 1),
       RepaymentSchedule: repaymentSchedule(row),
       FifoPosition: position.first ?? position.second,
@@ -347,7 +363,7 @@ export async function createEmployeeLoanDeduction(event: any) {
   const employeeId = positiveId(body?.EmployeeID, 'Employee')
   const kind = entryType(body?.EntryType)
   const catalogItemId = positiveId(body?.CatalogItemID, `${kind} catalog item`)
-  const code = requiredText(body?.IssuanceCode, 'Issuance code').toLocaleUpperCase()
+  const code = requiredText(body?.IssuanceCode, 'Issuance code', 100)
   const date = requiredDate(body?.IssuanceDate, 'Issuance date')
   const amount = money(body?.OriginalAmount)
   const plan = repaymentPlan(body, amount, kind, date)
@@ -360,18 +376,9 @@ export async function createEmployeeLoanDeduction(event: any) {
       [employeeId],
     )
     if (!employeeRows[0]) throw createError({ statusCode: 400, statusMessage: 'Select an active employee.' })
-    const [duplicateRows] = await connection.execute<any[]>(
-      `SELECT IssuanceCode FROM employee_loan WHERE LOWER(IssuanceCode) = LOWER(?)
-       UNION ALL
-       SELECT IssuanceCode FROM employee_deduction WHERE LOWER(IssuanceCode) = LOWER(?)
-       LIMIT 1`,
-      [code, code],
-    )
-    if (duplicateRows[0]) throw createError({ statusCode: 409, statusMessage: 'This issuance code is already in use.' })
-
     if (kind === 'Loan') {
       const [catalogRows] = await connection.execute<any[]>(
-        `SELECT lt.LoanTypeID
+        `SELECT lt.LoanTypeID, lt.LoanName AS ItemName, c.ClassificationName
            FROM loan_type lt
            INNER JOIN deduction_loan_classification c ON c.ClassificationID = lt.ClassificationID
           WHERE lt.LoanTypeID = ? AND lt.Status = 'Active' AND c.Status = 'Active'
@@ -387,12 +394,14 @@ export async function createEmployeeLoanDeduction(event: any) {
         [employeeId, catalogItemId, code, amount, amount, plan.installment, plan.finalInstallment,
           date, plan.startDate, plan.periods, plan.cutoff, plan.endDate, remarks],
       )
+      const accountReference = `LN${String(result.insertId).padStart(6, '0')}`
+      await connection.execute('UPDATE employee_loan SET AccountReference = ? WHERE LoanID = ?', [accountReference, result.insertId])
       await connection.commit()
-      return { id: result.insertId, entryType: kind }
+      return { id: result.insertId, entryType: kind, accountReference }
     }
 
     const [catalogRows] = await connection.execute<any[]>(
-      `SELECT dt.DeductionTypeID
+      `SELECT dt.DeductionTypeID, dt.DeductionName AS ItemName, c.ClassificationName
          FROM deduction_type dt
          INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
         WHERE dt.DeductionTypeID = ? AND dt.Status = 'Active' AND c.Status = 'Active'
@@ -409,8 +418,10 @@ export async function createEmployeeLoanDeduction(event: any) {
       [employeeId, catalogItemId, code, date, amount, amount, plan.installment, plan.finalInstallment,
         plan.startDate, plan.startDate, plan.periods, plan.cutoff, plan.endDate, remarks],
     )
+    const accountReference = `DED${String(result.insertId).padStart(6, '0')}`
+    await connection.execute('UPDATE employee_deduction SET AccountReference = ? WHERE EmployeeDeductionID = ?', [accountReference, result.insertId])
     await connection.commit()
-    return { id: result.insertId, entryType: kind }
+    return { id: result.insertId, entryType: kind, accountReference }
   } catch (error: any) {
     await connection.rollback()
     if (error?.code === 'ER_DUP_ENTRY') throw createError({ statusCode: 409, statusMessage: 'This issuance code is already in use.' })

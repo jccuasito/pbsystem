@@ -1,0 +1,30 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const { test } = require('node:test')
+const sfc = require('@vue/compiler-sfc')
+
+test('employee account transactions use a separate posted-deduction ledger', () => {
+  const schema = fs.readFileSync('database/employee-account-transactions.sql', 'utf8')
+  const utility = fs.readFileSync('server/utils/employeeAccountTransactionCrud.ts', 'utf8')
+  assert.match(schema, /CREATE TABLE employee_account_transaction/)
+  assert.match(schema, /AccountReference VARCHAR\(32\) NOT NULL/)
+  assert.match(schema, /uq_employee_account_transaction_payroll_source/)
+  assert.match(utility, /TXN\$\{transactionDate\.replaceAll/)
+  assert.match(utility, /postEmployeeAccountTransaction/)
+  assert.match(utility, /Status IN \('Approved', 'Released'\)/)
+  assert.doesNotMatch(schema, /ADD COLUMN TransactionID/)
+})
+
+test('transaction receipt page compiles and exposes the receipt register', () => {
+  const filename = 'app/pages/deductions-loans/transactions/index.vue'
+  const source = fs.readFileSync(filename, 'utf8')
+  const { descriptor, errors } = sfc.parse(source, { filename })
+  assert.deepEqual(errors, [])
+  const compiled = sfc.compileScript(descriptor, { id: 'transaction-receipts-test' })
+  assert.deepEqual(sfc.compileTemplate({ source: descriptor.template.content, filename, id: 'transaction-receipts-test', compilerOptions: { bindingMetadata: compiled.bindings } }).errors, [])
+  assert.match(descriptor.template.content, /Transaction Receipts/)
+  assert.match(descriptor.template.content, /View receipt/)
+  assert.match(descriptor.template.content, /Transaction ID/)
+  assert.match(descriptor.template.content, /approved or released payroll/)
+  assert.match(descriptor.template.content, /Account reference/)
+})
