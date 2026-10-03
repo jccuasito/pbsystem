@@ -3,6 +3,7 @@ import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import DtrAttendanceWorkspace from '~/components/DtrAttendanceWorkspace.vue'
 import DtrBtrModal from '~/components/DtrBtrModal.vue'
 import DtrCompactPrintView from '~/components/DtrCompactPrintView.vue'
+import DtrEmployeeAttendanceDetailsModal from '~/components/DtrEmployeeAttendanceDetailsModal.vue'
 import PayrollAdjustmentsPanel from '~/components/PayrollAdjustmentsPanel.vue'
 type Agency={AgencyID:number,AgencyName:string}; type Client={AgencyID:number,ClientID:number,ClientName:string}; type Site={SiteID:number,ClientID:number,SiteName:string}; type Dtr={BatchID:number,AgencyID:number,AgencyName:string,AgencyHasLogo?:number,ClientID:number,ClientName:string,SiteID:number,SiteName:string,SiteHasLogo?:number,PeriodStart:string,PeriodEnd:string,Status:string,CreatedAt:string,PeopleCount:number}
 const failedLogos=ref(new Set<string>())
@@ -10,7 +11,7 @@ const btrWorkspace=ref<Dtr|null>(null)
 const adjustmentDtr=ref<Dtr|null>(null)
 function logoKey(resource:'agency'|'site',id:number){return resource+'-'+id}
 function logoInitials(name:string){return name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase()||'—'}
-const now=new Date(), selectedYear=ref(String(now.getFullYear())), selectedCutoff=ref(''), search=ref(''), agencyId=ref(''), clientId=ref(''), siteId=ref(''), items=ref<Dtr[]>([]), agencies=ref<Agency[]>([]), clients=ref<Client[]>([]), sites=ref<Site[]>([]), loading=ref(false), saving=ref(false), computingKey=ref(''), error=ref(''), formOpen=ref(false), editing=ref<Dtr|null>(null), workspace=ref<Dtr|null>(null), summaryOpen=ref(false), compactOpen=ref(false), summary=ref<any>(null)
+const now=new Date(), selectedYear=ref(String(now.getFullYear())), selectedCutoff=ref(''), search=ref(''), agencyId=ref(''), clientId=ref(''), siteId=ref(''), items=ref<Dtr[]>([]), agencies=ref<Agency[]>([]), clients=ref<Client[]>([]), sites=ref<Site[]>([]), loading=ref(false), saving=ref(false), computingKey=ref(''), detailsLoadingId=ref<number|null>(null), error=ref(''), formOpen=ref(false), editing=ref<Dtr|null>(null), workspace=ref<Dtr|null>(null), detailsData=ref<any>(null), summaryOpen=ref(false), compactOpen=ref(false), summary=ref<any>(null)
 const form=reactive({AgencyID:'',ClientID:'',SiteID:'',PeriodStart:'',PeriodEnd:''})
 function cutoffOptions(year:number){return Array.from({length:12},(_,m)=>{const name=new Date(year,m).toLocaleString('en-PH',{month:'long'}), last=new Date(year,m+1,0).getDate(),p=`${year}-${String(m+1).padStart(2,'0')}`;return[{value:`${p}-01:${p}-15`,label:`${name} 1–15, ${year}`},{value:`${p}-16:${p}-${last}`,label:`${name} 16–${last}, ${year}`}]}).flat()}
 const yearOptions=computed(()=>Array.from({length:5},(_,i)=>String(now.getFullYear()-2+i))), cutoffs=computed(()=>cutoffOptions(Number(selectedYear.value))), cutoffLabel=computed(()=>cutoffs.value.find(c=>c.value===selectedCutoff.value)?.label||'Choose a cutoff'), period=computed(()=>selectedCutoff.value.split(':'))
@@ -35,6 +36,13 @@ async function compute(i:Dtr,target:'payroll'|'billing'){
   try{await $fetch(`/api/attendance/dtr/${i.BatchID}/compute`,{method:'POST',body:{target}});await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to compute DTR.'}finally{computingKey.value=''}
 }
 async function viewSummary(i:Dtr){try{summary.value={item:i,...(await $fetch<any>(`/api/attendance/dtr/${i.BatchID}/summary`))};compactOpen.value=false;summaryOpen.value=true}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load DTR summary.'}}
+async function viewDetails(i:Dtr){
+  detailsLoadingId.value=i.BatchID
+  error.value=''
+  try{detailsData.value={item:i,...(await $fetch<any>(`/api/attendance/dtr/${i.BatchID}/summary`))}}
+  catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load employee attendance details.'}
+  finally{detailsLoadingId.value=null}
+}
 function formatDate(v:string){return new Date(v).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}function canEdit(i:Dtr){return !['Approved','Locked'].includes(i.Status)&&!i.Status.startsWith('Computed')}
 watch(selectedYear,()=>{selectedCutoff.value=selectedYear.value===String(now.getFullYear())?currentCutoff():cutoffs.value[0]?.value||''});watch(agencyId,()=>{clientId.value='';siteId.value=''});watch(clientId,()=>siteId.value='');selectedCutoff.value=currentCutoff();onMounted(load);useRealtimeRefresh(load)
 function formatPeriod(start:string,end:string){
@@ -85,7 +93,7 @@ function blurActions(event:FocusEvent){
             <details class="dtr-action-menu" @keydown.esc.prevent="closeActions($event,true)" @focusout="blurActions">
               <summary class="secondary" :aria-label="'More actions for DTR-'+String(i.BatchID).padStart(4,'0')">More <span aria-hidden="true">⌄</span></summary>
               <div class="dtr-action-options" @click="closeActions($event)">
-                <button type="button" disabled title="View Details — coming soon">View Details</button>
+                <button type="button" :disabled="detailsLoadingId===i.BatchID" @click="viewDetails(i)">{{detailsLoadingId===i.BatchID?'Loading…':'View Details'}}</button>
                 <button type="button" title="Break Time Reliever" @click="btrWorkspace=i">Add BTR</button>
                 <button type="button" @click="viewSummary(i)">View Summary DTR</button>
                 <button type="button" @click="adjustmentDtr=i">Payroll adjustments</button>
@@ -105,6 +113,7 @@ function blurActions(event:FocusEvent){
 <div v-if="formOpen" class="overlay" @click.self="formOpen=false"><form class="modal" @submit.prevent="save"><button class="close" type="button" @click="formOpen=false">×</button><h2>Create DTR</h2><p>Create one DTR batch per agency, site, and payroll cutoff.</p><div class="grid"><label>Agency<select v-model="form.AgencyID" required @change="form.ClientID='';form.SiteID=''"><option disabled value="">Select agency</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select></label><label>Client<select v-model="form.ClientID" required :disabled="!form.AgencyID" @change="form.SiteID=''"><option disabled value="">Select client</option><option v-for="c in formClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select></label><label>Site<select v-model="form.SiteID" required :disabled="!form.ClientID"><option disabled value="">Select site</option><option v-for="s in formSites" :key="s.SiteID" :value="String(s.SiteID)">{{s.SiteName}}</option></select></label><label>Period start<input v-model="form.PeriodStart" type="date" required></label><label>Period end<input v-model="form.PeriodEnd" type="date" required></label></div><p v-if="error" class="error">{{error}}</p><div class="modal-actions"><button class="secondary" type="button" @click="formOpen=false">Cancel</button><button class="primary" :disabled="saving">{{saving?'Saving…':'Save DTR'}}</button></div></form></div>
 <div v-if="summaryOpen&&summary" class="overlay" @click.self="summaryOpen=false"><section class="modal"><button class="close" @click="summaryOpen=false">×</button><h2>DTR Summary</h2><p><strong>{{summary.item.ClientName}}</strong> · {{summary.item.SiteName}}<br>{{formatDate(summary.item.PeriodStart)}}–{{formatDate(summary.item.PeriodEnd)}}</p><dl><div><dt>Employees</dt><dd>{{summary.summary.PeopleCount}}</dd></div><div><dt>Attendance entries</dt><dd>{{summary.summary.AttendanceCount}}</dd></div><div><dt>Regular hours</dt><dd>{{summary.summary.RegularHours}}</dd></div><div><dt>OT hours</dt><dd>{{summary.summary.OTHours}}</dd></div><div><dt>Night diff hours</dt><dd>{{summary.summary.NightDiffHours}}</dd></div></dl><div class="modal-actions"><button class="secondary" type="button" @click="summaryOpen=false">Close</button><button class="primary" type="button" @click="compactOpen=true">View compact DTR</button></div></section></div>
 <DtrCompactPrintView v-if="compactOpen&&summary" :data="summary" @close="compactOpen=false" />
+<DtrEmployeeAttendanceDetailsModal v-if="detailsData" :data="detailsData" @close="detailsData=null" />
 <DtrBtrModal v-if="btrWorkspace" :key="btrWorkspace.BatchID" :dtr="btrWorkspace" @close="btrWorkspace=null" @changed="load" /><DtrAttendanceWorkspace v-if="workspace" :dtr="workspace" @close="workspace=null" @changed="load" /><PayrollAdjustmentsPanel v-if="adjustmentDtr" :key="adjustmentDtr.BatchID" :target-dtr="adjustmentDtr" modal @close="adjustmentDtr=null" @changed="load" /></section></template>
 <style>
 .dtr-page { width: 100%; min-width: 0; max-width: 1420px; margin: 0 auto; container-type: inline-size; }

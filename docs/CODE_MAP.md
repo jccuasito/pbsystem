@@ -39,6 +39,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrAttendanceWorkspace.vue`
   - `app/components/DtrBtrModal.vue`
   - `app/components/DtrCompactPrintView.vue`
+  - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
@@ -133,6 +134,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrAttendanceWorkspace.vue`
   - `app/components/DtrBtrModal.vue`
   - `app/components/DtrCompactPrintView.vue`
+  - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
