@@ -7,8 +7,8 @@ type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-p
 type Config = { table: string; id: string; fields: string[]; listSql: string; lookups?: () => Promise<Record<string, unknown>> }
 
 const policyFields = ['NDEnabled', 'NDStartTime', 'NDEndTime', 'AutoBreakEnabled', 'DefaultBreakMinutes', 'GraceMinutes', 'LateAfterMinutes', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay', 'Status']
-const sitePolicyFields = ['NDEnabled', 'DayShiftNDEnabled', 'NDStartTime', 'NDEndTime', 'AutoBreakEnabled', 'DefaultBreakMinutes', 'RelieverPositionOverrideEnabled', 'GraceMinutes', 'LateAfterMinutes', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay', 'Status']
-const booleanFields = new Set(['NDEnabled', 'DayShiftNDEnabled', 'AutoBreakEnabled', 'RelieverPositionOverrideEnabled', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay'])
+const sitePolicyFields = ['NDEnabled', 'DayShiftNDEnabled', 'NDStartTime', 'NDEndTime', 'AutoBreakEnabled', 'DefaultBreakMinutes', 'RelieverPositionOverrideEnabled', 'AutoWDOEnabled', 'SundayWDOOTEnabled', 'GraceMinutes', 'LateAfterMinutes', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay', 'Status']
+const booleanFields = new Set(['NDEnabled', 'DayShiftNDEnabled', 'AutoBreakEnabled', 'RelieverPositionOverrideEnabled', 'AutoWDOEnabled', 'SundayWDOOTEnabled', 'ComputeLate', 'ComputeUndertime', 'ComputeOT', 'ComputeHoliday', 'ComputeRestDay'])
 const numberFields = new Set(['AgencyID', 'PositionID', 'RegionID', 'ClientID', 'SiteID', 'ShiftCodeID', 'DefaultBreakMinutes', 'GraceMinutes', 'LateAfterMinutes'])
 
 const activeAgencies = async () => { const [rows] = await pool.execute<any[]>('SELECT AgencyID, AgencyName FROM agency WHERE Status = \'Active\' ORDER BY AgencyName'); return { agencies: rows } }
@@ -43,6 +43,7 @@ function normalizeValue(field: string, value: unknown) {
     if (value === 'Active' || value === 'Inactive') return value
     throw createError({ statusCode: 400, statusMessage: 'Status must be Active or Inactive.' })
   }
+  if (field === 'AutoWDOEnabled' && value === undefined) return 1
   if (booleanFields.has(field)) return value === true || value === 1 || value === '1' ? 1 : 0
   if (field === 'WorkdayCount') {
     const count = Number(value === '' || value === undefined || value === null ? 1 : value)

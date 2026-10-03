@@ -22,7 +22,6 @@ const summaryFields = [
   ['OTExtHours', 'OT ext'],
   ['NightDiffHours', 'Night diff'],
   ['WDODays', 'WDO'],
-  ['RestDayHours', 'WDO hours'],
   ['RestDayOTHours', 'WDO OT'],
   ['LateHours', 'Late'],
   ['UndertimeHours', 'Under time'],
@@ -35,7 +34,7 @@ const summaryFields = [
   ['RestDaySpecialHolidayHours', 'WDO SH'],
   ['RestDaySpecialHolidayOTHours', 'WDO SHOT']
 ] as const
-const paidHourFields = summaryFields.map(([key]) => key).filter(key => !['WDODays', 'LateHours', 'UndertimeHours'].includes(key))
+const paidHourFields = [...summaryFields.map(([key]) => key).filter(key => !['WDODays', 'LateHours', 'UndertimeHours'].includes(key)), 'RestDayHours']
 const noWorkStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
 
 function dateOnly(value: unknown) {

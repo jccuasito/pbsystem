@@ -312,11 +312,13 @@ async function sitePolicyForBatch(connection: any, batch: any) {
       COALESCE(sp.DayShiftNDEnabled, 0) AS DayShiftNDEnabled,
       COALESCE(sp.AutoBreakEnabled, 0) AS AutoBreakEnabled,
       COALESCE(sp.DefaultBreakMinutes, 0) AS DefaultBreakMinutes,
-      COALESCE(sp.RelieverPositionOverrideEnabled, 0) AS RelieverPositionOverrideEnabled
+      COALESCE(sp.RelieverPositionOverrideEnabled, 0) AS RelieverPositionOverrideEnabled,
+      COALESCE(sp.AutoWDOEnabled, 1) AS AutoWDOEnabled,
+      COALESCE(sp.SundayWDOOTEnabled, 0) AS SundayWDOOTEnabled
     FROM site s
     LEFT JOIN site_policy sp ON sp.SiteID = s.SiteID AND sp.Status = 'Active'
     WHERE s.SiteID = ?`, [batch.SiteID])
-  return policy || { DayShiftNDEnabled: 0, AutoBreakEnabled: 0, DefaultBreakMinutes: 0, RelieverPositionOverrideEnabled: 0 }
+  return policy || { DayShiftNDEnabled: 0, AutoBreakEnabled: 0, DefaultBreakMinutes: 0, RelieverPositionOverrideEnabled: 0, AutoWDOEnabled: 1, SundayWDOOTEnabled: 0 }
 }
 
 function autoBreakHours(policy: any) {
@@ -355,7 +357,7 @@ function shiftNightDifferentialHours(timeIn: string | null, timeOut: string | nu
 export async function getDtrSitePolicy(event: any) {
   const session = requireSession(event); void session.sub
   const batch = await batchDetail(pool, batchId(event))
-  return { batch, policy: await sitePolicyForBatch(pool, batch) }
+  return { batch, policy: await sitePolicyForBatch(pool, batch), specialHolidays: await specialHolidayOptionsForBatch(pool, batch) }
 }
 
 export async function updateDtrSitePolicy(event: any) {
@@ -364,24 +366,43 @@ export async function updateDtrSitePolicy(event: any) {
   const dayShiftNDEnabled = optionalBoolean(body.DayShiftNDEnabled, 'Day shift Night Differential')
   const autoBreakEnabled = optionalBoolean(body.AutoBreakEnabled, 'Automatic break')
   const relieverPositionOverrideEnabled = optionalBoolean(body.RelieverPositionOverrideEnabled, 'Reliever position override')
+  const requestedAutoWDOEnabled = optionalBoolean(body.AutoWDOEnabled, 'Automatic WDO')
+  const requestedSundayWDOOTEnabled = optionalBoolean(body.SundayWDOOTEnabled, 'Sunday WDO OT')
+  const requestedSpecialHolidayIds = body.SpecialHolidayIDs
   if (dayShiftNDEnabled === null || autoBreakEnabled === null || relieverPositionOverrideEnabled === null || body.DefaultBreakMinutes === undefined) throw createError({ statusCode: 400, statusMessage: 'Day shift Night Differential, automatic break, reliever position override, and break minutes are required.' })
+  if (requestedSpecialHolidayIds !== undefined && !Array.isArray(requestedSpecialHolidayIds)) throw createError({ statusCode: 400, statusMessage: 'Special Holiday selections must be a list.' })
+  const specialHolidayIds = requestedSpecialHolidayIds === undefined ? null : [...new Set(requestedSpecialHolidayIds.map(value => positiveId(value, 'Special Holiday')))]
   const defaultBreakMinutes = wholeMinutes(body.DefaultBreakMinutes, 'Break minutes')
   if (autoBreakEnabled && defaultBreakMinutes === 0) throw createError({ statusCode: 400, statusMessage: 'Enter break minutes before enabling the automatic break.' })
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const currentPolicy = await sitePolicyForBatch(connection, batch)
+    const autoWDOEnabled = requestedAutoWDOEnabled ?? Number(currentPolicy.AutoWDOEnabled) === 1
+    const sundayWDOOTEnabled = requestedSundayWDOOTEnabled ?? Number(currentPolicy.SundayWDOOTEnabled) === 1
     await connection.execute(`INSERT INTO site_policy
-      (SiteID, NDEnabled, NDStartTime, NDEndTime, DayShiftNDEnabled, AutoBreakEnabled, DefaultBreakMinutes, RelieverPositionOverrideEnabled, GraceMinutes, LateAfterMinutes, ComputeLate, ComputeUndertime, ComputeOT, ComputeHoliday, ComputeRestDay, Status)
-      SELECT s.SiteID, COALESCE(v.NDEnabled, 0), v.NDStartTime, v.NDEndTime, ?, ?, ?, ?, COALESCE(v.GraceMinutes, 0), COALESCE(v.LateAfterMinutes, 0), COALESCE(v.ComputeLate, 1), COALESCE(v.ComputeUndertime, 1), COALESCE(v.ComputeOT, 1), COALESCE(v.ComputeHoliday, 1), COALESCE(v.ComputeRestDay, 1), 'Active'
+      (SiteID, NDEnabled, NDStartTime, NDEndTime, DayShiftNDEnabled, AutoBreakEnabled, DefaultBreakMinutes, RelieverPositionOverrideEnabled, AutoWDOEnabled, SundayWDOOTEnabled, GraceMinutes, LateAfterMinutes, ComputeLate, ComputeUndertime, ComputeOT, ComputeHoliday, ComputeRestDay, Status)
+      SELECT s.SiteID, COALESCE(v.NDEnabled, 0), v.NDStartTime, v.NDEndTime, ?, ?, ?, ?, ?, ?, COALESCE(v.GraceMinutes, 0), COALESCE(v.LateAfterMinutes, 0), COALESCE(v.ComputeLate, 1), COALESCE(v.ComputeUndertime, 1), COALESCE(v.ComputeOT, 1), COALESCE(v.ComputeHoliday, 1), COALESCE(v.ComputeRestDay, 1), 'Active'
       FROM site s LEFT JOIN vw_effective_site_policy v ON v.SiteID = s.SiteID
       WHERE s.SiteID = ?
-      ON DUPLICATE KEY UPDATE DayShiftNDEnabled = VALUES(DayShiftNDEnabled), AutoBreakEnabled = VALUES(AutoBreakEnabled), DefaultBreakMinutes = VALUES(DefaultBreakMinutes), RelieverPositionOverrideEnabled = VALUES(RelieverPositionOverrideEnabled), Status = 'Active'`,
-    [dayShiftNDEnabled ? 1 : 0, autoBreakEnabled ? 1 : 0, defaultBreakMinutes, relieverPositionOverrideEnabled ? 1 : 0, batch.SiteID])
+      ON DUPLICATE KEY UPDATE DayShiftNDEnabled = VALUES(DayShiftNDEnabled), AutoBreakEnabled = VALUES(AutoBreakEnabled), DefaultBreakMinutes = VALUES(DefaultBreakMinutes), RelieverPositionOverrideEnabled = VALUES(RelieverPositionOverrideEnabled), AutoWDOEnabled = VALUES(AutoWDOEnabled), SundayWDOOTEnabled = VALUES(SundayWDOOTEnabled), Status = 'Active'`,
+    [dayShiftNDEnabled ? 1 : 0, autoBreakEnabled ? 1 : 0, defaultBreakMinutes, relieverPositionOverrideEnabled ? 1 : 0, autoWDOEnabled ? 1 : 0, sundayWDOOTEnabled ? 1 : 0, batch.SiteID])
+    if (specialHolidayIds !== null) {
+      const availableSpecialHolidays = await specialHolidayOptionsForBatch(connection, batch)
+      const availableIds = new Set(availableSpecialHolidays.map(item => Number(item.HolidayID)))
+      if (specialHolidayIds.some(holidayId => !availableIds.has(holidayId))) throw createError({ statusCode: 400, statusMessage: 'Select only active Special Holidays within this cutoff.' })
+      if (availableIds.size) await connection.execute(`DELETE FROM site_special_holiday WHERE SiteID = ? AND HolidayID IN (${[...availableIds].map(() => '?').join(', ')})`, [batch.SiteID, ...availableIds])
+      for (const holidayId of specialHolidayIds) await connection.execute('INSERT INTO site_special_holiday (SiteID, HolidayID) VALUES (?, ?)', [batch.SiteID, holidayId])
+    }
     const policy = await sitePolicyForBatch(connection, batch)
     const recalculatedDayShiftRecords = await syncDayShiftNightDifferential(connection, batch, policy, session.sub)
+    await syncBatchHolidays(connection, batch, session.sub)
+    const [enrollments] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ?', [batch.BatchID])
+    for (const enrollment of enrollments) await syncAutoWdo(connection, batch, Number(enrollment.EmployeeID), policy)
+    const specialHolidays = await specialHolidayOptionsForBatch(connection, batch)
     await connection.commit()
-    return { success: true, policy, recalculatedDayShiftRecords }
+    return { success: true, policy, specialHolidays, recalculatedDayShiftRecords, recalculatedWdoEmployees: enrollments.length }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -529,23 +550,61 @@ async function syncAutomaticAttendanceStatuses(connection: PoolConnection, batch
 
 // WDO is a persisted payroll marker. The latest qualifying day(s) receive the
 // 14/15+ day marker, within the same transaction as attendance/status changes.
-async function syncAutoWdo(connection: any, batch: any, employeeId: number) {
+function automaticWdoCount(workedDays: number, enabled: unknown) {
+  if (Number(enabled) !== 1) return 0
+  return workedDays >= 15 ? 2 : workedDays >= 14 ? 1 : 0
+}
+
+function isSundayAttendanceDate(attendanceDate: unknown) {
+  const normalizedDate = databaseDate(attendanceDate)
+  return new Date(normalizedDate + 'T00:00:00Z').getUTCDay() === 0
+}
+
+function sundayWdoOtHours(attendanceDate: unknown, overtimeHours: unknown, overtimeExtensionHours: unknown, enabled: unknown) {
+  if (Number(enabled) !== 1) return 0
+  if (!isSundayAttendanceDate(attendanceDate)) return 0
+  const totalHours =
+    Math.max(0, Number(overtimeHours || 0)) +
+    Math.max(0, Number(overtimeExtensionHours || 0))
+  return Math.round(totalHours * 100) / 100
+}
+
+function wdoAttendanceIds(workedRows: any[], automaticCount: number, sundayWdoOtEnabled: unknown) {
+  const selected = new Set<number>()
+  if (Number(sundayWdoOtEnabled) === 1) {
+    for (const row of workedRows) if (isSundayAttendanceDate(row.AttendanceDate)) selected.add(Number(row.AttendanceID))
+  }
+  for (const row of workedRows) {
+    if (selected.size >= automaticCount) break
+    selected.add(Number(row.AttendanceID))
+  }
+  return [...selected]
+}
+
+async function syncAutoWdo(connection: any, batch: any, employeeId: number, suppliedPolicy?: any) {
+  const policy = suppliedPolicy || await sitePolicyForBatch(connection, batch)
+  await connection.execute('UPDATE attendance SET IsWDO = 0, RestDayOTHours = 0 WHERE BatchID = ? AND EmployeeID = ?', [batch.BatchID, employeeId])
   await syncAutomaticAttendanceStatuses(connection, batch, employeeId)
   const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
-  const [workedRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.WorkdayCount
+  const [workedRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate, at.WorkdayCount, at.RegularHours, at.OTHours, at.OTExtHours
     FROM attendance at
     WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate BETWEEN ? AND ?
     AND ${workedAttendanceCondition('at.')}
     ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC
     FOR UPDATE`, [batch.BatchID, employeeId, periodStart, periodEnd])
   const workedDays = workedRows.reduce((total, row) => total + Math.max(1, Number(row.WorkdayCount || 1)), 0)
-  const wdoCount = workedDays >= 15 ? 2 : workedDays >= 14 ? 1 : 0
-  await connection.execute('UPDATE attendance SET IsWDO = 0 WHERE BatchID = ? AND EmployeeID = ?', [batch.BatchID, employeeId])
-  if (wdoCount) {
-    const markerIds = workedRows.slice(0, wdoCount).map(row => Number(row.AttendanceID))
+  const wdoCount = automaticWdoCount(workedDays, policy.AutoWDOEnabled)
+  const markerIds = wdoAttendanceIds(workedRows, wdoCount, policy.SundayWDOOTEnabled)
+  if (markerIds.length) {
     await connection.execute(`UPDATE attendance SET IsWDO = 1 WHERE AttendanceID IN (${markerIds.map(() => '?').join(', ')})`, markerIds)
   }
-  return wdoCount
+  if (Number(policy.SundayWDOOTEnabled) === 1) {
+    for (const row of workedRows) {
+      const wdoOtHours = sundayWdoOtHours(row.AttendanceDate, row.OTHours, row.OTExtHours, policy.SundayWDOOTEnabled)
+      if (wdoOtHours) await connection.execute('UPDATE attendance SET RestDayOTHours = ? WHERE AttendanceID = ?', [wdoOtHours, row.AttendanceID])
+    }
+  }
+  return markerIds.length
 }
 
 export async function listDtrRecords(event: any) {
@@ -559,7 +618,7 @@ export async function listDtrRecords(event: any) {
     await attachPendingEmployeeStatuses(connection, batch, session.sub)
     await syncBatchHolidays(connection, batch, session.sub)
     await syncAutomaticAttendanceStatuses(connection, batch)
-    const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd))
+    const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd), Number(batch.SiteID))
     const [policy, [records], [shifts], [attendanceRows], [dutyRows], [workPositions]] = await Promise.all([sitePolicyForBatch(connection, batch), connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, ed.StartDate AS DeploymentStartDate, ed.EndDate AS DeploymentEndDate, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
@@ -768,14 +827,40 @@ function cutoffDates(start: unknown, end: unknown) {
 
 type ActiveHoliday = { HolidayID: number; HolidayName: string; HolidayType: 'Legal' | 'Special' }
 
-async function activeHolidaysByDate(connection: any, dates: string[]) {
+async function specialHolidayOptionsForBatch(connection: any, batch: any) {
+  const dates = cutoffDates(batch.PeriodStart, batch.PeriodEnd)
+  if (!dates.length) return []
+  const [rows] = await connection.execute<any[]>(`SELECT h.HolidayID, h.HolidayName, h.HolidayDate, h.Recurring,
+      CASE WHEN ssh.SiteSpecialHolidayID IS NULL THEN 0 ELSE 1 END AS Enabled
+    FROM holiday h
+    LEFT JOIN site_special_holiday ssh ON ssh.HolidayID = h.HolidayID AND ssh.SiteID = ?
+    WHERE h.Status = 'Active' AND h.HolidayType = 'Special'
+    ORDER BY h.HolidayDate, h.HolidayName`, [batch.SiteID])
+  const options: any[] = []
+  for (const attendanceDate of dates) {
+    const monthDay = attendanceDate.slice(5)
+    for (const holiday of rows) {
+      const holidayDate = databaseDate(holiday.HolidayDate)
+      if (holidayDate !== attendanceDate && !(Number(holiday.Recurring) === 1 && holidayDate.slice(5) === monthDay)) continue
+      options.push({ HolidayID: Number(holiday.HolidayID), HolidayName: String(holiday.HolidayName), AttendanceDate: attendanceDate, Enabled: Number(holiday.Enabled) })
+    }
+  }
+  return options
+}
+
+async function activeHolidaysByDate(connection: any, dates: string[], siteId?: number) {
   const [rows] = await connection.execute<any[]>(`SELECT HolidayID, HolidayName, HolidayDate, HolidayType, Recurring
     FROM holiday WHERE Status = 'Active'`)
+  const enabledSpecialHolidayIds = new Set<number>()
+  if (siteId) {
+    const [siteRows] = await connection.execute<any[]>('SELECT HolidayID FROM site_special_holiday WHERE SiteID = ?', [siteId])
+    for (const row of siteRows) enabledSpecialHolidayIds.add(Number(row.HolidayID))
+  }
   const result = new Map<string, ActiveHoliday>()
   for (const attendanceDate of dates) {
     const monthDay = attendanceDate.slice(5)
     const match = rows
-      .filter(holiday => databaseDate(holiday.HolidayDate) === attendanceDate || (Number(holiday.Recurring) === 1 && databaseDate(holiday.HolidayDate).slice(5) === monthDay))
+      .filter(holiday => (holiday.HolidayType === 'Legal' || !siteId || enabledSpecialHolidayIds.has(Number(holiday.HolidayID))) && (databaseDate(holiday.HolidayDate) === attendanceDate || (Number(holiday.Recurring) === 1 && databaseDate(holiday.HolidayDate).slice(5) === monthDay)))
       .sort((left, right) => {
         const leftExact = databaseDate(left.HolidayDate) === attendanceDate ? 0 : 1
         const rightExact = databaseDate(right.HolidayDate) === attendanceDate ? 0 : 1
@@ -832,7 +917,7 @@ async function syncBatchHolidays(connection: Pick<PoolConnection, 'execute'>, ba
   if (batch.Status !== 'Draft') return 0
   const dates = cutoffDates(batch.PeriodStart, batch.PeriodEnd)
   if (!dates.length) return 0
-  const holidays = await activeHolidaysByDate(connection, dates)
+  const holidays = await activeHolidaysByDate(connection, dates, Number(batch.SiteID))
   const [attendanceRows] = await connection.execute<any[]>(`SELECT AttendanceID, EmployeeID, AttendanceDate, AttendanceStatus, TimeIn, TimeOut, HolidayID, WorkdayCount,
     ${hourColumns.join(', ')} FROM attendance WHERE BatchID = ? FOR UPDATE`, [batch.BatchID])
   const [enrollments] = await connection.execute<any[]>('SELECT EmployeeID, DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ?', [batch.BatchID])
@@ -918,7 +1003,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, periodStart, periodEnd])
     const currentByDate = new Map(currentRows.map(row => [databaseDate(row.AttendanceDate), row]))
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
-    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd))
+    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd), Number(batch.SiteID))
     let changed = 0, preservedEmployeeStatusDays = 0
     for (const attendanceDate of cutoffDates(periodStart, periodEnd)) {
       const shiftTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
@@ -1043,7 +1128,7 @@ async function importDtrAttendanceRows(event: any, body: { Rows?: unknown }, ses
     const enrollmentById = new Map(enrollments.map((row: any) => [Number(row.EmployeeID), row]))
     const enrollmentByNumber = new Map(enrollments.filter((row: any) => importKey(row.EmployeeNumber)).map((row: any) => [importKey(row.EmployeeNumber), row]))
     const shiftByCode = new Map(shiftRows.map((row: any) => [importKey(row.ShiftCode), row]))
-    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd))
+    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd), Number(batch.SiteID))
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const affectedEmployeeIds = new Set<number>()
     const issues: { row: number; reason: string }[] = []
@@ -1196,7 +1281,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
     const enrollmentById = new Map(enrollments.map((row: any) => [Number(row.EmployeeID), row]))
     const enrollmentByNumber = new Map(enrollments.filter((row: any) => importKey(row.EmployeeNumber)).map((row: any) => [importKey(row.EmployeeNumber), row]))
     const shiftByCode = new Map(shiftRows.map((row: any) => [importKey(row.ShiftCode), row]))
-    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd))
+    const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd), Number(batch.SiteID))
     const clearedDutyAttendanceIds = new Set<number>(), affectedEmployeeIds = new Set<number>()
     const preservedEmployeeStatusDates = new Set<string>()
     const issues: { row: number; reason: string }[] = []
@@ -1364,7 +1449,7 @@ export async function createDtrAttendance(event: any) {
     const baseValues = noWorkStatus
       ? hourColumns.map(() => 0)
       : body.ApplySitePolicy === true && shift && !previewAlreadyApplied ? applyAutoBreak(manualValues, policy) : manualValues
-    const matchingHolidays = await activeHolidaysByDate(connection, [attendanceDate])
+    const matchingHolidays = await activeHolidaysByDate(connection, [attendanceDate], Number(batch.SiteID))
     const holiday = holidayHours(baseValues, attendanceStatus, timeIn, timeOut, matchingHolidays.get(attendanceDate))
     const values = holiday.values
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
