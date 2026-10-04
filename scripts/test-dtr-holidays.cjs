@@ -11,8 +11,8 @@ vm.runInNewContext(transformSync(fs.readFileSync('server/utils/dtrCrud.ts', 'utf
 const { holidayHours, hourColumns, syncBatchHolidays, previousHolidayDate, workedAttendanceCondition } = moduleState.exports.holidays
 const legal = { HolidayID: 1, HolidayName: 'Test LH', HolidayType: 'Legal' }
 const special = { ...legal, HolidayID: 2, HolidayType: 'Special' }
-function allocation(fields, status, holiday, eligible = false) {
-  const result = holidayHours(hourColumns.map(key => fields[key] || 0), status, null, null, holiday, eligible)
+function allocation(fields, status, holiday, eligible = false, sundayWdoOtApplies = false) {
+  const result = holidayHours(hourColumns.map(key => fields[key] || 0), status, null, null, holiday, eligible, sundayWdoOtApplies)
   return { ...result, hours: Object.fromEntries(hourColumns.map((key, i) => [key, result.values[i]])) }
 }
 
@@ -40,9 +40,29 @@ test('worked LH and SH use recorded hours and OT, with one daily holiday allocat
     const straight = allocation({ RegularHours: 16, OTHours: 8, OTExtHours: 2 }, 'Present', holiday)
     assert.equal(straight.hours[prefix + 'Hours'], 8)
     assert.equal(straight.hours[prefix + 'OTHours'], 4)
+    const extension = allocation({ RegularHours: 8, OTHours: 2, OTExtHours: 2 }, 'Present', holiday)
+    assert.equal(extension.hours[prefix + 'OTHours'], 2)
   }
   assert.equal(previousHolidayDate('2026-09-01'), '2026-08-31')
   assert.equal(previousHolidayDate('2028-03-01'), '2028-02-29')
+})
+
+test('Sunday WDO OT moves worked Special Holiday credit to rest-day special fields only when enabled', () => {
+  const hours = { RegularHours: 8, OTHours: 4, OTExtHours: 2 }
+  const enabled = allocation(hours, 'Present', special, false, true).hours
+  assert.equal(enabled.RestDaySpecialHolidayHours, 8)
+  assert.equal(enabled.RestDaySpecialHolidayOTHours, 4)
+  assert.equal(enabled.SpecialHolidayHours, 0)
+  assert.equal(enabled.SpecialHolidayOTHours, 0)
+  const disabled = allocation(hours, 'Present', special).hours
+  assert.equal(disabled.SpecialHolidayHours, 8)
+  assert.equal(disabled.SpecialHolidayOTHours, 4)
+  assert.equal(disabled.RestDaySpecialHolidayHours, 0)
+  const sundayLegal = allocation(hours, 'Present', legal, false, true).hours
+  assert.equal(sundayLegal.LegalHolidayHours, 8)
+  assert.equal(sundayLegal.LegalHolidayOTHours, 4)
+  assert.equal(sundayLegal.RestDayLegalHolidayHours, 0)
+  assert.equal(allocation(hours, 'Absent', special, false, true).hours.RestDaySpecialHolidayHours, 0)
 })
 
 test('paid unworked LH appears in totals only, with a blank cell and no worked days, OT, or WDO', () => {
@@ -57,7 +77,7 @@ test('paid unworked LH appears in totals only, with a blank cell and no worked d
   const context = { ...vue, onMounted() {}, defineProps: () => ({ dtr: {} }), defineEmits: () => () => {}, require: () => status.exports, module: { exports: {} } }
   const scope = vue.effectScope()
   try {
-    scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports={cellText,cellSub,dayCellClass,isWorkedDay,totalDays,wdoDays,attendanceRows,summaryValue};', { loader: 'ts', format: 'cjs' }).code, context))
+    scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports={cellText,cellSub,dayCellClass,isWorkedDay,totalDays,wdoDays,attendanceRows,summaryValue,holidays,sitePolicy,dayForm,syncHolidayHours};', { loader: 'ts', format: 'cjs' }).code, context))
     const ui = context.module.exports
     const paid = { EmployeeID: 1, AttendanceDate: '2026-08-31', AttendanceStatus: 'Absent', LegalHolidayHours: 8, LegalHolidayOTHours: 0, WorkdayCount: 1, IsWDO: 0 }
     ui.attendanceRows.value = [paid]
@@ -73,6 +93,35 @@ test('paid unworked LH appears in totals only, with a blank cell and no worked d
     const worked = { ...paid, AttendanceStatus: 'Present', RegularHours: 8, OTHours: 4, LegalHolidayOTHours: 4 }
     assert.equal(ui.cellText(worked), '8.00')
     assert.equal(ui.cellSub(worked), '4.00')
+    ui.holidays.value = [{ AttendanceDate: '2026-09-09', HolidayID: 2, HolidayName: 'Test SH', HolidayType: 'Special' }]
+    ui.dayForm.value = { AttendanceDate: '2026-09-09', AttendanceStatus: 'Present', RegularHours: 8, OTHours: 2, OTExtHours: 3, LegalHolidayHours: 8, LegalHolidayOTHours: 4, RestDayLegalHolidayHours: 8, SpecialHolidayHours: 0, SpecialHolidayOTHours: 0, RestDaySpecialHolidayOTHours: 3 }
+    ui.syncHolidayHours()
+    assert.equal(ui.dayForm.value.LegalHolidayHours, 0)
+    assert.equal(ui.dayForm.value.LegalHolidayOTHours, 0)
+    assert.equal(ui.dayForm.value.SpecialHolidayHours, 8)
+    assert.equal(ui.dayForm.value.SpecialHolidayOTHours, 2)
+    assert.equal(ui.dayForm.value.RestDayLegalHolidayHours, 0)
+    assert.equal(ui.dayForm.value.RestDaySpecialHolidayOTHours, 0)
+    ui.holidays.value = [{ AttendanceDate: '2026-09-10', HolidayID: 1, HolidayName: 'Test LH', HolidayType: 'Legal' }]
+    ui.dayForm.value.AttendanceDate = '2026-09-10'
+    ui.dayForm.value.RegularHours = 6
+    ui.dayForm.value.OTHours = 1
+    ui.syncHolidayHours()
+    assert.equal(ui.dayForm.value.LegalHolidayHours, 6)
+    assert.equal(ui.dayForm.value.LegalHolidayOTHours, 1)
+    assert.equal(ui.dayForm.value.SpecialHolidayHours, 0)
+    assert.equal(ui.dayForm.value.SpecialHolidayOTHours, 0)
+    ui.sitePolicy.value.SundayWDOOTEnabled = 1
+    ui.holidays.value = [{ AttendanceDate: '2026-09-13', HolidayID: 2, HolidayName: 'Sunday SH', HolidayType: 'Special' }]
+    ui.dayForm.value.AttendanceDate = '2026-09-13'
+    ui.dayForm.value.RegularHours = 8
+    ui.dayForm.value.OTHours = 4
+    ui.dayForm.value.OTExtHours = 2
+    ui.syncHolidayHours()
+    assert.equal(ui.dayForm.value.RestDaySpecialHolidayHours, 8)
+    assert.equal(ui.dayForm.value.RestDaySpecialHolidayOTHours, 4)
+    assert.equal(ui.dayForm.value.SpecialHolidayHours, 0)
+    assert.equal(ui.dayForm.value.SpecialHolidayOTHours, 0)
   } finally { scope.stop() }
 })
 

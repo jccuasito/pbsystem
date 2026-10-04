@@ -170,7 +170,7 @@ export async function computeDtr(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[current]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
+    const [[current]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, SiteID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
     if (current.Status === 'Locked' || current.Status === 'Approved') throw createError({ statusCode: 409, statusMessage: 'This DTR is locked and cannot be computed.' })
     await syncBatchHolidays(connection, current, session.sub)
@@ -902,7 +902,7 @@ function previousHolidayDate(value: string) {
   return day.toISOString().slice(0, 10)
 }
 
-function holidayHours(values: number[], attendanceStatus: string, timeIn: string | null, timeOut: string | null, holiday?: ActiveHoliday, eligibleUnworked = false) {
+function holidayHours(values: number[], attendanceStatus: string, timeIn: string | null, timeOut: string | null, holiday?: ActiveHoliday, eligibleUnworked = false, sundayWdoOtApplies = false) {
   const result = [...values]
   for (const column of holidayHourColumns) result[hourColumns.indexOf(column)] = 0
   const hasWork = hasHolidayWork(result, attendanceStatus, timeIn, timeOut)
@@ -917,13 +917,15 @@ function holidayHours(values: number[], attendanceStatus: string, timeIn: string
   // can contain two duty lines, but it must not turn one LH/SH into two paid
   // holiday days. The daily holiday allocation is therefore one 8/4 set.
   const regularHours = Math.min(8, Number(result[hourColumns.indexOf('RegularHours')] || 0))
-  const overtimeHours = Math.min(4, Number(result[hourColumns.indexOf('OTHours')] || 0) + Number(result[hourColumns.indexOf('OTExtHours')] || 0))
+  const overtimeHours = Math.min(4, Number(result[hourColumns.indexOf('OTHours')] || 0))
   if (holiday.HolidayType === 'Legal') {
     result[hourColumns.indexOf('LegalHolidayHours')] = regularHours
     result[hourColumns.indexOf('LegalHolidayOTHours')] = overtimeHours
   } else {
-    result[hourColumns.indexOf('SpecialHolidayHours')] = regularHours
-    result[hourColumns.indexOf('SpecialHolidayOTHours')] = overtimeHours
+    const hoursColumn = sundayWdoOtApplies ? 'RestDaySpecialHolidayHours' : 'SpecialHolidayHours'
+    const overtimeColumn = sundayWdoOtApplies ? 'RestDaySpecialHolidayOTHours' : 'SpecialHolidayOTHours'
+    result[hourColumns.indexOf(hoursColumn)] = regularHours
+    result[hourColumns.indexOf(overtimeColumn)] = overtimeHours
   }
   return { values: result, holidayId: holiday.HolidayID, paidUnworked: false }
 }
@@ -933,6 +935,7 @@ async function syncBatchHolidays(connection: Pick<PoolConnection, 'execute'>, ba
   if (batch.Status !== 'Draft') return 0
   const dates = cutoffDates(batch.PeriodStart, batch.PeriodEnd)
   if (!dates.length) return 0
+  const sundayWdoOtEnabled = batch.SiteID && Number((await sitePolicyForBatch(connection, batch)).SundayWDOOTEnabled) === 1
   const holidays = await activeHolidaysByDate(connection, dates, Number(batch.SiteID))
   const [attendanceRows] = await connection.execute<any[]>(`SELECT AttendanceID, EmployeeID, AttendanceDate, AttendanceStatus, TimeIn, TimeOut, HolidayID, WorkdayCount,
     ${hourColumns.join(', ')} FROM attendance WHERE BatchID = ? FOR UPDATE`, [batch.BatchID])
@@ -964,7 +967,7 @@ async function syncBatchHolidays(connection: Pick<PoolConnection, 'execute'>, ba
   }
   for (const row of attendanceRows) {
     const values = hourColumns.map(column => Number(row[column] || 0))
-    const next = holidayHours(values, normalizeAttendanceStatus(row.AttendanceStatus), row.TimeIn, row.TimeOut, holidays.get(databaseDate(row.AttendanceDate)), eligible(Number(row.EmployeeID), databaseDate(row.AttendanceDate)))
+    const next = holidayHours(values, normalizeAttendanceStatus(row.AttendanceStatus), row.TimeIn, row.TimeOut, holidays.get(databaseDate(row.AttendanceDate)), eligible(Number(row.EmployeeID), databaseDate(row.AttendanceDate)), sundayWdoOtEnabled && isSundayAttendanceDate(row.AttendanceDate))
     // Existing explicit non-work statuses are retained. An empty Present or
     // Holiday placeholder must not become an actual worked day through LH pay.
     const status = next.paidUnworked && !noWorkAttendanceStatuses.has(normalizeAttendanceStatus(row.AttendanceStatus)) ? 'Absent' : normalizeAttendanceStatus(row.AttendanceStatus)
