@@ -151,14 +151,31 @@ export async function deleteDtr(event: any) {
   const id = batchId(event); const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[current]] = await connection.execute<any[]>('SELECT Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
+    const [[current]] = await connection.execute<any[]>('SELECT Status, PeriodStart, PeriodEnd FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
     if (current.Status !== 'Draft') throw createError({ statusCode: 409, statusMessage: 'Only Draft DTRs can be deleted.' })
+    // Only deployments created for this cutoff may leave the fixed timeline.
+    // A real, pre-existing deployment can be shared by many DTRs and must survive.
+    const [createdDeployments] = await connection.execute<any[]>(`SELECT ed.DeploymentID
+      FROM attendance_dtr_employee de INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+      WHERE de.BatchID = ? AND DATE(ed.StartDate) = DATE(?)
+        AND ed.Remarks IN ('Created from DTR attendance assignment', 'Set as permanent from DTR assignment')
+      FOR UPDATE`, [id, current.PeriodStart])
     const [preservedResult] = await connection.execute<any>(`UPDATE attendance SET BatchID = NULL, UpdatedBy = ?
       WHERE BatchID = ? AND AttendanceStatus IN (${employeeStatusAttendanceStatuses.map(() => '?').join(', ')})`, [session.sub, id, ...employeeStatusAttendanceStatuses])
     const [attendanceResult] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ?', [id])
     await connection.execute<any>('DELETE FROM attendance_dtr WHERE BatchID = ?', [id])
-    await connection.commit(); return { success: true, deleted: true, deletedAttendanceRows: attendanceResult.affectedRows, preservedEmployeeStatusDays: preservedResult.affectedRows }
+    let removedDtrCreatedDeployments = 0
+    for (const deployment of createdDeployments) {
+      const [result] = await connection.execute<any>(`UPDATE employee_deployment ed
+        SET ed.IsPermanentSite = 0, ed.EndDate = COALESCE(ed.EndDate, DATE(?))
+        WHERE ed.DeploymentID = ?
+          AND NOT EXISTS (SELECT 1 FROM attendance_dtr_employee de WHERE de.DeploymentID = ed.DeploymentID)
+          AND NOT EXISTS (SELECT 1 FROM attendance at WHERE at.DeploymentID = ed.DeploymentID)`,
+      [current.PeriodEnd, deployment.DeploymentID])
+      removedDtrCreatedDeployments += result.affectedRows
+    }
+    await connection.commit(); return { success: true, deleted: true, deletedAttendanceRows: attendanceResult.affectedRows, preservedEmployeeStatusDays: preservedResult.affectedRows, removedDtrCreatedDeployments }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -488,14 +505,32 @@ async function applyWorkPositionDates(connection: any, batch: any, employeeId: n
 
 async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, employeeId: number, deploymentType: 'Regular' | 'Reliever', currentDeploymentId: number | null, createdBy: unknown) {
   const rate = await matchingDtrRate(connection, employeeId, batch)
+  const [[otherFixed]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
+    WHERE EmployeeID = ? AND IsPermanentSite = 1 AND StartDate <= ?
+      AND (EndDate IS NULL OR EndDate >= ?)
+      AND (SiteID <> ? OR SiteRateID <> ?)
+    ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`,
+  [employeeId, batch.PeriodEnd, batch.PeriodStart, batch.SiteID, rate.SiteRateID])
+  if (otherFixed) {
+    throw createError({ statusCode: 409, statusMessage: 'This employee already has a fixed deployment during this cutoff. Use Deployment History to change their permanent site.' })
+  }
+  // A backdated cutoff cannot turn into an ongoing assignment across a later
+  // original deployment. Its fixed period ends immediately before that move.
+  const [[nextPermanent]] = await connection.execute<any[]>(`SELECT StartDate FROM employee_deployment
+    WHERE EmployeeID = ? AND IsPermanentSite = 1 AND StartDate > ?
+    ORDER BY StartDate ASC, DeploymentID ASC LIMIT 1 FOR UPDATE`, [employeeId, batch.PeriodStart])
+  const nextPermanentStart = nextPermanent ? databaseDate(nextPermanent.StartDate) : null
+  if (nextPermanentStart && nextPermanentStart <= databaseDate(batch.PeriodEnd)) {
+    throw createError({ statusCode: 409, statusMessage: 'A later fixed deployment already starts within this DTR cutoff.' })
+  }
   const [[existingPermanent]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
     WHERE EmployeeID = ? AND SiteRateID = ? AND SiteID = ? AND IsPermanentSite = 1
       AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= DATE_SUB(?, INTERVAL 1 DAY))
     ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, rate.SiteRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
   if (existingPermanent) {
     await connection.execute(`UPDATE employee_deployment
-      SET DeploymentType = ?, EndDate = NULL
-      WHERE DeploymentID = ?`, [deploymentType, existingPermanent.DeploymentID])
+      SET DeploymentType = ?, EndDate = CASE WHEN ? IS NULL THEN NULL ELSE DATE_SUB(?, INTERVAL 1 DAY) END
+      WHERE DeploymentID = ?`, [deploymentType, nextPermanentStart, nextPermanentStart, existingPermanent.DeploymentID])
     return Number(existingPermanent.DeploymentID)
   }
 
@@ -504,8 +539,9 @@ async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, em
       WHERE DeploymentID = ? AND EmployeeID = ? FOR UPDATE`, [currentDeploymentId, employeeId])
     if (currentDeployment && String(currentDeployment.Remarks || '').includes('Created from DTR attendance assignment')) {
       await connection.execute(`UPDATE employee_deployment
-        SET IsPermanentSite = 1, DeploymentType = ?, EndDate = NULL, Remarks = 'Set as permanent from DTR assignment'
-        WHERE DeploymentID = ?`, [deploymentType, currentDeployment.DeploymentID])
+        SET IsPermanentSite = 1, DeploymentType = ?, EndDate = CASE WHEN ? IS NULL THEN NULL ELSE DATE_SUB(?, INTERVAL 1 DAY) END,
+          Remarks = 'Set as permanent from DTR assignment'
+        WHERE DeploymentID = ?`, [deploymentType, nextPermanentStart, nextPermanentStart, currentDeployment.DeploymentID])
       await connection.execute(`UPDATE employee_deployment
         SET EndDate = DATE_SUB(?, INTERVAL 1 DAY)
         WHERE EmployeeID = ? AND IsPermanentSite = 1 AND DeploymentID <> ?
@@ -519,7 +555,8 @@ async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, em
     WHERE EmployeeID = ? AND IsPermanentSite = 1 AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)`, [batch.PeriodStart, employeeId, batch.PeriodStart, batch.PeriodStart])
   const [result] = await connection.execute<any>(`INSERT INTO employee_deployment
     (EmployeeID, SiteRateID, SiteID, DeploymentType, IsPermanentSite, StartDate, EndDate, Remarks, CreatedBy)
-    VALUES (?, ?, ?, ?, 1, ?, NULL, 'Set as permanent from DTR assignment', ?)`, [employeeId, rate.SiteRateID, batch.SiteID, deploymentType, batch.PeriodStart, createdBy])
+    VALUES (?, ?, ?, ?, 1, ?, CASE WHEN ? IS NULL THEN NULL ELSE DATE_SUB(?, INTERVAL 1 DAY) END,
+      'Set as permanent from DTR assignment', ?)`, [employeeId, rate.SiteRateID, batch.SiteID, deploymentType, batch.PeriodStart, nextPermanentStart, nextPermanentStart, createdBy])
   return Number(result.insertId)
 }
 function assertEditableBatch(batch: any) {
@@ -801,17 +838,23 @@ export async function updateDtrEmployeeType(event: any) {
       await connection.execute('UPDATE attendance_dtr_employee SET DeploymentID = ?, IsPermanentSite = 1 WHERE BatchID = ? AND EmployeeID = ?', [deploymentId, id, employeeId])
       await syncPermanentSiteEmployees(connection, batch, session.sub)
     } else if (isPermanentSite === false) {
-      const [deploymentResult] = await connection.execute<any>(`UPDATE employee_deployment
-        SET IsPermanentSite = CASE WHEN StartDate >= ? THEN 0 ELSE IsPermanentSite END,
-          EndDate = CASE
-            WHEN StartDate < ? AND (EndDate IS NULL OR EndDate > DATE_SUB(?, INTERVAL 1 DAY)) THEN DATE_SUB(?, INTERVAL 1 DAY)
-            WHEN StartDate >= ? THEN ?
-            ELSE EndDate
-          END,
-          Remarks = CASE WHEN Remarks IS NULL OR Remarks = '' THEN 'Set to cutoff-only from DTR assignment' ELSE Remarks END
-        WHERE DeploymentID = ? AND EmployeeID = ?`, [batch.PeriodStart, batch.PeriodStart, batch.PeriodStart, batch.PeriodStart, batch.PeriodStart, batch.PeriodEnd, deploymentId, employeeId])
-      if (!deploymentResult.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee deployment was not found.' })
+      const [[deployment]] = await connection.execute<any[]>(`SELECT DeploymentID, StartDate, Remarks FROM employee_deployment
+        WHERE DeploymentID = ? AND EmployeeID = ? FOR UPDATE`, [deploymentId, employeeId])
+      if (!deployment) throw createError({ statusCode: 404, statusMessage: 'Employee deployment was not found.' })
       await connection.execute('UPDATE attendance_dtr_employee SET IsPermanentSite = 0 WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
+      // The switch is a cutoff snapshot. Never shorten or relabel an original
+      // fixed deployment merely because one DTR enrollment is cutoff-only.
+      if (databaseDate(deployment.StartDate) === databaseDate(batch.PeriodStart)
+        && ['Created from DTR attendance assignment', 'Set as permanent from DTR assignment'].includes(String(deployment.Remarks || ''))) {
+        await connection.execute(`UPDATE employee_deployment ed
+          SET ed.IsPermanentSite = 0, ed.EndDate = DATE(?)
+          WHERE ed.DeploymentID = ?
+            AND NOT EXISTS (SELECT 1 FROM attendance_dtr_employee de
+              WHERE de.DeploymentID = ed.DeploymentID AND de.BatchID <> ?)
+            AND NOT EXISTS (SELECT 1 FROM attendance at
+              WHERE at.DeploymentID = ed.DeploymentID AND at.BatchID <> ?)`,
+        [batch.PeriodEnd, deploymentId, id, id])
+      }
     }
     if (deploymentType) {
       await connection.execute('UPDATE attendance_dtr_employee SET AttendanceType = ? WHERE BatchID = ? AND EmployeeID = ?', [deploymentType, id, employeeId])
