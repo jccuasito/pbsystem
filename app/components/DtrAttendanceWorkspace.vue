@@ -75,7 +75,7 @@ function shiftTag(row:Row){const labels:{[key:string]:string}={Day:'DS',Night:'N
 function dayCellClass(row:Row,record:any){if(isPaidUnworkedLh(record))return '';if(!record||normalizeAttendanceStatus(record.AttendanceStatus)==='Rest Day')return '';if(Number(record.IsStraightDuty)===1)return 'shift-ss';if(row.DefaultShiftCodeID&&String(record.ShiftCodeID)===String(row.DefaultShiftCodeID))return '';const shiftType=String(record.ShiftType||'').toUpperCase();return shiftType==='DS'?'shift-ds':shiftType==='NS'?'shift-ns':shiftType==='SS'?'shift-ss':''}
 function isPaidUnworkedLh(record:any){return !!record&&noWorkAttendanceStatuses.has(normalizeAttendanceStatus(record.AttendanceStatus))&&Number(record.LegalHolidayHours||0)>0}
 function cellText(record:any){if(!record)return '-';if(isPaidUnworkedLh(record))return '';const status=normalizeAttendanceStatus(record.AttendanceStatus),labels:Record<string,string>={Absent:'A','On-Leave':'OL','Vacation Leave':'VL','Rest Day':'RD',Reliever:'REL','Sick Leave':'SL'};if(noWorkAttendanceStatuses.has(status))return labels[status]||status;const regular=Number(record.RegularHours||0),rest=Number(record.RestDayHours||0),holiday=Number(record.LegalHolidayHours||0)+Number(record.SpecialHolidayHours||0);if(status==='Holiday'&&!regular&&!rest&&!holiday)return 'H';return regular||rest||holiday?formatNumber(regular||rest||holiday):''}
-function cellSub(record:any){if(!record)return 'Click to add';if(isPaidUnworkedLh(record))return '';const status=normalizeAttendanceStatus(record.AttendanceStatus);if(noWorkAttendanceStatuses.has(status))return status;const ot=Number(record.OTHours||0)+Number(record.OTExtHours||0);return ot?formatNumber(ot):(status!=='Present'?status:'')}
+function cellSub(record:any){if(!record)return 'Click to add';if(isPaidUnworkedLh(record))return '';const status=normalizeAttendanceStatus(record.AttendanceStatus);if(noWorkAttendanceStatuses.has(status))return '';const ot=Number(record.OTHours||0)+Number(record.OTExtHours||0);return ot?formatNumber(ot):(status!=='Present'?status:'')}
 function blankDay(row:Row,date:string){const item:any={EmployeeID:row.EmployeeID,AttendanceDate:date,ShiftCodeID:'',WorkAgencyPositionID:'',WorkPositionApplyThrough:'',AttendanceStatus:'Present',AttendanceType:row.DeploymentType||'Regular',TimeIn:'',TimeOut:'',Remarks:'',LateHours:0,UndertimeHours:0,LateMinutes:0,UndertimeMinutes:0};hourFields.forEach(([key])=>item[key]=0);return item}
 function autoBreakHours(){return Number(sitePolicy.value.AutoBreakEnabled)===1?Math.round(Math.max(0,Number(sitePolicy.value.DefaultBreakMinutes||0))/60*100)/100:0}
 function applyPolicyBreak(form:any){const breakHours=autoBreakHours();form.BreakHours=breakHours;if(!breakHours)return;let remaining=breakHours;for(const key of ['OTHours','RegularHours','OTExtHours']){const deduction=Math.min(Math.max(0,Number(form[key]||0)),remaining);form[key]=Math.round((Number(form[key]||0)-deduction)*100)/100;remaining=Math.round((remaining-deduction)*100)/100;if(!remaining)break}}
@@ -218,9 +218,9 @@ onMounted(load)
       <div class="reliever-settings-row"><button class="secondary" type="button" @click="openRelieverSettings">Reliever position settings</button><small>Enable position/rate overrides for this site, then use the transfer icon per employee to assign a position for selected dates.</small></div>
       <p class="hint">Click any day cell to add or update that employee's attendance for that date.</p><p v-if="error" class="error">{{error}}</p>
       <p class="attendance-status-legend"><span v-for="status in attendanceStatuses.filter(item=>item!=='Present')" :key="status"><i :class="`legend-${status.toLowerCase().replace(/[^a-z]+/g,'-')}`"></i>{{status}}</span></p>
-      <div class="table-wrap"><table class="cutoff-table"><thead><tr><th v-if="Number(sitePolicy.RelieverPositionOverrideEnabled)===1" class="reliever-action" rowspan="2" title="Reliever Position">RP</th><th class="row-number" rowspan="2">No.</th><th class="person" rowspan="2">Name of personnel</th><th rowspan="2">Position</th><th rowspan="2">Type</th><th rowspan="2">Shift</th><th v-for="date in dates()" :key="date" :class="['day-head',{'holiday-day-head':holidayAt(date)}]" :title="holidayAt(date)?.HolidayName">{{dayOfMonth(date)}}<small v-if="holidayAt(date)">{{holidayTag(holidayAt(date))}}</small></th><th class="pinned-total-days" rowspan="2">Total days</th><th v-for="field in summaryFields" :key="field[0]" :class="{'pinned-summary':pinnedSummaryKeys.has(field[0])}" :style="summaryStickyStyle(field[0])" rowspan="2">{{field[1]}}</th><th class="signature pinned-signature" rowspan="2">Signature</th></tr><tr><th v-for="date in dates()" :key="date+'-hours'" class="day-hours">HRS</th></tr></thead>
-<tbody><tr v-for="(row,index) in visibleRows" :key="row.EmployeeID"><td v-if="Number(sitePolicy.RelieverPositionOverrideEnabled)===1" class="reliever-action"><button class="reliever-button" type="button" title="Assign Reliever Position" aria-label="Assign Reliever Position" @click="openRelieverPosition(row)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h14m0 0-3-3m3 3-3 3M20 17H6m0 0 3 3m-3-3 3-3"/></svg></button></td><td>{{index+1}}</td><td class="person"><strong>{{row.EmployeeName}}</strong><small>EMP-{{String(row.EmployeeID).padStart(4,'0')}} / {{row.EmployeeNumber||'No employee no.'}}</small></td><td>{{row.PositionName||'-'}}</td><td><select class="type-select" :value="row.DeploymentType" :disabled="typeSaving===row.EmployeeID" @change="updateType(row,$event)"><option>Regular</option><option>Reliever</option></select></td><td class="shift-tag">{{shiftTag(row)}}<button class="batch-plus" title="Apply one shift to all cutoff days" @click="openBatch(row)">+</button></td><td v-for="date in dates()" :key="date" class="day-cell"><button :disabled="!dateWithinDeployment(row,date)" :class="[dayCellClass(row,displayedEntry(row,date)),statusCellClass(displayedEntry(row,date)),{'outside-deployment':!dateWithinDeployment(row,date)}]" :title="!dateWithinDeployment(row,date)?'Employee was not assigned to this site on this date':[displayedEntry(row,date)?.AttendanceStatus,Number(displayedEntry(row,date)?.UndertimeHours||0)>0?'Undertime: '+Math.round(Number(displayedEntry(row,date)?.UndertimeHours)*60)+' min':'',displayedEntry(row,date)?.HolidayName||holidayAt(date)?.HolidayName].filter(Boolean).join(' - ')" @click="openDay(row,date)"><strong>{{dateWithinDeployment(row,date)?cellText(displayedEntry(row,date)):' - '}}</strong><small>{{dateWithinDeployment(row,date)?cellSub(displayedEntry(row,date)):'Not assigned'}}</small></button></td><td class="pinned-total-days">{{totalDays(row)}}</td><td v-for="field in summaryFields" :key="field[0]" :class="{'pinned-summary':pinnedSummaryKeys.has(field[0])}" :style="summaryStickyStyle(field[0])">{{formatSummary(summaryValue(row,field[0]),field[0])}}</td><td class="signature-cell pinned-signature"></td></tr><tr v-if="!rows.length"><td :colspan="7+dates().length+summaryFields.length+(Number(sitePolicy.RelieverPositionOverrideEnabled)===1?1:0)" class="empty">No employee has been added to this DTR yet.</td></tr></tbody>
-        <tfoot v-if="rows.length"><tr><th :colspan="5+dates().length+(Number(sitePolicy.RelieverPositionOverrideEnabled)===1?1:0)">TOTAL</th><th class="pinned-total-days">{{visibleRows.reduce((sum,row)=>sum+totalDays(row),0)}}</th><th v-for="field in summaryFields" :key="field[0]" :class="{'pinned-summary':pinnedSummaryKeys.has(field[0])}" :style="summaryStickyStyle(field[0])">{{formatSummary(field[0]==='WDODays'?visibleRows.reduce((sum,row)=>sum+wdoDays(row),0):totals[field[0]],field[0])}}</th><th class="pinned-signature"></th></tr></tfoot>
+      <div class="table-wrap"><table class="cutoff-table"><thead><tr><th v-if="Number(sitePolicy.RelieverPositionOverrideEnabled)===1" class="reliever-action" rowspan="2" title="Reliever Position">RP</th><th class="row-number" rowspan="2">No.</th><th class="person" rowspan="2">Name of personnel</th><th class="position-column" rowspan="2">Position</th><th class="type-column" rowspan="2">Type</th><th class="shift-column" rowspan="2">Shift</th><th v-for="date in dates()" :key="date" :class="['day-head',{'holiday-day-head':holidayAt(date)}]" :title="holidayAt(date)?.HolidayName">{{dayOfMonth(date)}}<small v-if="holidayAt(date)">{{holidayTag(holidayAt(date))}}</small></th><th class="pinned-total-days" rowspan="2">Total days</th><th v-for="field in summaryFields" :key="field[0]" :class="['summary-cell','summary-'+field[0],{'pinned-summary':pinnedSummaryKeys.has(field[0])}]" :style="summaryStickyStyle(field[0])" rowspan="2">{{field[1]}}</th><th class="signature pinned-signature" rowspan="2">Signature</th></tr><tr><th v-for="date in dates()" :key="date+'-hours'" class="day-hours">HRS</th></tr></thead>
+<tbody><tr v-for="(row,index) in visibleRows" :key="row.EmployeeID"><td v-if="Number(sitePolicy.RelieverPositionOverrideEnabled)===1" class="reliever-action"><button class="reliever-button" type="button" title="Assign Reliever Position" aria-label="Assign Reliever Position" @click="openRelieverPosition(row)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h14m0 0-3-3m3 3-3 3M20 17H6m0 0 3 3m-3-3 3-3"/></svg></button></td><td>{{index+1}}</td><td class="person"><strong>{{row.EmployeeName}}</strong><small>EMP-{{String(row.EmployeeID).padStart(4,'0')}} / {{row.EmployeeNumber||'No employee no.'}}</small></td><td class="position-column">{{row.PositionName||'-'}}</td><td class="type-column"><select class="type-select" :value="row.DeploymentType" :disabled="typeSaving===row.EmployeeID" @change="updateType(row,$event)"><option>Regular</option><option>Reliever</option></select></td><td class="shift-tag shift-column">{{shiftTag(row)}}<button class="batch-plus" title="Apply one shift to all cutoff days" @click="openBatch(row)">+</button></td><td v-for="date in dates()" :key="date" class="day-cell"><button :disabled="!dateWithinDeployment(row,date)" :class="[dayCellClass(row,displayedEntry(row,date)),statusCellClass(displayedEntry(row,date)),{'outside-deployment':!dateWithinDeployment(row,date)}]" :title="!dateWithinDeployment(row,date)?'Employee was not assigned to this site on this date':[displayedEntry(row,date)?.AttendanceStatus,Number(displayedEntry(row,date)?.UndertimeHours||0)>0?'Undertime: '+Math.round(Number(displayedEntry(row,date)?.UndertimeHours)*60)+' min':'',displayedEntry(row,date)?.HolidayName||holidayAt(date)?.HolidayName].filter(Boolean).join(' - ')" @click="openDay(row,date)"><strong>{{dateWithinDeployment(row,date)?cellText(displayedEntry(row,date)):' - '}}</strong><small>{{dateWithinDeployment(row,date)?cellSub(displayedEntry(row,date)):'Not assigned'}}</small></button></td><td class="pinned-total-days">{{totalDays(row)}}</td><td v-for="field in summaryFields" :key="field[0]" :class="['summary-cell','summary-'+field[0],{'pinned-summary':pinnedSummaryKeys.has(field[0])}]" :style="summaryStickyStyle(field[0])">{{formatSummary(summaryValue(row,field[0]),field[0])}}</td><td class="signature-cell pinned-signature"></td></tr><tr v-if="!rows.length"><td :colspan="7+dates().length+summaryFields.length+(Number(sitePolicy.RelieverPositionOverrideEnabled)===1?1:0)" class="empty">No employee has been added to this DTR yet.</td></tr></tbody>
+        <tfoot v-if="rows.length"><tr><th :colspan="5+dates().length+(Number(sitePolicy.RelieverPositionOverrideEnabled)===1?1:0)">TOTAL</th><th class="pinned-total-days">{{visibleRows.reduce((sum,row)=>sum+totalDays(row),0)}}</th><th v-for="field in summaryFields" :key="field[0]" :class="['summary-cell','summary-'+field[0],{'pinned-summary':pinnedSummaryKeys.has(field[0])}]" :style="summaryStickyStyle(field[0])">{{formatSummary(field[0]==='WDODays'?visibleRows.reduce((sum,row)=>sum+wdoDays(row),0):totals[field[0]],field[0])}}</th><th class="pinned-signature"></th></tr></tfoot>
       </table></div>
     </section>
     <div v-if="importOpen" class="layer" @click.self="importOpen=false"><section class="modal import-modal"><button class="close" type="button" @click="importOpen=false">x</button><h3>Import DTR from Excel</h3><p>Upload <strong>.xlsx, .xls, .xlsm, .xlsb, or .csv</strong>. Required: Employee ID or Employee No and Date. A row is worked only when it has both Time In and Time Out; a blank biometric row stays blank even if it has a Shift Code. Employee ID is matched first; Employee No is the fallback. HR-approved On-Leave, Vacation Leave, and Sick Leave dates are preserved even when the Excel file contains work times for those dates.</p><div class="file-drop" :class="{dragging:importDragging}" @dragenter.prevent="importDragging=true" @dragover.prevent="importDragging=true" @dragleave.prevent="importDragging=false" @drop.prevent="dropDtrImport"><label for="dtr-import-file"><strong>Drag and drop your Excel file here</strong><span>or click to choose a file</span></label><input id="dtr-import-file" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" @change="readDtrImport"></div><p v-if="importFileName" class="import-file"><strong>{{importFileName}}</strong> - {{importRows.length}} row{{importRows.length===1?'':'s'}} ready for validation.</p><div v-if="importRows.length" class="import-preview"><strong>Preview (first 6 rows)</strong><table><thead><tr><th>Row</th><th>Employee ID / No.</th><th>Date</th><th>Shift</th><th>Time in to out</th></tr></thead><tbody><tr v-for="row in importRows.slice(0,6)" :key="row.RowNumber"><td>{{row.RowNumber}}</td><td>{{row.EmployeeID||row.EmployeeNumber||'-'}}</td><td>{{row.AttendanceDate||'-'}}</td><td>{{row.ShiftCode||'-'}}</td><td>{{row.TimeIn||'-'}} to {{row.TimeOut||'-'}}</td></tr></tbody></table></div><div v-if="importResult" class="import-result"><strong>Import complete:</strong> {{importResult.imported}} added, {{importResult.updated}} updated, {{importResult.skipped}} skipped.<span v-if="importResult.preservedEmployeeStatusDays"> {{importResult.preservedEmployeeStatusDays}} HR-approved leave day{{importResult.preservedEmployeeStatusDays===1?'':'s'}} preserved.</span><span v-if="importResult.blank"> {{importResult.blank}} blank biometric row{{importResult.blank===1?'':'s'}} left empty<span v-if="importResult.cleared">; {{importResult.cleared}} previous attendance row{{importResult.cleared===1?'':'s'}} cleared</span>.</span><ul v-if="importResult.issues?.length"><li v-for="issue in importResult.issues" :key="issue.row">Row {{issue.row}}: {{issue.reason}}</li></ul></div><p v-if="error" class="error">{{error}}</p><footer><button class="secondary" type="button" @click="importOpen=false">Close</button><button class="primary" type="button" :disabled="!importRows.length||importing" @click="submitDtrImport">{{importing?'Importing...':'Validate and import'}}</button></footer></section></div>
@@ -431,4 +431,147 @@ onMounted(load)
 .dtr-attendance-layer .import-preview th,.dtr-attendance-layer .import-preview td{padding:8px 10px;border-top:1px solid #e2e8f2;text-align:left;white-space:nowrap}
 .dtr-attendance-layer .import-result{margin-top:14px;padding:12px;border-radius:8px;background:#edf8f0;color:#1d5b37;font-size:13px}
 .dtr-attendance-layer .import-result ul{margin:8px 0 0;padding-left:20px;color:#7d2d20}
+</style>
+
+<style>
+/* Employee List modal pattern: dim overlay, neutral panel, white content cards. */
+.dtr-attendance-layer .layer{padding:16px;background:rgba(15,23,42,.58)}
+.dtr-attendance-layer .modal{
+  display:grid;
+  width:min(100%,760px);
+  max-height:90vh;
+  gap:16px;
+  padding:30px;
+  overflow-x:hidden;
+  overflow-y:auto;
+  border:0;
+  border-radius:16px;
+  background:#f7f9fc;
+  box-shadow:0 24px 60px rgba(15,23,42,.24);
+  animation:none;
+}
+.dtr-attendance-layer .modal::before{display:none}
+.dtr-attendance-layer .modal h3{margin:0 0 4px;padding-right:42px;color:#14233c;font-size:1.55rem;line-height:1.2;letter-spacing:0}
+.dtr-attendance-layer .modal>p{margin:-8px 0 0;color:#64748b;font-size:.86rem;line-height:1.5}
+.dtr-attendance-layer .modal .close{
+  top:12px;
+  right:12px;
+  display:grid;
+  width:36px;
+  height:36px;
+  place-items:center;
+  padding:0;
+  border:0;
+  border-radius:9px;
+  background:transparent;
+  color:#53657d;
+  font-size:0;
+  transform:none;
+}
+.dtr-attendance-layer .modal .close::before{content:'\00d7';font-size:1.35rem;font-weight:500}
+.dtr-attendance-layer .modal .close:hover{background:#edf3fa;color:#17375f;transform:none}
+.dtr-attendance-layer .modal .close:focus-visible{border:0;outline:3px solid rgba(46,99,212,.2);outline-offset:2px}
+.dtr-attendance-layer .modal input,.dtr-attendance-layer .modal select,.dtr-attendance-layer .modal textarea{
+  box-sizing:border-box;
+  width:100%;
+  max-width:100%;
+  min-height:44px;
+  border:1px solid #cfd8e6;
+  border-radius:8px;
+  background:#fff;
+  color:#172033;
+}
+.dtr-attendance-layer .modal input:focus,.dtr-attendance-layer .modal select:focus,.dtr-attendance-layer .modal textarea:focus{border-color:#7798d0;box-shadow:0 0 0 3px rgba(35,73,230,.1);outline:0}
+.dtr-attendance-layer .modal footer{
+  position:sticky;
+  z-index:3;
+  bottom:-30px;
+  margin:0 -30px -30px;
+  padding:15px 30px;
+  border-top:1px solid #dce4ef;
+  background:#fff;
+  box-shadow:0 -8px 20px rgba(30,54,85,.07);
+}
+.dtr-attendance-layer .modal footer .primary,.dtr-attendance-layer .modal footer .secondary{min-height:42px;padding:9px 17px;border-radius:9px;font-weight:800;box-shadow:none}
+.dtr-attendance-layer .modal footer .secondary{border-color:#c5d0df;background:#f8fafc;color:#334e6f}
+.dtr-attendance-layer .modal footer .secondary:hover{border-color:#94a8c2;background:#eef3f8}
+
+.dtr-attendance-layer .site-policy-modal,.dtr-attendance-layer .attendance-modal,.dtr-attendance-layer .employee-modal,.dtr-attendance-layer .remove-people-modal,.dtr-attendance-layer .import-modal,.dtr-attendance-layer .shift-create-modal{width:min(100%,980px)}
+.dtr-attendance-layer .batch-modal,.dtr-attendance-layer .reliever-batch-modal{width:min(100%,760px)}
+.dtr-attendance-layer .employee-details-modal{width:min(100%,780px)}
+.dtr-attendance-layer .reliever-settings-modal{width:min(100%,650px)}
+.dtr-attendance-layer .site-policy-modal .policy-section,
+.dtr-attendance-layer .attendance-modal .day-grid,
+.dtr-attendance-layer .reliever-settings-modal>.policy-switch,
+.dtr-attendance-layer .batch-modal>label{
+  margin-top:0;
+  padding:18px;
+  border:1px solid #dce4ef;
+  border-radius:14px;
+  background:#fff;
+  box-shadow:0 4px 14px rgba(30,54,85,.035);
+}
+.dtr-attendance-layer .site-policy-modal .policy-switch{padding:12px;border:1px solid #edf1f6;border-radius:10px;background:#f8fafc;box-shadow:none}
+.dtr-attendance-layer .site-policy-modal .policy-switch:hover{border-color:#cbd8e9;background:#f8fbff;box-shadow:none}
+.dtr-attendance-layer .employee-list,.dtr-attendance-layer .remove-list,.dtr-attendance-layer .employee-details-list,.dtr-attendance-layer .reliever-date-list{margin-top:0;border:1px solid #dce4ef;border-radius:14px;background:#fff;box-shadow:0 4px 14px rgba(30,54,85,.035)}
+.dtr-attendance-layer .employee-details-list{gap:0;padding:0}
+.dtr-attendance-layer .employee-details-list article{border:0!important;border-bottom:1px solid #edf1f6!important;border-radius:0;background:#fff;box-shadow:none}
+.dtr-attendance-layer .employee-details-list article:last-child{border-bottom:0!important}
+.dtr-attendance-layer .file-drop{margin-top:0;background:#fff}
+.dtr-attendance-layer .batch-modal .shift-suggestions{position:static;max-height:270px;box-shadow:none}
+.dtr-attendance-layer .batch-modal .selected-shift,.dtr-attendance-layer .batch-modal .hint{margin:0}
+
+/* Equal header geometry and compact columns through Late and Undertime. */
+.dtr-attendance-layer .cutoff-table{table-layout:fixed;width:max-content!important}
+.dtr-attendance-layer .cutoff-table th,.dtr-attendance-layer .cutoff-table td{box-sizing:border-box;vertical-align:middle}
+.dtr-attendance-layer .cutoff-table thead tr:first-child{height:28px}
+.dtr-attendance-layer .cutoff-table thead tr:last-child{height:22px}
+.dtr-attendance-layer .cutoff-table thead th{
+  height:auto;
+  padding:4px 2px!important;
+  vertical-align:middle!important;
+  font-size:9px!important;
+  font-weight:800;
+  line-height:1.05!important;
+  text-align:center!important;
+  white-space:normal!important;
+}
+.dtr-attendance-layer .cutoff-table thead th[rowspan="2"]{height:50px}
+.dtr-attendance-layer .cutoff-table .day-head{height:28px;min-width:36px!important;width:36px!important;max-width:36px!important}
+.dtr-attendance-layer .cutoff-table .day-hours{height:22px;padding:2px!important;font-size:8px!important}
+.dtr-attendance-layer .cutoff-table .day-cell{min-width:36px!important;width:36px!important;max-width:36px!important}
+.dtr-attendance-layer .cutoff-table .row-number{min-width:28px!important;width:28px!important;max-width:28px!important}
+.dtr-attendance-layer .cutoff-table .person{min-width:145px!important;width:145px!important;max-width:145px!important}
+.dtr-attendance-layer .cutoff-table .position-column{min-width:62px!important;width:62px!important;max-width:62px!important;white-space:normal!important}
+.dtr-attendance-layer .cutoff-table .type-column{min-width:88px!important;width:88px!important;max-width:88px!important}
+.dtr-attendance-layer .cutoff-table td.type-column{padding:5px 7px!important;overflow:hidden}
+.dtr-attendance-layer .cutoff-table .type-select{display:block;box-sizing:border-box;width:100%!important;max-width:100%!important;min-width:0!important;margin:0;padding:0 7px!important}
+.dtr-attendance-layer .cutoff-table .shift-column{min-width:48px!important;width:48px!important;max-width:48px!important}
+.dtr-attendance-layer .cutoff-table .pinned-total-days{min-width:46px!important;width:46px!important;max-width:46px!important}
+.dtr-attendance-layer .cutoff-table .summary-cell{min-width:44px!important;width:44px!important;max-width:44px!important;white-space:normal!important;line-height:1.05!important}
+.dtr-attendance-layer .cutoff-table .summary-RegularHours{min-width:54px!important;width:54px!important;max-width:54px!important}
+.dtr-attendance-layer .cutoff-table .summary-OTHours{min-width:50px!important;width:50px!important;max-width:50px!important}
+.dtr-attendance-layer .cutoff-table .summary-OTExtHours,.dtr-attendance-layer .cutoff-table .summary-NightDiffHours,.dtr-attendance-layer .cutoff-table .summary-RestDayOTHours{min-width:45px!important;width:45px!important;max-width:45px!important}
+.dtr-attendance-layer .cutoff-table .summary-WDODays{min-width:36px!important;width:36px!important;max-width:36px!important}
+.dtr-attendance-layer .cutoff-table .summary-LateHours{min-width:40px!important;width:40px!important;max-width:40px!important}
+.dtr-attendance-layer .cutoff-table .summary-UndertimeHours{min-width:54px!important;width:54px!important;max-width:54px!important}
+.dtr-attendance-layer .cutoff-table tbody td,.dtr-attendance-layer .cutoff-table tfoot th{line-height:1.15;text-align:center;vertical-align:middle}
+/* Checkboxes must remain controls, not inherit the full-width text-input rule. */
+.dtr-attendance-layer .site-policy-modal .special-holiday-option{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start;gap:10px}
+.dtr-attendance-layer .site-policy-modal .special-holiday-option input[type="checkbox"]{
+  width:17px!important;
+  height:17px!important;
+  min-height:17px!important;
+  margin:2px 0 0!important;
+  padding:0!important;
+  border-radius:4px;
+  box-shadow:none;
+  accent-color:#2867d8;
+}
+
+@media(max-width:760px){
+  .dtr-attendance-layer .layer{padding:10px}
+  .dtr-attendance-layer .modal{width:100%;max-height:calc(100dvh - 20px);padding:22px 14px;border-radius:16px}
+  .dtr-attendance-layer .modal footer{bottom:-22px;margin:0 -14px -22px;padding:13px 14px}
+}
 </style>
