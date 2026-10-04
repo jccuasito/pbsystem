@@ -33,6 +33,8 @@ type DetailsData = {
 const props = defineProps<{ data: DetailsData }>()
 const emit = defineEmits<{ close: [] }>()
 const selectedEmployeeId = ref<number | null>(null)
+const employeeSearch = ref('')
+const positionFilter = ref('')
 
 const employees = computed(() => {
   const rows = new Map<number, EmployeeRecord>()
@@ -44,11 +46,22 @@ const employees = computed(() => {
   return [...rows.values()].sort((a, b) => String(a.EmployeeName || '').localeCompare(String(b.EmployeeName || '')))
 })
 
-watch(employees, (rows) => {
+const positions = computed(() => [...new Set(employees.value.map(row => String(row.PositionName || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
+const filteredEmployees = computed(() => {
+  const query = employeeSearch.value.trim().toLocaleLowerCase()
+  return employees.value.filter(row => {
+    if (positionFilter.value && String(row.PositionName || '').trim() !== positionFilter.value) return false
+    if (!query) return true
+    return [row.EmployeeName, row.EmployeeNumber, String(row.EmployeeID), `EMP-${String(row.EmployeeID).padStart(4, '0')}`]
+      .some(value => String(value || '').toLocaleLowerCase().includes(query))
+  })
+})
+
+watch(filteredEmployees, (rows) => {
   if (!rows.some(row => Number(row.EmployeeID) === selectedEmployeeId.value)) selectedEmployeeId.value = rows[0]?.EmployeeID ?? null
 }, { immediate: true })
 
-const selectedEmployee = computed(() => employees.value.find(row => Number(row.EmployeeID) === selectedEmployeeId.value) || null)
+const selectedEmployee = computed(() => filteredEmployees.value.find(row => Number(row.EmployeeID) === selectedEmployeeId.value) || null)
 const attendance = computed(() => (props.data.attendanceRows || [])
   .filter(row => Number(row.EmployeeID) === selectedEmployeeId.value)
   .sort((a, b) => datePart(a.AttendanceDate).localeCompare(datePart(b.AttendanceDate))))
@@ -111,16 +124,28 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
         <div class="attendance-details-content">
           <div class="attendance-details-picker">
+            <label class="attendance-details-search">
+              <span>Search employee</span>
+              <input v-model="employeeSearch" type="search" autocomplete="off" placeholder="Name, employee ID, or number" aria-label="Search employees in this DTR">
+            </label>
+            <label class="attendance-details-position">
+              <span>Position</span>
+              <select v-model="positionFilter" aria-label="Filter employees by position">
+                <option value="">All positions</option>
+                <option v-for="position in positions" :key="position" :value="position">{{ position }}</option>
+              </select>
+            </label>
             <label>
               <span>Employee</span>
-              <select v-model.number="selectedEmployeeId" :disabled="!employees.length">
-                <option v-for="employee in employees" :key="employee.EmployeeID" :value="employee.EmployeeID">
+              <select v-model.number="selectedEmployeeId" :disabled="!filteredEmployees.length">
+                <option v-if="!filteredEmployees.length" :value="null">No matching employees</option>
+                <option v-for="employee in filteredEmployees" :key="employee.EmployeeID" :value="employee.EmployeeID">
                   {{ employee.EmployeeName }}{{ employee.EmployeeNumber ? ` · ${employee.EmployeeNumber}` : '' }}
                 </option>
               </select>
             </label>
-            <p><strong>Viewing only.</strong> Attendance changes are made through Edit DTR.</p>
           </div>
+          <p class="attendance-details-filter-summary">Showing {{ filteredEmployees.length }} of {{ employees.length }} employees · <strong>Viewing only.</strong> Attendance changes are made through Edit DTR.</p>
 
           <div v-if="selectedEmployee" class="attendance-details-profile">
             <div class="attendance-details-avatar" aria-hidden="true">
@@ -145,7 +170,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </div>
           </div>
 
-          <div class="attendance-details-table-wrap">
+          <div v-if="selectedEmployee" class="attendance-details-table-wrap">
             <table class="attendance-details-table">
               <thead>
                 <tr>
@@ -176,6 +201,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               </tbody>
             </table>
           </div>
+          <p v-else class="attendance-details-no-match">{{ employees.length ? 'No employees match this search and position.' : 'No employees are enrolled in this DTR.' }}</p>
         </div>
 
         <footer class="attendance-details-footer">
@@ -199,11 +225,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .attendance-details-close { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 1px solid #d4deed; border-radius: 9px; background: #fff; color: #24436c; font: inherit; font-size: 25px; line-height: 1; cursor: pointer; }
 .attendance-details-close:hover { background: #f1f5fb; }
 .attendance-details-content { min-height: 0; overflow: auto; padding: 22px 28px 26px; background: #f8faff; }
-.attendance-details-picker { display: flex; align-items: flex-end; gap: 18px; }
-.attendance-details-picker label { display: grid; gap: 7px; width: min(580px, 100%); color: #344b6d; font-size: 13px; font-weight: 800; }
-.attendance-details-picker select { width: 100%; min-height: 48px; padding: 0 42px 0 13px; border: 1px solid #b9c9e2; border-radius: 10px; background: #fff; color: #17335d; font: inherit; font-weight: 650; }
-.attendance-details-picker p { margin: 0 0 11px; color: #687892; font-size: 13px; }
-.attendance-details-picker p strong { color: #355580; }
+.attendance-details-picker { display: grid; grid-template-columns: minmax(240px, 1.1fr) minmax(190px, .65fr) minmax(260px, 1.1fr); gap: 14px; }
+.attendance-details-picker label { display: grid; min-width: 0; gap: 7px; color: #344b6d; font-size: 13px; font-weight: 800; }
+.attendance-details-picker input, .attendance-details-picker select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 48px; padding: 0 13px; border: 1px solid #b9c9e2; border-radius: 10px; background: #fff; color: #17335d; font: inherit; font-weight: 650; }
+.attendance-details-picker select { padding-right: 36px; }
+.attendance-details-picker input::placeholder { color: #8594aa; font-weight: 500; }
+.attendance-details-filter-summary { margin: 10px 0 0; color: #687892; font-size: 13px; }
+.attendance-details-filter-summary strong { color: #355580; }
+.attendance-details-no-match { margin: 18px 0 0; padding: 28px; border: 1px dashed #cbd7e9; border-radius: 12px; background: #fff; color: #64748b; text-align: center; }
 .attendance-details-profile { display: grid; grid-template-columns: auto minmax(220px, 1.4fr) repeat(3, minmax(150px, 1fr)); align-items: center; gap: 16px; margin-top: 18px; padding: 16px 18px; border: 1px solid #d9e4f3; border-radius: 13px; background: #fff; }
 .attendance-details-avatar { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 12px; background: #e8f0ff; color: #2863cd; font-size: 14px; font-weight: 900; }
 .attendance-details-person, .attendance-details-fact { min-width: 0; }
@@ -230,7 +259,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .attendance-details-footer span { color: #72819a; font-size: 12px; }
 .attendance-details-footer button { min-width: 92px; min-height: 42px; padding: 8px 16px; border: 1px solid #cbd7e9; border-radius: 9px; background: #fff; color: #24436d; font: inherit; font-weight: 800; cursor: pointer; }
 .attendance-details-footer button:hover, .attendance-details-close:hover { border-color: #aebfda; background: #f3f6fb; }
-.attendance-details-modal button:focus-visible, .attendance-details-modal select:focus-visible { outline: 3px solid rgba(40, 103, 216, .24); outline-offset: 2px; }
+.attendance-details-modal button:focus-visible, .attendance-details-modal select:focus-visible, .attendance-details-modal input:focus-visible { outline: 3px solid rgba(40, 103, 216, .24); outline-offset: 2px; }
 
 @media (max-width: 900px) {
   .attendance-details-layer { padding: 12px; }
@@ -238,11 +267,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   .attendance-details-header, .attendance-details-content, .attendance-details-footer { padding-left: 18px; padding-right: 18px; }
   .attendance-details-profile { grid-template-columns: auto 1fr 1fr; }
   .attendance-details-person { grid-column: span 2; }
-  .attendance-details-picker { display: grid; gap: 8px; }
-  .attendance-details-picker p { margin: 0; }
+  .attendance-details-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .attendance-details-picker label:last-child { grid-column: 1 / -1; }
 }
 
 @media (max-width: 560px) {
+  .attendance-details-picker { grid-template-columns: 1fr; }
+  .attendance-details-picker label:last-child { grid-column: auto; }
   .attendance-details-header h2 { font-size: 22px; }
   .attendance-details-batch { display: none; }
   .attendance-details-profile { grid-template-columns: auto 1fr; }

@@ -218,7 +218,8 @@ export async function dtrSummary(event: any) {
     pool.execute<any[]>(`SELECT d.BatchID, d.Status,
       (SELECT COUNT(*) FROM attendance_dtr_employee roster WHERE roster.BatchID = d.BatchID) AS PeopleCount,
       COUNT(at.AttendanceID) AS AttendanceCount,
-      COALESCE(SUM(at.RegularHours), 0) AS RegularHours, COALESCE(SUM(at.OTHours), 0) AS OTHours, COALESCE(SUM(at.NightDiffHours), 0) AS NightDiffHours
+      COALESCE(SUM(at.RegularHours), 0) AS RegularHours, COALESCE(SUM(at.OTHours), 0) AS OTHours, COALESCE(SUM(at.NightDiffHours), 0) AS NightDiffHours,
+      COALESCE(SUM(at.LateHours), 0) AS LateHours, COALESCE(SUM(at.UndertimeHours), 0) AS UndertimeHours
       FROM attendance_dtr d LEFT JOIN attendance at ON at.BatchID = d.BatchID WHERE d.BatchID = ? GROUP BY d.BatchID`, [id]),
     pool.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
