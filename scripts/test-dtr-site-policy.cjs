@@ -10,12 +10,13 @@ vm.runInNewContext(transformSync(source + `
   module.exports.sitePolicyTest = {
     automaticWdoCount,
     sundayWdoOtHours,
+    wdoPayrollAllocation,
     wdoAttendanceIds,
     activeHolidaysByDate,
   };
 `, { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: () => ({}) })
 
-const { automaticWdoCount, sundayWdoOtHours, wdoAttendanceIds, activeHolidaysByDate } = moduleState.exports.sitePolicyTest
+const { automaticWdoCount, sundayWdoOtHours, wdoPayrollAllocation, wdoAttendanceIds, activeHolidaysByDate } = moduleState.exports.sitePolicyTest
 
 test('automatic WDO follows the configured 14 and 15 day thresholds', () => {
   assert.equal(automaticWdoCount(13, 1), 0)
@@ -31,6 +32,27 @@ test('Sunday WDO OT credits only regular OT and OT extension when enabled', () =
   assert.equal(sundayWdoOtHours('2026-09-13', 4, 2.5, 1), 6.5)
   assert.equal(sundayWdoOtHours('2026-09-14', 4, 2, 1), 0)
   assert.equal(sundayWdoOtHours('2026-09-13', 4, 2, 0), 0)
+})
+
+test('automatic WDO posts a fixed eight rest-day hours without rest-day OT', () => {
+  const allocation = wdoPayrollAllocation({ AttendanceDate: '2026-09-14', RegularHours: 12, OTHours: 4, OTExtHours: 2 }, true, 0)
+  assert.equal(allocation.restDayHours, 8)
+  assert.equal(allocation.restDayOtHours, 0)
+  const unmarked = wdoPayrollAllocation({ AttendanceDate: '2026-09-14', RegularHours: 8, OTHours: 4, OTExtHours: 0 }, false, 0)
+  assert.equal(unmarked.restDayHours, 0)
+  assert.equal(unmarked.restDayOtHours, 0)
+})
+
+test('Sunday WDO posts the shift allocation to the existing rest-day fields', () => {
+  const standard = wdoPayrollAllocation({ AttendanceDate: '2026-09-13', RegularHours: 8, OTHours: 4, OTExtHours: 0 }, true, 1)
+  assert.equal(standard.restDayHours, 8)
+  assert.equal(standard.restDayOtHours, 4)
+  const extended = wdoPayrollAllocation({ AttendanceDate: '2026-09-13', RegularHours: 8, OTHours: 4, OTExtHours: 2 }, true, 1)
+  assert.equal(extended.restDayHours, 8)
+  assert.equal(extended.restDayOtHours, 6)
+  const straight = wdoPayrollAllocation({ AttendanceDate: '2026-09-13', RegularHours: 16, OTHours: 4, OTExtHours: 0 }, true, 1)
+  assert.equal(straight.restDayHours, 16)
+  assert.equal(straight.restDayOtHours, 4)
 })
 
 test('worked Sundays count as WDO days while automatic WDO fills remaining earned days', () => {

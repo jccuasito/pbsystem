@@ -569,6 +569,17 @@ function sundayWdoOtHours(attendanceDate: unknown, overtimeHours: unknown, overt
   return Math.round(totalHours * 100) / 100
 }
 
+function wdoPayrollAllocation(row: any, isWdo: boolean, sundayWdoOtEnabled: unknown) {
+  if (!isWdo) return { restDayHours: 0, restDayOtHours: 0 }
+  if (Number(sundayWdoOtEnabled) === 1 && isSundayAttendanceDate(row.AttendanceDate)) {
+    return {
+      restDayHours: Math.round(Math.max(0, Number(row.RegularHours || 0)) * 100) / 100,
+      restDayOtHours: sundayWdoOtHours(row.AttendanceDate, row.OTHours, row.OTExtHours, sundayWdoOtEnabled),
+    }
+  }
+  return { restDayHours: 8, restDayOtHours: 0 }
+}
+
 function wdoAttendanceIds(workedRows: any[], automaticCount: number, sundayWdoOtEnabled: unknown) {
   const selected = new Set<number>()
   if (Number(sundayWdoOtEnabled) === 1) {
@@ -583,7 +594,7 @@ function wdoAttendanceIds(workedRows: any[], automaticCount: number, sundayWdoOt
 
 async function syncAutoWdo(connection: any, batch: any, employeeId: number, suppliedPolicy?: any) {
   const policy = suppliedPolicy || await sitePolicyForBatch(connection, batch)
-  await connection.execute('UPDATE attendance SET IsWDO = 0, RestDayOTHours = 0 WHERE BatchID = ? AND EmployeeID = ?', [batch.BatchID, employeeId])
+  await connection.execute('UPDATE attendance SET IsWDO = 0, RestDayHours = 0, RestDayOTHours = 0 WHERE BatchID = ? AND EmployeeID = ?', [batch.BatchID, employeeId])
   await syncAutomaticAttendanceStatuses(connection, batch, employeeId)
   const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
   const [workedRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate, at.WorkdayCount, at.RegularHours, at.OTHours, at.OTExtHours
@@ -595,14 +606,14 @@ async function syncAutoWdo(connection: any, batch: any, employeeId: number, supp
   const workedDays = workedRows.reduce((total, row) => total + Math.max(1, Number(row.WorkdayCount || 1)), 0)
   const wdoCount = automaticWdoCount(workedDays, policy.AutoWDOEnabled)
   const markerIds = wdoAttendanceIds(workedRows, wdoCount, policy.SundayWDOOTEnabled)
-  if (markerIds.length) {
-    await connection.execute(`UPDATE attendance SET IsWDO = 1 WHERE AttendanceID IN (${markerIds.map(() => '?').join(', ')})`, markerIds)
-  }
-  if (Number(policy.SundayWDOOTEnabled) === 1) {
-    for (const row of workedRows) {
-      const wdoOtHours = sundayWdoOtHours(row.AttendanceDate, row.OTHours, row.OTExtHours, policy.SundayWDOOTEnabled)
-      if (wdoOtHours) await connection.execute('UPDATE attendance SET RestDayOTHours = ? WHERE AttendanceID = ?', [wdoOtHours, row.AttendanceID])
-    }
+  const markerIdSet = new Set(markerIds)
+  for (const row of workedRows) {
+    if (!markerIdSet.has(Number(row.AttendanceID))) continue
+    const allocation = wdoPayrollAllocation(row, true, policy.SundayWDOOTEnabled)
+    await connection.execute(
+      'UPDATE attendance SET IsWDO = 1, RestDayHours = ?, RestDayOTHours = ? WHERE AttendanceID = ?',
+      [allocation.restDayHours, allocation.restDayOtHours, row.AttendanceID],
+    )
   }
   return markerIds.length
 }
@@ -618,8 +629,13 @@ export async function listDtrRecords(event: any) {
     await attachPendingEmployeeStatuses(connection, batch, session.sub)
     await syncBatchHolidays(connection, batch, session.sub)
     await syncAutomaticAttendanceStatuses(connection, batch)
+    const policy = await sitePolicyForBatch(connection, batch)
+    if (batch.Status === 'Draft') {
+      const [enrollments] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? ORDER BY EmployeeID FOR UPDATE', [id])
+      for (const enrollment of enrollments) await syncAutoWdo(connection, batch, Number(enrollment.EmployeeID), policy)
+    }
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd), Number(batch.SiteID))
-    const [policy, [records], [shifts], [attendanceRows], [dutyRows], [workPositions]] = await Promise.all([sitePolicyForBatch(connection, batch), connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
+    const [[records], [shifts], [attendanceRows], [dutyRows], [workPositions]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, ed.StartDate AS DeploymentStartDate, ed.EndDate AS DeploymentEndDate, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
