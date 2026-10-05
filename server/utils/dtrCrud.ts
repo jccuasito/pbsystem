@@ -230,9 +230,18 @@ export async function dtrSummary(event: any) {
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
       WHERE de.BatchID = ?
       ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]),
-    pool.execute<any[]>(`SELECT at.EmployeeID, at.AttendanceDate, at.AttendanceStatus, at.WorkdayCount, at.IsWDO,
+    pool.execute<any[]>(`SELECT at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.WorkdayCount, at.IsWDO,
       at.TimeIn, at.TimeOut, ${hourColumns.map(column => `at.${column}`).join(', ')},
-      sc.ShiftCode, sc.ShiftType
+      sc.ShiftCode, sc.ShiftType,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM attendance_duty flexible_duty
+        INNER JOIN shift_code flexible_shift ON flexible_shift.ShiftCodeID = flexible_duty.ShiftCodeID
+        WHERE flexible_duty.AttendanceID = at.AttendanceID AND flexible_shift.ShiftType = 'Flexible'
+      ) AND EXISTS (
+        SELECT 1 FROM attendance_duty scheduled_duty
+        INNER JOIN shift_code scheduled_shift ON scheduled_shift.ShiftCodeID = scheduled_duty.ShiftCodeID
+        WHERE scheduled_duty.AttendanceID = at.AttendanceID AND scheduled_shift.ShiftType <> 'Flexible'
+      ) THEN 1 ELSE 0 END AS IsStraightDuty
       FROM attendance at
       LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
       WHERE at.BatchID = ?
