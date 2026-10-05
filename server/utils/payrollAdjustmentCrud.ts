@@ -65,10 +65,65 @@ function selectedDates(value: unknown) {
   return dates.sort()
 }
 
+const manualComponents = earningComponents.slice(0, 4)
+function manualDays(value: unknown) {
+  if (!Array.isArray(value)) return []
+  if (value.length > 31) throw createError({ statusCode: 400, statusMessage: 'Select no more than 31 missed dates.' })
+  const dates = new Set<string>()
+  return value.map((entry: any) => {
+    const sourceDate = String(entry?.SourceDate || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate) || dateOnly(new Date(`${sourceDate}T00:00:00`)) !== sourceDate || dates.has(sourceDate)) {
+      throw createError({ statusCode: 400, statusMessage: 'Enter distinct valid missed attendance dates.' })
+    }
+    dates.add(sourceDate)
+    const shiftCodeId = positiveId(entry.ShiftCodeID, 'Shift code')
+    const hours: Record<string, number> = {}
+    for (const [component] of manualComponents) {
+      const raw = entry[component]
+      const amount = Number(raw)
+      if (raw === '' || raw == null || !Number.isFinite(amount) || amount < 0 || amount > 24 || Math.abs(Math.round(amount * 100) - amount * 100) > 0.000001) {
+        throw createError({ statusCode: 400, statusMessage: `${component} must be between 0 and 24 hours, with at most two decimal places.` })
+      }
+      hours[component] = amount
+    }
+    const worked = hours.RegularHours + hours.OTHours + hours.OTExtHours
+    if (worked <= 0 || worked > 24 || hours.NightDiffHours > worked) throw createError({ statusCode: 400, statusMessage: 'Each missed day needs worked hours (at most 24); night differential cannot exceed worked hours.' })
+    return { sourceDate, shiftCodeId, hours }
+  })
+}
+
+function periodDates(start: unknown, end: unknown) {
+  const dates: string[] = []
+  const cursor = new Date(`${dateOnly(start)}T00:00:00Z`)
+  const last = dateOnly(end)
+  while (cursor.toISOString().slice(0, 10) <= last && dates.length < 31) {
+    dates.push(cursor.toISOString().slice(0, 10))
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dates
+}
+
+async function excludedManualDates(connection: any, source: any) {
+  const [holidays] = await connection.execute<any[]>(`SELECT h.HolidayDate, h.HolidayType, h.HolidayName, h.Recurring,
+    ssh.SiteSpecialHolidayID FROM holiday h
+    LEFT JOIN site_special_holiday ssh ON ssh.HolidayID = h.HolidayID AND ssh.SiteID = ?
+    WHERE h.Status = 'Active' AND (h.HolidayType = 'Legal' OR ssh.SiteSpecialHolidayID IS NOT NULL)`, [source.SiteID])
+  const excluded = new Map<string, string>()
+  for (const day of periodDates(source.PeriodStart, source.PeriodEnd)) {
+    if (new Date(`${day}T00:00:00Z`).getUTCDay() === 0) excluded.set(day, 'Sunday requires rest-day treatment; correct it through a reviewed payroll calculation.')
+    const holiday = holidays.find(item => {
+      const holidayDate = dateOnly(item.HolidayDate)
+      return holidayDate === day || (Number(item.Recurring) === 1 && holidayDate.slice(5) === day.slice(5))
+    })
+    if (holiday) excluded.set(day, `${holiday.HolidayType} holiday (${holiday.HolidayName}) requires holiday rates.`)
+  }
+  return excluded
+}
+
 async function assertReady(connection: any) {
   const [rows] = await connection.execute<any[]>(`SELECT COUNT(*) AS TableCount FROM information_schema.tables
-    WHERE table_schema = DATABASE() AND table_name IN ('payroll_adjustment', 'payroll_adjustment_line')`)
-  if (Number(rows[0]?.TableCount || 0) !== 2) throw createError({ statusCode: 503, statusMessage: 'Payroll adjustments are not installed. Apply database/payroll-adjustments.sql first.' })
+    WHERE table_schema = DATABASE() AND table_name IN ('payroll_adjustment', 'payroll_adjustment_line', 'payroll_adjustment_manual_day')`)
+  if (Number(rows[0]?.TableCount || 0) !== 3) throw createError({ statusCode: 503, statusMessage: 'Payroll adjustments are not installed. Run scripts/apply-payroll-adjustments.mjs first.' })
 }
 
 function listFilters(query: Record<string, string | undefined>) {
@@ -129,6 +184,7 @@ export async function listPayrollAdjustments(event: any) {
     const targetBatchId = query.targetBatchId ? positiveId(query.targetBatchId, 'Target DTR') : null
     const employeeId = query.employeeId ? positiveId(query.employeeId, 'Employee') : null
     let eligibleDates: any[] = [], targetBatches: any[] = [], sourceBatches: any[] = [], targetEmployees: any[] = []
+    let missedDates: any[] = [], shiftCodes: any[] = []
     if (targetBatchId) {
       const [[target]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ?', [targetBatchId])
       if (target) {
@@ -142,7 +198,7 @@ export async function listPayrollAdjustments(event: any) {
             c.ClientName, s.SiteName, COUNT(DISTINCT at.AttendanceID) AS AttendanceCount
             FROM attendance_dtr source
             INNER JOIN attendance_dtr_employee roster ON roster.BatchID = source.BatchID AND roster.EmployeeID = ?
-            INNER JOIN attendance at ON at.BatchID = source.BatchID AND at.EmployeeID = ? AND (
+            LEFT JOIN attendance at ON at.BatchID = source.BatchID AND at.EmployeeID = ? AND (
               COALESCE(at.RegularHours, 0) + COALESCE(at.OTHours, 0) + COALESCE(at.OTExtHours, 0) +
               COALESCE(at.NightDiffHours, 0) + COALESCE(at.RestDayHours, 0) + COALESCE(at.RestDayOTHours, 0) +
               COALESCE(at.LegalHolidayHours, 0) + COALESCE(at.LegalHolidayOTHours, 0) +
@@ -159,7 +215,7 @@ export async function listPayrollAdjustments(event: any) {
       }
     }
     if (sourceBatchId && employeeId) {
-      const [[source]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, PeriodStart, PeriodEnd FROM attendance_dtr WHERE BatchID = ?', [sourceBatchId])
+      const [[source]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, SiteID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ?', [sourceBatchId])
       if (source) {
         const earningColumns = earningComponents.map(([hours]) => `at.${hours}`).join(', ')
         const deductionColumns = deductionComponents.map(([hours]) => `at.${hours}`).join(', ')
@@ -174,6 +230,24 @@ export async function listPayrollAdjustments(event: any) {
           ) > 0
           GROUP BY at.AttendanceID, existing.AdjustmentID, existingHeader.Status
           ORDER BY at.AttendanceDate`, [sourceBatchId, employeeId])
+        const [saved] = await connection.execute<any[]>(`SELECT AttendanceDate, AttendanceStatus,
+          ${earningComponents.map(([hours]) => `COALESCE(${hours}, 0)`).join(' + ')} AS PayableHours
+          FROM attendance WHERE BatchID = ? AND EmployeeID = ?`, [sourceBatchId, employeeId])
+        const [claims] = await connection.execute<any[]>(`SELECT md.SourceDate, md.AdjustmentID, pa.Status
+          FROM payroll_adjustment_manual_day md INNER JOIN payroll_adjustment pa ON pa.AdjustmentID = md.AdjustmentID
+          WHERE md.SourceBatchID = ? AND md.EmployeeID = ? AND md.ClaimActive = 1`, [sourceBatchId, employeeId])
+        const savedByDate = new Map(saved.map(item => [dateOnly(item.AttendanceDate), item]))
+        const claimsByDate = new Map(claims.map(item => [dateOnly(item.SourceDate), item]))
+        const excluded = await excludedManualDates(connection, source)
+        missedDates = periodDates(source.PeriodStart, source.PeriodEnd).map(day => ({
+          SourceDate: day, AttendanceStatus: savedByDate.get(day)?.AttendanceStatus || null,
+          PayableHours: Number(savedByDate.get(day)?.PayableHours || 0),
+          ExistingAdjustmentID: claimsByDate.get(day)?.AdjustmentID || null,
+          ExistingAdjustmentStatus: claimsByDate.get(day)?.Status || null,
+          UnavailableReason: source.Status === 'Draft' ? 'Edit this date in the original Draft DTR.' : excluded.get(day) || null,
+        }))
+        ;[shiftCodes] = await connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, RegularHours, RegularOTCap
+          FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode`, [source.AgencyID])
         ;[targetBatches] = await connection.execute<any[]>(`SELECT target.BatchID, target.PeriodStart, target.PeriodEnd, target.Status,
           c.ClientName, s.SiteName
           FROM attendance_dtr target
@@ -187,6 +261,8 @@ export async function listPayrollAdjustments(event: any) {
     return {
       items: items.map(item => ({ ...item, SourcePeriodStart: dateOnly(item.SourcePeriodStart), SourcePeriodEnd: dateOnly(item.SourcePeriodEnd), TargetPeriodStart: dateOnly(item.TargetPeriodStart), TargetPeriodEnd: dateOnly(item.TargetPeriodEnd), Lines: lineMap.get(Number(item.AdjustmentID)) || [] })),
       eligibleDates: eligibleDates.map(item => ({ ...item, AttendanceDate: dateOnly(item.AttendanceDate) })),
+      missedDates,
+      shiftCodes,
       targetBatches: targetBatches.map(item => ({ ...item, PeriodStart: dateOnly(item.PeriodStart), PeriodEnd: dateOnly(item.PeriodEnd) })),
       sourceBatches: sourceBatches.map(item => ({ ...item, PeriodStart: dateOnly(item.PeriodStart), PeriodEnd: dateOnly(item.PeriodEnd) })),
       targetEmployees,
@@ -202,7 +278,10 @@ export async function createPayrollAdjustment(event: any) {
   const sourceBatchId = positiveId(body.SourceBatchID, 'Source DTR')
   const targetBatchId = positiveId(body.TargetBatchID, 'Target cutoff')
   const dates = selectedDates(body.SourceDates)
-  if (!dates.length) throw createError({ statusCode: 400, statusMessage: 'Select at least one saved attendance date from the original cutoff.' })
+  const verifiedDays = manualDays(body.ManualDays)
+  if (Boolean(dates.length) === Boolean(verifiedDays.length)) throw createError({ statusCode: 400, statusMessage: 'Select saved attendance dates or verified missed days, but not both.' })
+  const verificationReference = String(body.VerificationReference || '').trim()
+  if (verifiedDays.length && (verificationReference.length < 5 || verificationReference.length > 255)) throw createError({ statusCode: 400, statusMessage: 'Enter a verification reference (5–255 characters) for missed days.' })
   const reason = cleanReason(body.Reason)
   const submit = body.Submit === true
   const connection = await pool.getConnection()
@@ -221,6 +300,7 @@ export async function createPayrollAdjustment(event: any) {
     if (!Number(target.HasEmployee)) throw createError({ statusCode: 400, statusMessage: 'Add the employee to the target DTR before assigning this adjustment.' })
     if (target.Status === 'Locked') throw createError({ statusCode: 409, statusMessage: 'The target cutoff is already locked.' })
     if (dates.some(item => item < dateOnly(source.PeriodStart) || item > dateOnly(source.PeriodEnd))) throw createError({ statusCode: 400, statusMessage: 'Every original date must be inside the source DTR cutoff.' })
+    if (verifiedDays.some(item => item.sourceDate < dateOnly(source.PeriodStart) || item.sourceDate > dateOnly(source.PeriodEnd))) throw createError({ statusCode: 400, statusMessage: 'Every missed date must be inside the original cutoff.' })
 
     const attendance = dates.length ? await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate,
       ${[...earningComponents, ...deductionComponents].map(([hours, rate]) => `at.${hours}, pr.${rate}`).join(', ')},
@@ -249,18 +329,57 @@ export async function createPayrollAdjustment(event: any) {
         lines.push({ attendanceId: Number(row.AttendanceID), sourceDate, component, label, entrySource: 'DTR Snapshot', direction: 'Deduction', quantity, rate, amount: -Math.round(quantity * rate * 100) / 100 })
       }
     }
+    if (verifiedDays.length) {
+      if (source.Status === 'Draft') throw createError({ statusCode: 409, statusMessage: 'The original DTR is still Draft. Add the missed days there before finalizing it.' })
+      const excluded = await excludedManualDates(connection, source)
+      const blocked = verifiedDays.find(item => excluded.has(item.sourceDate))
+      if (blocked) throw createError({ statusCode: 400, statusMessage: `${blocked.sourceDate}: ${excluded.get(blocked.sourceDate)}` })
+      const [existing] = await connection.execute<any[]>(`SELECT AttendanceDate,
+        ${earningComponents.map(([hours]) => `COALESCE(${hours}, 0)`).join(' + ')} AS PayableHours
+        FROM attendance WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate IN (${verifiedDays.map(() => '?').join(', ')}) FOR UPDATE`,
+      [sourceBatchId, employeeId, ...verifiedDays.map(item => item.sourceDate)])
+      if (existing.some(item => Number(item.PayableHours) > 0)) throw createError({ statusCode: 409, statusMessage: 'A selected day already has payable attendance in the original DTR. Use its saved-date adjustment instead.' })
+      const [claimed] = await connection.execute<any[]>(`SELECT SourceDate, AdjustmentID FROM payroll_adjustment_manual_day
+        WHERE SourceBatchID = ? AND EmployeeID = ? AND ClaimActive = 1 AND SourceDate IN (${verifiedDays.map(() => '?').join(', ')}) FOR UPDATE`,
+      [sourceBatchId, employeeId, ...verifiedDays.map(item => item.sourceDate)])
+      if (claimed.length) throw createError({ statusCode: 409, statusMessage: `${dateOnly(claimed[0].SourceDate)} already belongs to adjustment #${claimed[0].AdjustmentID}. Open that adjustment instead.` })
+      const [shifts] = await connection.execute<any[]>(`SELECT ShiftCodeID FROM shift_code WHERE AgencyID = ? AND Status = 'Active' AND ShiftCodeID IN (${verifiedDays.map(() => '?').join(', ')})`,
+      [source.AgencyID, ...verifiedDays.map(item => item.shiftCodeId)])
+      const allowedShifts = new Set(shifts.map(item => Number(item.ShiftCodeID)))
+      if (verifiedDays.some(item => !allowedShifts.has(item.shiftCodeId))) throw createError({ statusCode: 400, statusMessage: 'Choose an active shift code from the original DTR agency.' })
+      const [[rate]] = await connection.execute<any[]>(`SELECT pr.RegularRate, pr.OTRate, pr.OTExtRate, pr.NightDiffRate
+        FROM attendance_dtr_employee roster
+        INNER JOIN employee_deployment ed ON ed.DeploymentID = roster.DeploymentID
+        INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+        INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+        WHERE roster.BatchID = ? AND roster.EmployeeID = ?`, [sourceBatchId, employeeId])
+      if (!rate) throw createError({ statusCode: 409, statusMessage: 'Original deployment payroll rates are unavailable. Review the employee deployment before creating an adjustment.' })
+      for (const day of verifiedDays) for (const [component, rateField, label] of manualComponents) {
+        const quantity = day.hours[component]
+        if (!quantity) continue
+        const hourlyRate = Number(rate[rateField])
+        if (!Number.isFinite(hourlyRate) || hourlyRate < 0) throw createError({ statusCode: 409, statusMessage: `${label} rate is unavailable for this deployment.` })
+        lines.push({ attendanceId: null, sourceDate: day.sourceDate, component, label, entrySource: 'Manual Verification', direction: 'Earning', quantity, rate: hourlyRate, amount: Math.round(quantity * hourlyRate * 100) / 100 })
+      }
+    }
     if (!lines.length) throw createError({ statusCode: 400, statusMessage: 'The selected dates have no payable attendance components.' })
     const attendanceIds = [...new Set(lines.map(line => line.attendanceId).filter(Boolean))]
-    const [duplicates] = await connection.execute<any[]>(`SELECT pal.SourceDate, pal.ComponentCode, pa.AdjustmentID, pa.Status
-      FROM payroll_adjustment_line pal INNER JOIN payroll_adjustment pa ON pa.AdjustmentID = pal.AdjustmentID
-      WHERE pal.SourceAttendanceID IN (${attendanceIds.map(() => '?').join(', ')}) FOR UPDATE`, attendanceIds)
-    if (duplicates.length) throw createError({ statusCode: 409, statusMessage: `An adjustment already claims ${dateOnly(duplicates[0].SourceDate)} ${duplicates[0].ComponentCode}. Open adjustment #${duplicates[0].AdjustmentID} instead.` })
+    if (attendanceIds.length) {
+      const [duplicates] = await connection.execute<any[]>(`SELECT pal.SourceDate, pal.ComponentCode, pa.AdjustmentID, pa.Status
+        FROM payroll_adjustment_line pal INNER JOIN payroll_adjustment pa ON pa.AdjustmentID = pal.AdjustmentID
+        WHERE pal.SourceAttendanceID IN (${attendanceIds.map(() => '?').join(', ')}) FOR UPDATE`, attendanceIds)
+      if (duplicates.length) throw createError({ statusCode: 409, statusMessage: `An adjustment already claims ${dateOnly(duplicates[0].SourceDate)} ${duplicates[0].ComponentCode}. Open adjustment #${duplicates[0].AdjustmentID} instead.` })
+    }
 
     const total = Math.round(lines.reduce((sum, line) => sum + line.amount, 0) * 100) / 100
     const status: Status = submit ? 'For Approval' : 'Draft'
     const [result] = await connection.execute<any>(`INSERT INTO payroll_adjustment
       (EmployeeID, SourceBatchID, TargetBatchID, AdjustmentType, Reason, VerificationReference, Status, TotalAmount, CreatedBy, SubmittedBy, SubmittedAt)
-      VALUES (?, ?, ?, 'Missed Attendance Pay', ?, NULL, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, reason, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length ? verificationReference : null, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
+    for (const day of verifiedDays) await connection.execute(`INSERT INTO payroll_adjustment_manual_day
+      (AdjustmentID, EmployeeID, SourceBatchID, SourceDate, ShiftCodeID, RegularHours, OTHours, OTExtHours, NightDiffHours)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [result.insertId, employeeId, sourceBatchId, day.sourceDate, day.shiftCodeId,
+      day.hours.RegularHours, day.hours.OTHours, day.hours.OTExtHours, day.hours.NightDiffHours])
     for (const line of lines) {
       await connection.execute(`INSERT INTO payroll_adjustment_line
         (AdjustmentID, SourceAttendanceID, SourceDate, ComponentCode, Description, EntrySource, Direction, Quantity, Rate, Amount)
@@ -270,7 +389,7 @@ export async function createPayrollAdjustment(event: any) {
     return { id: result.insertId, status, totalAmount: total, lineCount: lines.length }
   } catch (error: any) {
     await connection.rollback()
-    if (error?.code === 'ER_DUP_ENTRY') throw createError({ statusCode: 409, statusMessage: 'One of these attendance components already belongs to another adjustment.' })
+    if (error?.code === 'ER_DUP_ENTRY') throw createError({ statusCode: 409, statusMessage: 'A selected attendance date or component already belongs to another adjustment.' })
     throw error
   } finally { connection.release() }
 }
@@ -303,6 +422,12 @@ export async function updatePayrollAdjustment(event: any) {
       throw createError({ statusCode: 409, statusMessage: `Cannot ${action || 'update'} an adjustment with status ${current.Status}.` })
     }
     await connection.execute(`UPDATE payroll_adjustment SET Status = ?, Revision = Revision + 1, UpdatedBy = ?${extraSql} WHERE AdjustmentID = ?`, [nextStatus, session.sub, ...values, adjustmentId])
+    if (['Rejected', 'Cancelled'].includes(nextStatus)) await connection.execute('UPDATE payroll_adjustment_manual_day SET ClaimActive = NULL WHERE AdjustmentID = ?', [adjustmentId])
+    if (action === 'reopen') await connection.execute('UPDATE payroll_adjustment_manual_day SET ClaimActive = 1 WHERE AdjustmentID = ?', [adjustmentId])
     await connection.commit(); return { success: true, status: nextStatus, revision: Number(current.Revision) + 1 }
-  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+  } catch (error: any) {
+    await connection.rollback()
+    if (error?.code === 'ER_DUP_ENTRY') throw createError({ statusCode: 409, statusMessage: 'A newer adjustment already claims this missed date. Keep the old adjustment cancelled or rejected.' })
+    throw error
+  } finally { connection.release() }
 }

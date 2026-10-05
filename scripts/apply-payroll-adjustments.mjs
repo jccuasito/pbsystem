@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import mysql from 'mysql2/promise'
 
 const sql = fs.readFileSync(new URL('../database/payroll-adjustments.sql', import.meta.url), 'utf8')
+const manualSql = fs.readFileSync(new URL('../database/payroll-adjustment-manual-days.sql', import.meta.url), 'utf8')
 const connection = await mysql.createConnection({
   host: process.env.DB_HOST || '127.0.0.1',
   port: Number(process.env.DB_PORT || 3306),
@@ -22,8 +23,15 @@ try {
   const [[attendanceColumn]] = await connection.query(`SELECT is_nullable AS IsNullable FROM information_schema.columns
     WHERE table_schema = DATABASE() AND table_name = 'payroll_adjustment_line' AND column_name = 'SourceAttendanceID'`)
   if (attendanceColumn?.IsNullable !== 'YES') await connection.query(`ALTER TABLE payroll_adjustment_line MODIFY COLUMN SourceAttendanceID INT NULL`)
+  await connection.query(manualSql)
+  const [[claimColumn]] = await connection.query(`SELECT COUNT(*) AS ColumnCount FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'payroll_adjustment_manual_day' AND column_name = 'ClaimActive'`)
+  if (!Number(claimColumn.ColumnCount)) await connection.query(`ALTER TABLE payroll_adjustment_manual_day
+    ADD COLUMN ClaimActive TINYINT NULL DEFAULT 1 AFTER NightDiffHours,
+    DROP INDEX uq_adjustment_manual_employee_date,
+    ADD UNIQUE KEY uq_adjustment_manual_employee_date (EmployeeID, SourceBatchID, SourceDate, ClaimActive)`)
   const [tables] = await connection.query(`SELECT table_name FROM information_schema.tables
-    WHERE table_schema = DATABASE() AND table_name IN ('payroll_adjustment', 'payroll_adjustment_line')
+    WHERE table_schema = DATABASE() AND table_name IN ('payroll_adjustment', 'payroll_adjustment_line', 'payroll_adjustment_manual_day')
     ORDER BY table_name`)
   console.log(`Payroll adjustment schema ready: ${tables.map(item => item.table_name).join(', ')}`)
 } finally {

@@ -49,8 +49,21 @@ async function main() {
     assert.equal(list.response.status, 200, JSON.stringify(list.body))
     assert.ok(list.body.targetEmployees.some(item => Number(item.EmployeeID) === Number(candidate.EmployeeID)))
     assert.ok(list.body.sourceBatches.some(item => Number(item.BatchID) === Number(candidate.SourceBatchID)))
-    assert.ok(list.body.sourceBatches.every(item => Number(item.AttendanceCount) > 0))
+    assert.ok(Number(list.body.sourceBatches.find(item => Number(item.BatchID) === Number(candidate.SourceBatchID)).AttendanceCount) > 0)
     assert.ok(list.body.eligibleDates.some(item => item.AttendanceDate === candidate.AttendanceDate))
+    assert.ok(Array.isArray(list.body.missedDates) && list.body.missedDates.some(item => item.SourceDate === candidate.AttendanceDate))
+    assert.ok(Array.isArray(list.body.shiftCodes))
+    const sourceOption = list.body.sourceBatches.find(item => Number(item.BatchID) === Number(candidate.SourceBatchID))
+    const blankDay = list.body.missedDates.find(item => !Number(item.PayableHours) && !item.ExistingAdjustmentID)
+    if (sourceOption.Status === 'Draft' && blankDay && list.body.shiftCodes.length) {
+      const draftManual = await request('/api/payroll/adjustments', { method: 'POST', headers, body: JSON.stringify({
+        EmployeeID: candidate.EmployeeID, SourceBatchID: candidate.SourceBatchID, TargetBatchID: candidate.TargetBatchID,
+        ManualDays: [{ SourceDate: blankDay.SourceDate, ShiftCodeID: list.body.shiftCodes[0].ShiftCodeID,
+          RegularHours: 8, OTHours: 0, OTExtHours: 0, NightDiffHours: 0 }],
+        VerificationReference: 'Automated test timesheet', Reason: 'Draft source must be corrected in its DTR.',
+      }) })
+      assert.equal(draftManual.response.status, 409, JSON.stringify(draftManual.body))
+    }
 
     const create = await request('/api/payroll/adjustments', { method: 'POST', headers, body: JSON.stringify({
       EmployeeID: candidate.EmployeeID,
