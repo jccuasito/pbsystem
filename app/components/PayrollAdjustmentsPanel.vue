@@ -30,12 +30,12 @@ const creating = ref(false)
 const search = ref('')
 const statusFilter = ref('')
 const expanded = ref<Set<number>>(new Set())
-const form = ref({ EmployeeID: '', SourceBatchID: '', SourceDates: [] as string[], Reason: '', VerificationReference: '' })
+const form = ref({ EmployeeID: '', SourceBatchID: '', SourceDates: [] as string[], Reason: '' })
 
 const dateComponents = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours', 'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours']
 const canSave = computed(() => Boolean(form.value.SourceBatchID && form.value.Reason.length >= 5 && (entryMode.value === 'saved'
   ? form.value.SourceDates.length
-  : form.value.VerificationReference.trim().length >= 5 && verifiedDays.value.length && verifiedDays.value.every(day => day.SourceDate &&
+  : verifiedDays.value.length && verifiedDays.value.every(day => day.SourceDate &&
     Number(day.RegularHours) + Number(day.OTHours) + Number(day.OTExtHours) > 0))))
 const filteredItems = computed(() => items.value.filter(item => {
   if (statusFilter.value && item.Status !== statusFilter.value) return false
@@ -116,7 +116,7 @@ async function loadDates() {
 
 function openCreate(employeeId?: number) {
   if (!permissions.value.canCreate) return
-  form.value = { EmployeeID: String(employeeId || props.initialEmployeeId || ''), SourceBatchID: '', SourceDates: [], Reason: '', VerificationReference: '' }
+  form.value = { EmployeeID: String(employeeId || props.initialEmployeeId || ''), SourceBatchID: '', SourceDates: [], Reason: '' }
   entryMode.value = 'saved'
   verifiedDays.value = []
   creating.value = true
@@ -148,7 +148,6 @@ async function save(submit: boolean) {
       TargetBatchID: props.targetDtr.BatchID,
       SourceDates: entryMode.value === 'saved' ? form.value.SourceDates : [],
       ManualDays: entryMode.value === 'manual' ? verifiedDays.value : [],
-      VerificationReference: form.value.VerificationReference,
       Reason: form.value.Reason, Submit: submit,
     } })
     creating.value = false
@@ -259,7 +258,6 @@ defineExpose({ openCreate })
                 </div>
               </div>
               <button class="add-day" type="button" :disabled="!form.SourceBatchID || !missedDates.some(item => !item.PayableHours && !item.ExistingAdjustmentID && !item.UnavailableReason)" @click="addVerifiedDay">+ Add missed day</button>
-              <label class="reason-field"><span>Verification reference</span><input v-model.trim="form.VerificationReference" minlength="5" maxlength="255" required placeholder="Signed timesheet or work log reference"></label>
             </div>
             <fieldset v-if="entryMode === 'saved'" class="date-picker"><legend>Original attendance dates</legend><p v-if="!form.EmployeeID">Select an employee first.</p><p v-else-if="!form.SourceBatchID">Select the original cutoff to view its saved attendance.</p><p v-else-if="!eligibleDates.length">No saved payable attendance dates were found. Use Verified missed day if the prior DTR is finalized.</p><label v-for="item in eligibleDates" :key="item.AttendanceID" :class="{ claimed: item.ExistingAdjustmentID || !item.PayableHours }"><input v-model="form.SourceDates" type="checkbox" :value="item.AttendanceDate" :disabled="Boolean(item.ExistingAdjustmentID) || !item.PayableHours"><span><strong>{{ prettyDate(item.AttendanceDate) }}</strong><small>{{ item.AttendanceStatus || 'Present' }} · {{ hours(item.PayableHours) }} payable component hours</small><em v-if="item.ExistingAdjustmentID">Already in adjustment #{{ item.ExistingAdjustmentID }} · {{ item.ExistingAdjustmentStatus }}</em><em v-else-if="!item.PayableHours">No payable attendance components</em></span></label></fieldset>
             <label class="reason-field"><span>Reason</span><textarea v-model.trim="form.Reason" minlength="5" maxlength="500" required placeholder="Example: September 1 and 2 attendance was verified but was not included in the original payroll."></textarea></label>

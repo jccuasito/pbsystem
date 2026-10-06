@@ -281,7 +281,7 @@ export async function createPayrollAdjustment(event: any) {
   const verifiedDays = manualDays(body.ManualDays)
   if (Boolean(dates.length) === Boolean(verifiedDays.length)) throw createError({ statusCode: 400, statusMessage: 'Select saved attendance dates or verified missed days, but not both.' })
   const verificationReference = String(body.VerificationReference || '').trim()
-  if (verifiedDays.length && (verificationReference.length < 5 || verificationReference.length > 255)) throw createError({ statusCode: 400, statusMessage: 'Enter a verification reference (5–255 characters) for missed days.' })
+  if (verificationReference.length > 255) throw createError({ statusCode: 400, statusMessage: 'Verification reference cannot exceed 255 characters.' })
   const reason = cleanReason(body.Reason)
   const submit = body.Submit === true
   const connection = await pool.getConnection()
@@ -377,7 +377,7 @@ export async function createPayrollAdjustment(event: any) {
     const status: Status = submit ? verifiedDays.length ? 'Ready for Payroll' : 'For Approval' : 'Draft'
     const [result] = await connection.execute<any>(`INSERT INTO payroll_adjustment
       (EmployeeID, SourceBatchID, TargetBatchID, AdjustmentType, Reason, VerificationReference, Status, TotalAmount, CreatedBy, SubmittedBy, SubmittedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length ? verificationReference : null, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length && verificationReference ? verificationReference : null, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
     for (const day of verifiedDays) await connection.execute(`INSERT INTO payroll_adjustment_manual_day
       (AdjustmentID, EmployeeID, SourceBatchID, SourceDate, ShiftCodeID, RegularHours, OTHours, OTExtHours, NightDiffHours)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [result.insertId, employeeId, sourceBatchId, day.sourceDate, day.shiftCodeId,

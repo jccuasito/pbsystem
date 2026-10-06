@@ -55,13 +55,15 @@ async function main() {
       EmployeeID: candidate.EmployeeID, SourceBatchID: sourceBatchId, TargetBatchID: candidate.TargetBatchID,
       ManualDays: [{ SourceDate: missedDate.SourceDate, ShiftCodeID: '',
         RegularHours: 8, OTHours: 4, OTExtHours: 1, NightDiffHours: 2 }],
-      VerificationReference: 'Automated test work log', Reason: 'Verified missed day for automated workflow test.', Submit: true,
+      Reason: 'Verified missed day for automated workflow test.', Submit: true,
     }
     const created = await request('/api/payroll/adjustments', { method: 'POST', headers, body: JSON.stringify(payload) })
     assert.equal(created.response.status, 200, JSON.stringify(created.body))
     adjustmentIds.push(Number(created.body.id))
     assert.equal(created.body.status, 'Ready for Payroll')
     assert.equal(Number(created.body.lineCount), 4)
+    const [[savedAdjustment]] = await connection.query('SELECT VerificationReference FROM payroll_adjustment WHERE AdjustmentID = ?', [adjustmentIds[0]])
+    assert.equal(savedAdjustment.VerificationReference, null)
     const [[savedDay]] = await connection.query(`SELECT ShiftCodeID, RegularHours, OTHours, OTExtHours, NightDiffHours
       FROM payroll_adjustment_manual_day WHERE AdjustmentID = ?`, [adjustmentIds[0]])
     assert.equal(savedDay.ShiftCodeID, null)
