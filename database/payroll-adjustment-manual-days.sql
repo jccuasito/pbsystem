@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS payroll_adjustment_manual_day (
   EmployeeID INT NOT NULL,
   SourceBatchID INT NOT NULL,
   SourceDate DATE NOT NULL,
-  ShiftCodeID INT NOT NULL,
+  ShiftCodeID INT NULL,
   RegularHours DECIMAL(8,2) NOT NULL DEFAULT 0.00,
   OTHours DECIMAL(8,2) NOT NULL DEFAULT 0.00,
   OTExtHours DECIMAL(8,2) NOT NULL DEFAULT 0.00,

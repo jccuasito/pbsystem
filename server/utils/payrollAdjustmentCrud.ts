@@ -3,7 +3,7 @@ import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 
 type Body = Record<string, unknown>
-type Status = 'Draft' | 'For Approval' | 'Approved' | 'Applied' | 'Rejected' | 'Cancelled'
+type Status = 'Draft' | 'For Approval' | 'Approved' | 'Ready for Payroll' | 'Applied' | 'Rejected' | 'Cancelled'
 
 const earningComponents = [
   ['RegularHours', 'RegularRate', 'Regular hours'],
@@ -76,7 +76,7 @@ function manualDays(value: unknown) {
       throw createError({ statusCode: 400, statusMessage: 'Enter distinct valid missed attendance dates.' })
     }
     dates.add(sourceDate)
-    const shiftCodeId = positiveId(entry.ShiftCodeID, 'Shift code')
+    const shiftCodeId = entry?.ShiftCodeID == null || entry.ShiftCodeID === '' ? null : positiveId(entry.ShiftCodeID, 'Shift code')
     const hours: Record<string, number> = {}
     for (const [component] of manualComponents) {
       const raw = entry[component]
@@ -133,7 +133,7 @@ function listFilters(query: Record<string, string | undefined>) {
   if (query.targetBatchId) { filters.push('pa.TargetBatchID = ?'); values.push(positiveId(query.targetBatchId, 'Target DTR')) }
   if (query.employeeId) { filters.push('pa.EmployeeID = ?'); values.push(positiveId(query.employeeId, 'Employee')) }
   if (query.status) {
-    const allowed: Status[] = ['Draft', 'For Approval', 'Approved', 'Applied', 'Rejected', 'Cancelled']
+    const allowed: Status[] = ['Draft', 'For Approval', 'Approved', 'Ready for Payroll', 'Applied', 'Rejected', 'Cancelled']
     if (!allowed.includes(query.status as Status)) throw createError({ statusCode: 400, statusMessage: 'Invalid adjustment status.' })
     filters.push('pa.Status = ?'); values.push(query.status)
   }
@@ -343,10 +343,12 @@ export async function createPayrollAdjustment(event: any) {
         WHERE SourceBatchID = ? AND EmployeeID = ? AND ClaimActive = 1 AND SourceDate IN (${verifiedDays.map(() => '?').join(', ')}) FOR UPDATE`,
       [sourceBatchId, employeeId, ...verifiedDays.map(item => item.sourceDate)])
       if (claimed.length) throw createError({ statusCode: 409, statusMessage: `${dateOnly(claimed[0].SourceDate)} already belongs to adjustment #${claimed[0].AdjustmentID}. Open that adjustment instead.` })
-      const [shifts] = await connection.execute<any[]>(`SELECT ShiftCodeID FROM shift_code WHERE AgencyID = ? AND Status = 'Active' AND ShiftCodeID IN (${verifiedDays.map(() => '?').join(', ')})`,
-      [source.AgencyID, ...verifiedDays.map(item => item.shiftCodeId)])
+      const selectedShiftIds = [...new Set(verifiedDays.map(item => item.shiftCodeId).filter((id): id is number => id != null))]
+      const [shifts] = selectedShiftIds.length ? await connection.execute<any[]>(`SELECT ShiftCodeID FROM shift_code
+        WHERE AgencyID = ? AND Status = 'Active' AND ShiftCodeID IN (${selectedShiftIds.map(() => '?').join(', ')})`,
+      [source.AgencyID, ...selectedShiftIds]) : [[]]
       const allowedShifts = new Set(shifts.map(item => Number(item.ShiftCodeID)))
-      if (verifiedDays.some(item => !allowedShifts.has(item.shiftCodeId))) throw createError({ statusCode: 400, statusMessage: 'Choose an active shift code from the original DTR agency.' })
+      if (verifiedDays.some(item => item.shiftCodeId != null && !allowedShifts.has(item.shiftCodeId))) throw createError({ statusCode: 400, statusMessage: 'Choose an active shift code from the original DTR agency, or leave it blank and enter verified hours directly.' })
       const [[rate]] = await connection.execute<any[]>(`SELECT pr.RegularRate, pr.OTRate, pr.OTExtRate, pr.NightDiffRate
         FROM attendance_dtr_employee roster
         INNER JOIN employee_deployment ed ON ed.DeploymentID = roster.DeploymentID
@@ -372,7 +374,7 @@ export async function createPayrollAdjustment(event: any) {
     }
 
     const total = Math.round(lines.reduce((sum, line) => sum + line.amount, 0) * 100) / 100
-    const status: Status = submit ? 'For Approval' : 'Draft'
+    const status: Status = submit ? verifiedDays.length ? 'Ready for Payroll' : 'For Approval' : 'Draft'
     const [result] = await connection.execute<any>(`INSERT INTO payroll_adjustment
       (EmployeeID, SourceBatchID, TargetBatchID, AdjustmentType, Reason, VerificationReference, Status, TotalAmount, CreatedBy, SubmittedBy, SubmittedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length ? verificationReference : null, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
@@ -402,19 +404,20 @@ export async function updatePayrollAdjustment(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction(); await assertReady(connection)
-    const [[current]] = await connection.execute<any[]>('SELECT AdjustmentID, Status, TargetPayrollID, Revision FROM payroll_adjustment WHERE AdjustmentID = ? FOR UPDATE', [adjustmentId])
+    const [[current]] = await connection.execute<any[]>('SELECT AdjustmentID, AdjustmentType, Status, TargetPayrollID, Revision FROM payroll_adjustment WHERE AdjustmentID = ? FOR UPDATE', [adjustmentId])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'Payroll adjustment not found.' })
     if (current.TargetPayrollID || current.Status === 'Applied') throw createError({ statusCode: 409, statusMessage: 'An applied payroll adjustment is locked. Create a reversal adjustment for another correction.' })
     let nextStatus: Status
     let extraSql = ''
     const values: any[] = []
     if (action === 'submit' && current.Status === 'Draft') {
-      nextStatus = 'For Approval'; extraSql = ', SubmittedBy = ?, SubmittedAt = NOW(), ApprovedBy = NULL, ApprovedAt = NULL'; values.push(session.sub)
-    } else if (action === 'approve' && current.Status === 'For Approval') {
+      nextStatus = current.AdjustmentType === 'Verified Missed Attendance' ? 'Ready for Payroll' : 'For Approval'
+      extraSql = ', SubmittedBy = ?, SubmittedAt = NOW(), ApprovedBy = NULL, ApprovedAt = NULL'; values.push(session.sub)
+    } else if (action === 'approve' && current.Status === 'For Approval' && current.AdjustmentType !== 'Verified Missed Attendance') {
       assertCanApprove(session.userType); nextStatus = 'Approved'; extraSql = ', ApprovedBy = ?, ApprovedAt = NOW()'; values.push(session.sub)
-    } else if (action === 'reject' && current.Status === 'For Approval') {
+    } else if (action === 'reject' && current.Status === 'For Approval' && current.AdjustmentType !== 'Verified Missed Attendance') {
       assertCanApprove(session.userType); nextStatus = 'Rejected'; extraSql = ', ApprovedBy = ?, ApprovedAt = NOW()'; values.push(session.sub)
-    } else if (action === 'cancel' && ['Draft', 'For Approval', 'Approved'].includes(current.Status)) {
+    } else if (action === 'cancel' && ['Draft', 'For Approval', 'Approved', 'Ready for Payroll'].includes(current.Status)) {
       nextStatus = 'Cancelled'
     } else if (action === 'reopen' && ['Rejected', 'Cancelled'].includes(current.Status)) {
       nextStatus = 'Draft'; extraSql = ', SubmittedBy = NULL, SubmittedAt = NULL, ApprovedBy = NULL, ApprovedAt = NULL'

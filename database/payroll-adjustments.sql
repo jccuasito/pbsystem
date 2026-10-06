@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS payroll_adjustment (
   AdjustmentType VARCHAR(80) NOT NULL DEFAULT 'Missed Attendance Pay',
   Reason VARCHAR(500) NOT NULL,
   VerificationReference VARCHAR(255) NULL,
-  Status ENUM('Draft', 'For Approval', 'Approved', 'Applied', 'Rejected', 'Cancelled') NOT NULL DEFAULT 'Draft',
+  Status ENUM('Draft', 'For Approval', 'Approved', 'Ready for Payroll', 'Applied', 'Rejected', 'Cancelled') NOT NULL DEFAULT 'Draft',
   TotalAmount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   TargetPayrollID INT NULL,
   Revision INT NOT NULL DEFAULT 1,
