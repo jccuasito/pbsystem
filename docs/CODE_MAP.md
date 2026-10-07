@@ -495,6 +495,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
+  - `components/SearchableSelect.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -517,6 +518,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
+  - `components/SearchableSelect.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -559,6 +561,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
+  - `components/SearchableSelect.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -581,6 +584,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
+  - `components/SearchableSelect.vue`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`

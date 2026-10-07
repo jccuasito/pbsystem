@@ -26,7 +26,7 @@ const clientFilter = ref('')
 const agencyFilter = ref('')
 const statusFilter = ref('')
 
-const selectedSite = computed(() => sites.value.find(site => Number(site.SiteID) === Number(form.value.SiteID)) || null)
+const selectedSite = computed(() => sites.value.find(site => String(site.SiteID) === String(form.value.SiteID) && String(site.AgencyID) === String(form.value.AgencyID)) || null)
 const selectedPosition = computed(() => agencyPositions.value.find(position => String(position.AgencyPositionID) === String(form.value.AgencyPositionID)) || null)
 const existingSiteLinks = computed(() => items.value.filter(item => item.Status === 'Active'
   && String(item.SiteID) === String(form.value.SiteID)
@@ -39,7 +39,7 @@ const filteredBilling = computed(() => billingRates.value.filter(rate => Number(
 const selectedPayroll = computed(() => payrollRates.value.find(rate => Number(rate.PayrollRateID) === Number(form.value.PayrollRateID)))
 const selectedBilling = computed(() => billingRates.value.find(rate => Number(rate.BillingRateID) === Number(form.value.BillingRateID)))
 
-const siteOptions = computed(() => sites.value.filter(site => site.RegionID).map(site => ({
+const siteOptions = computed(() => sites.value.filter(site => site.RegionID && String(site.AgencyID) === String(form.value.AgencyID)).map(site => ({
   value: site.SiteID,
   label: site.SiteName,
   search: site.SiteName,
@@ -84,7 +84,7 @@ function reset(item: any = null) {
 }
 function showForm(item: any = null) { reset(item); open.value = true }
 function clearRateSelection() { form.value.PayrollRateID = ''; form.value.BillingRateID = ''; inlinePayroll.value = false; inlineBilling.value = false }
-function onAgencyChange() { form.value.AgencyPositionID = ''; clearRateSelection() }
+function onAgencyChange() { form.value.SiteID = ''; form.value.AgencyPositionID = ''; clearRateSelection() }
 function clearFilters() { search.value = ''; clientFilter.value = ''; agencyFilter.value = ''; statusFilter.value = '' }
 
 async function load(silent = false) {
@@ -181,14 +181,15 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <Teleport to="body"><div v-if="open" class="backdrop" @click.self="!busy && (open = false)"><form class="modal site-rate-modal" role="dialog" aria-modal="true" aria-labelledby="site-rate-modal-title" @submit.prevent="save">
       <button class="close" type="button" aria-label="Close site rate form" :disabled="busy" @click="open = false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
-      <header class="modal-heading"><p class="eyebrow">SITE RATE</p><h2 id="site-rate-modal-title">{{ editing ? 'Edit site rate' : 'Link site rate' }}</h2><span>Choose a site, then select an agency and one of its positions.</span></header>
+      <header class="modal-heading"><p class="eyebrow">SITE RATE</p><h2 id="site-rate-modal-title">{{ editing ? 'Edit site rate' : 'Link site rate' }}</h2><span>Choose an agency, then select one of its assigned sites and positions.</span></header>
       <section class="site-rate-section">
-        <div class="section-heading"><div><span>ASSIGNMENT</span><h3>Site and position</h3></div><small>Positions are limited to the agency you choose.</small></div>
+        <div class="section-heading"><div><span>ASSIGNMENT</span><h3>Agency, site, and position</h3></div><small>Sites and positions are limited to the agency you choose.</small></div>
         <div class="selection-grid">
-          <SearchableSelect v-model="form.SiteID" class="site-picker" label="Site" :options="siteOptions" placeholder="Search site" required empty-text="No active sites with a region found." @change="clearRateSelection" />
           <label class="control-label"><span>Agency</span><select v-model="form.AgencyID" required @change="onAgencyChange"><option value="">Select agency</option><option v-for="agency in agencyOptions" :key="agency.value" :value="agency.value">{{ agency.label }}</option></select></label>
+          <SearchableSelect v-model="form.SiteID" class="site-picker" label="Site" :options="siteOptions" :disabled="!form.AgencyID" :placeholder="form.AgencyID ? 'Search site' : 'Select agency first'" required empty-text="No active sites with a region are assigned to this agency." @change="clearRateSelection" />
           <label class="control-label"><span>Position</span><select v-model="form.AgencyPositionID" :disabled="!form.AgencyID" required @change="clearRateSelection"><option value="">{{ form.AgencyID ? 'Select position' : 'Select agency first' }}</option><option v-for="position in positionOptions" :key="position.value" :value="position.value">{{ position.label }}</option></select></label>
         </div>
+        <p v-if="form.AgencyID && !siteOptions.length" class="field-note">Assign an active site to this agency under Organization → Sites before linking rates.</p>
         <p v-if="form.AgencyID && !positionOptions.length" class="field-note">This agency has no active positions available for site rates.</p>
         <div v-if="selectedSite" class="site-context"><span><small>CLIENT</small><strong>{{ selectedSite.ClientName }}</strong></span><span><small>REGION</small><strong>{{ selectedSite.RegionCode || selectedSite.RegionName }}</strong></span></div>
         <div v-if="existingSiteLinks.length" class="existing-link-alert" :class="{ 'existing-link-alert--duplicate': duplicateSiteLink }" :role="duplicateSiteLink ? 'alert' : 'status'">

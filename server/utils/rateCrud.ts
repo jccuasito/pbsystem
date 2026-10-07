@@ -22,9 +22,11 @@ const agencyPositions = async () => {
   return rows
 }
 const regions = async () => { const [rows] = await pool.execute<any[]>("SELECT RegionID, RegionCode, RegionName FROM region WHERE Status = 'Active' ORDER BY RegionName"); return rows }
-const sites = async () => { const [rows] = await pool.execute<any[]>(`SELECT s.SiteID, s.ClientID, c.ClientName, s.SiteName, s.RegionID, rg.RegionCode, rg.RegionName
+const sites = async () => { const [rows] = await pool.execute<any[]>(`SELECT s.SiteID, s.ClientID, c.ClientName, s.SiteName, s.RegionID, rg.RegionCode, rg.RegionName, sa.AgencyID
   FROM site s INNER JOIN client c ON c.ClientID = s.ClientID LEFT JOIN region rg ON rg.RegionID = s.RegionID
-  WHERE s.Status = 'Active' AND c.Status = 'Active' ORDER BY c.ClientName, s.SiteName`); return rows }
+  INNER JOIN site_agency sa ON sa.SiteID = s.SiteID AND sa.Status = 'Active'
+  INNER JOIN agency a ON a.AgencyID = sa.AgencyID AND a.Status = 'Active'
+  WHERE s.Status = 'Active' AND c.Status = 'Active' ORDER BY a.AgencyName, c.ClientName, s.SiteName`); return rows }
 
 function resource(event: any): Resource {
   const value = getRouterParam(event, 'resource') as Resource
@@ -55,11 +57,12 @@ function rateValues(body: Record<string, any>, preserveOmittedAmounts = false) {
 function rateTable(resource: Resource) { return resource === 'payroll-rate' ? { table: 'payroll_rate', id: 'PayrollRateID' } : { table: 'billing_rate', id: 'BillingRateID' } }
 function isSiteRate(resource: Resource) { return resource === 'site-rate' }
 
-async function siteDetails(connection: any, siteID: number) {
+async function siteDetails(connection: any, siteID: number, agencyID: number) {
   const [[site]] = await connection.execute<any[]>(`SELECT s.SiteID, s.ClientID, s.RegionID, s.SiteName, c.ClientName
     FROM site s INNER JOIN client c ON c.ClientID = s.ClientID
-    WHERE s.SiteID = ? AND s.Status = 'Active' AND c.Status = 'Active' LIMIT 1 FOR UPDATE`, [siteID])
-  if (!site) throw createError({ statusCode: 400, statusMessage: 'Select an active site.' })
+    INNER JOIN site_agency sa ON sa.SiteID = s.SiteID AND sa.AgencyID = ? AND sa.Status = 'Active'
+    WHERE s.SiteID = ? AND s.Status = 'Active' AND c.Status = 'Active' LIMIT 1 FOR UPDATE`, [agencyID, siteID])
+  if (!site) throw createError({ statusCode: 400, statusMessage: 'Select a site assigned to the selected agency.' })
   if (!site.RegionID) throw createError({ statusCode: 400, statusMessage: 'Set the site region in Organization > Sites before linking rates.' })
   return site
 }
@@ -131,8 +134,9 @@ export async function createRateResource(event: any) {
   try {
     await connection.beginTransaction()
     const agencyPositionID = validId(body.AgencyPositionID, 'AgencyPositionID')
-    await assertAgencyPosition(connection, validId(body.AgencyID, 'AgencyID'), agencyPositionID)
-    const site = await siteDetails(connection, validId(body.SiteID, 'SiteID'))
+    const agencyID = validId(body.AgencyID, 'AgencyID')
+    await assertAgencyPosition(connection, agencyID, agencyPositionID)
+    const site = await siteDetails(connection, validId(body.SiteID, 'SiteID'), agencyID)
     let payrollRateID = validId(body.PayrollRateID, 'PayrollRateID', true)
     let billingRateID = validId(body.BillingRateID, 'BillingRateID', true)
     if (body.inlinePayrollRate) payrollRateID = await insertRate(connection, 'payroll_rate', { ...body.inlinePayrollRate, AgencyPositionID: agencyPositionID, RegionID: site.RegionID })
@@ -159,8 +163,9 @@ export async function updateRateResource(event: any) {
   try {
     await connection.beginTransaction()
     const payrollRateID = validId(body.PayrollRateID, 'PayrollRateID'); const billingRateID = validId(body.BillingRateID, 'BillingRateID'); const agencyPositionID = validId(body.AgencyPositionID, 'AgencyPositionID')
-    await assertAgencyPosition(connection, validId(body.AgencyID, 'AgencyID'), agencyPositionID)
-    const site = await siteDetails(connection, validId(body.SiteID, 'SiteID'))
+    const agencyID = validId(body.AgencyID, 'AgencyID')
+    await assertAgencyPosition(connection, agencyID, agencyPositionID)
+    const site = await siteDetails(connection, validId(body.SiteID, 'SiteID'), agencyID)
     await assertRatePair(connection, payrollRateID, billingRateID, agencyPositionID, Number(site.RegionID))
     if (status(body.Status) === 'Active') await assertNoActiveSiteRate(connection, Number(site.SiteID), agencyPositionID, id)
     const [result] = await connection.execute<any>('UPDATE site_rate SET SiteID = ?, PayrollRateID = ?, BillingRateID = ?, Status = ? WHERE SiteRateID = ?', [site.SiteID, payrollRateID, billingRateID, status(body.Status), id])

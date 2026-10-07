@@ -25,7 +25,7 @@ const configs: Record<Resource, Config> = {
   region: { table: 'region', id: 'RegionID', fields: ['RegionCode', 'RegionName', 'Status'], listSql: 'SELECT RegionID, RegionCode, RegionName, Status FROM region ORDER BY RegionName' },
   client: { table: 'client', id: 'ClientID', fields: ['ClientName', 'ClientAddress', 'ContractStart', 'ContractEnd', 'Status'], listSql: 'SELECT ClientID, ClientName, ClientAddress, ContractStart, ContractEnd, Status FROM client ORDER BY ClientName' },
   'client-policy': { table: 'client_policy', id: 'ClientPolicyID', fields: ['ClientID', ...policyFields], listSql: 'SELECT cp.*, c.ClientName FROM client_policy cp INNER JOIN client c ON c.ClientID = cp.ClientID ORDER BY c.ClientName', lookups: activeClients },
-  site: { table: 'site', id: 'SiteID', fields: ['ClientID', 'RegionID', 'SiteName', 'SiteAddress', 'Status'], listSql: `SELECT s.SiteID, s.ClientID, c.ClientName, s.RegionID, r.RegionCode, r.RegionName, s.SiteName, s.SiteAddress, s.Status, CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END AS HasLogo, v.PolicySource, v.NDEnabled, v.NDStartTime, v.NDEndTime FROM site s INNER JOIN client c ON c.ClientID = s.ClientID LEFT JOIN region r ON r.RegionID = s.RegionID LEFT JOIN vw_effective_site_policy v ON v.SiteID = s.SiteID ORDER BY c.ClientName, s.SiteName`, lookups: async () => ({ ...(await activeClients()), ...(await activeRegions()) }) },
+  site: { table: 'site', id: 'SiteID', fields: ['ClientID', 'RegionID', 'SiteName', 'SiteAddress', 'Status'], listSql: `SELECT s.SiteID, s.ClientID, c.ClientName, s.RegionID, r.RegionCode, r.RegionName, s.SiteName, s.SiteAddress, s.Status, CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END AS HasLogo, v.PolicySource, v.NDEnabled, v.NDStartTime, v.NDEndTime FROM site s INNER JOIN client c ON c.ClientID = s.ClientID LEFT JOIN region r ON r.RegionID = s.RegionID LEFT JOIN vw_effective_site_policy v ON v.SiteID = s.SiteID ORDER BY c.ClientName, s.SiteName`, lookups: async () => ({ ...(await activeClients()), ...(await activeRegions()), ...(await activeAgencies()) }) },
   'site-policy': { table: 'site_policy', id: 'SitePolicyID', fields: ['SiteID', ...sitePolicyFields], listSql: 'SELECT sp.*, s.SiteName, c.ClientName FROM site_policy sp INNER JOIN site s ON s.SiteID = sp.SiteID INNER JOIN client c ON c.ClientID = s.ClientID ORDER BY c.ClientName, s.SiteName', lookups: activeSites },
   'site-shift': { table: 'site_shift', id: 'SiteShiftID', fields: ['SiteID', 'ShiftCodeID', 'NDPolicyOverride', 'Status'], listSql: `SELECT ss.SiteShiftID, ss.SiteID, s.SiteName, ss.ShiftCodeID, sc.ShiftCode, sc.ShiftName, ss.NDPolicyOverride, ss.Status, CASE ss.NDPolicyOverride WHEN 'Enabled' THEN 1 WHEN 'Disabled' THEN 0 ELSE COALESCE(v.NDEnabled, 0) END AS EffectiveNDEnabled, v.PolicySource FROM site_shift ss INNER JOIN site s ON s.SiteID = ss.SiteID INNER JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID LEFT JOIN vw_effective_site_policy v ON v.SiteID = ss.SiteID ORDER BY s.SiteName, sc.ShiftCode`, lookups: async () => ({ ...(await activeSites()), ...(await activeShiftCodes()) }) },
   'shift-code': { table: 'shift_code', id: 'ShiftCodeID', fields: ['AgencyID', 'ShiftCode', 'ShiftName', 'ShiftType', 'TimeIn', 'TimeOut', 'RegularHours', 'RegularOTCap', 'WorkdayCount', 'NDEnabled', 'NDStartTime', 'NDEndTime', 'Status'], listSql: 'SELECT sc.ShiftCodeID, sc.AgencyID, a.AgencyName, sc.ShiftCode, sc.ShiftName, sc.ShiftType, sc.TimeIn, sc.TimeOut, sc.RegularHours, sc.RegularOTCap, sc.WorkdayCount, sc.NDEnabled, sc.NDStartTime, sc.NDEndTime, sc.Status, sc.CreatedAt FROM shift_code sc INNER JOIN agency a ON a.AgencyID = sc.AgencyID ORDER BY a.AgencyName, sc.ShiftCode, sc.ShiftName', lookups: activeAgencies }
@@ -61,6 +61,29 @@ function normalizeValue(field: string, value: unknown) {
 
 function valuesFor(config: Config, body: Record<string, unknown>) {
   return config.fields.map((field) => normalizeValue(field, body[field]))
+}
+
+function siteAgencyIds(body: Record<string, unknown>) {
+  if (!Array.isArray(body.AgencyIDs) || !body.AgencyIDs.length || body.AgencyIDs.length > 100) {
+    throw createError({ statusCode: 400, statusMessage: 'Select at least one agency for the site.' })
+  }
+  const ids = body.AgencyIDs.map(value => Number(value))
+  if (ids.some(id => !Number.isInteger(id) || id <= 0) || new Set(ids).size !== ids.length) {
+    throw createError({ statusCode: 400, statusMessage: 'Select valid agencies without duplicates.' })
+  }
+  return ids
+}
+
+async function validateSiteAgencies(connection: any, ids: number[]) {
+  const [rows] = await connection.execute<any[]>(`SELECT AgencyID FROM agency WHERE AgencyID IN (${ids.map(() => '?').join(', ')}) AND Status = 'Active'`, ids)
+  if (rows.length !== ids.length) throw createError({ statusCode: 400, statusMessage: 'Select active agencies for the site.' })
+}
+
+async function syncSiteAgencies(connection: any, siteID: number, ids: number[]) {
+  await connection.execute("UPDATE site_agency SET Status = 'Inactive' WHERE SiteID = ?", [siteID])
+  for (const agencyID of ids) {
+    await connection.execute("INSERT INTO site_agency (SiteID, AgencyID, Status) VALUES (?, ?, 'Active') ON DUPLICATE KEY UPDATE Status = 'Active'", [siteID, agencyID])
+  }
 }
 
 type LogoValue = { data: Buffer; mimeType: string } | null | undefined
@@ -124,8 +147,25 @@ async function ensureUniqueShiftCode(values: unknown[], id?: number) {
 export async function listOrganizationResource(event: any) {
   const session = requireSession(event)
   void session.sub
-  const config = configs[resource(event)]
+  const resourceName = resource(event)
+  const config = configs[resourceName]
   const [items] = await pool.execute<any[]>(config.listSql)
+  if (resourceName === 'site') {
+    const [links] = await pool.execute<any[]>(`SELECT sa.SiteID, sa.AgencyID, a.AgencyName FROM site_agency sa
+      INNER JOIN agency a ON a.AgencyID = sa.AgencyID WHERE sa.Status = 'Active' ORDER BY a.AgencyName`)
+    const bySite = new Map<number, { ids: number[]; names: string[] }>()
+    for (const link of links) {
+      const record = bySite.get(Number(link.SiteID)) || { ids: [], names: [] }
+      record.ids.push(Number(link.AgencyID))
+      record.names.push(String(link.AgencyName))
+      bySite.set(Number(link.SiteID), record)
+    }
+    for (const item of items) {
+      const agencies = bySite.get(Number(item.SiteID))
+      item.AgencyIDs = agencies?.ids || []
+      item.AgencyNames = agencies?.names.join(', ') || ''
+    }
+  }
   return { items, ...(config.lookups ? await config.lookups() : {}) }
 }
 
@@ -143,6 +183,18 @@ export async function createOrganizationResource(event: any) {
   const logo = supportsLogo(resourceName) ? logoValue(body || {}) : undefined
   const fields = logo && logo !== null ? [...config.fields, 'LogoData', 'LogoMimeType'] : config.fields
   const insertValues = logo && logo !== null ? [...values, logo.data, logo.mimeType] : values
+  if (resourceName === 'site') {
+    const ids = siteAgencyIds(body || {})
+    const connection = await pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      await validateSiteAgencies(connection, ids)
+      const [result] = await connection.execute<any>(`INSERT INTO site (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`, insertValues)
+      await syncSiteAgencies(connection, Number(result.insertId), ids)
+      await connection.commit()
+      return { id: result.insertId }
+    } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+  }
   const [result] = await pool.execute<any>(`INSERT INTO ${config.table} (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`, insertValues)
   return { id: result.insertId }
 }
@@ -168,6 +220,28 @@ export async function updateOrganizationResource(event: any) {
   } else if (logo) {
     assignments.push('LogoData = ?', 'LogoMimeType = ?')
     updateValues.push(logo.data, logo.mimeType)
+  }
+  if (resourceName === 'site') {
+    const ids = siteAgencyIds(body)
+    const connection = await pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      await validateSiteAgencies(connection, ids)
+      const [siteRows] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? LIMIT 1 FOR UPDATE', [id])
+      if (!siteRows[0]) throw createError({ statusCode: 404, statusMessage: 'Site not found.' })
+      const [linkedRates] = await connection.execute<any[]>(`SELECT DISTINCT ap.AgencyID, a.AgencyName FROM site_rate sr
+        INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+        INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+        INNER JOIN agency a ON a.AgencyID = ap.AgencyID
+        WHERE sr.SiteID = ? AND sr.Status = 'Active'`, [id])
+      const removedLinkedAgency = linkedRates.find(link => !ids.includes(Number(link.AgencyID)))
+      if (removedLinkedAgency) throw createError({ statusCode: 409, statusMessage: `${removedLinkedAgency.AgencyName} still has an active site rate. Deactivate that link before removing this agency.` })
+      const [result] = await connection.execute<any>(`UPDATE site SET ${assignments.join(', ')} WHERE SiteID = ?`, [...updateValues, id])
+      if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Site not found.' })
+      await syncSiteAgencies(connection, id, ids)
+      await connection.commit()
+      return { success: true }
+    } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
   }
   const result = await pool.execute<any>(`UPDATE ${config.table} SET ${assignments.join(', ')} WHERE ${config.id} = ?`, [...updateValues, id])
   if (result[0].affectedRows === 0) throw createError({ statusCode: 404, statusMessage: 'Record not found.' })

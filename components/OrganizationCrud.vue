@@ -2,8 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import ModernDateField from './ModernDateField.vue'
+import SearchableSelect from './SearchableSelect.vue'
 
-type Field = { key: string; label: string; type?: 'text' | 'email' | 'date' | 'select' | 'textarea' | 'file'; required?: boolean; optionsKey?: string }
+type Field = { key: string; label: string; type?: 'text' | 'email' | 'date' | 'select' | 'searchable-select' | 'textarea' | 'file' | 'multiselect'; required?: boolean; optionsKey?: string }
 type Column = { key: string; label: string }
 
 const props = defineProps<{ resource: string; title: string; fields: Field[]; columns: Column[]; description?: string; searchPlaceholder?: string }>()
@@ -18,6 +19,7 @@ const loading = ref(true)
 const logoPreview = ref('')
 const search = ref('')
 const statusFilter = ref('')
+const agencyFilter = ref('')
 
 function singularTitle(title: string) {
   if (title.endsWith('ies')) return `${title.slice(0, -3)}y`
@@ -29,19 +31,25 @@ const modalTitle = computed(() => editing.value ? `Edit ${singular.value}` : `Ad
 const idKey = computed(() => `${props.resource.split('-').map(part => part[0].toUpperCase() + part.slice(1)).join('')}ID`)
 const primaryColumn = computed(() => props.columns.find(column => !['Logo', 'Status'].includes(column.key)) || props.columns[0])
 const cardColumns = computed(() => props.columns.filter(column => !['Logo', 'Status', primaryColumn.value?.key].includes(column.key)))
+const formGroups = computed(() => props.resource === 'site' ? [
+  { key: 'details', eyebrow: 'SITE DETAILS', title: 'Location and client', fields: props.fields.filter(field => ['ClientID', 'RegionID', 'SiteName', 'SiteAddress'].includes(field.key)) },
+  { key: 'agencies', eyebrow: 'AGENCY COVERAGE', title: 'Assigned agencies', fields: props.fields.filter(field => field.key === 'AgencyIDs') },
+  { key: 'settings', eyebrow: 'BRANDING & AVAILABILITY', title: 'Logo and status', fields: props.fields.filter(field => ['LogoData', 'Status'].includes(field.key)) },
+] : [{ key: 'general', eyebrow: '', title: '', fields: props.fields }])
 const filteredItems = computed(() => {
   const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   return items.value.filter(item => {
     const searchable = props.columns.map(column => item[column.key]).filter(value => typeof value !== 'object').join(' ').toLocaleLowerCase()
     return words.every(word => searchable.includes(word)) && (!statusFilter.value || item.Status === statusFilter.value)
+      && (!agencyFilter.value || (Array.isArray(item.AgencyIDs) && item.AgencyIDs.some((id: number) => String(id) === agencyFilter.value)))
   })
 })
 
 function resetForm(item: any = null) {
   editing.value = item
   form.value = Object.fromEntries(props.fields.map(field => {
-    const value = item?.[field.key] ?? (field.key === 'Status' ? 'Active' : '')
-    return [field.key, field.type === 'date' && typeof value === 'string' ? value.slice(0, 10) : value]
+    const value = item?.[field.key] ?? (field.type === 'multiselect' ? [] : field.key === 'Status' ? 'Active' : '')
+    return [field.key, field.type === 'date' && typeof value === 'string' ? value.slice(0, 10) : Array.isArray(value) ? [...value] : value]
   }))
   logoPreview.value = item?.HasLogo ? logoUrl(item) : ''
   error.value = ''
@@ -57,6 +65,10 @@ function optionValue(field: Field, option: any) {
 
 function optionLabel(option: any) {
   return option.RegionName || option.ClientName || option.AgencyName || option.PositionName || option.SiteName || option.ShiftName || option.Name
+}
+
+function searchableOptions(field: Field) {
+  return (lookups.value[field.optionsKey || ''] || []).map(option => ({ value: optionValue(field, option), label: optionLabel(option) }))
 }
 
 async function selectLogo(event: Event) {
@@ -108,10 +120,14 @@ async function load(silent = false) {
 
 function add() { resetForm(); modalOpen.value = true }
 function edit(item: any) { resetForm(item); modalOpen.value = true }
-function clearFilters() { search.value = ''; statusFilter.value = '' }
+function clearFilters() { search.value = ''; statusFilter.value = ''; agencyFilter.value = '' }
 
 async function save() {
   if (busy.value) return
+  if (props.resource === 'site' && (!Array.isArray(form.value.AgencyIDs) || !form.value.AgencyIDs.length)) {
+    error.value = 'Select at least one agency for this site.'
+    return
+  }
   busy.value = true
   error.value = ''
   try {
@@ -155,7 +171,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 </script>
 
 <template>
-  <main class="organization-page">
+  <main class="organization-page" :class="{ 'organization-page--site': resource === 'site' }">
     <header class="page-head">
       <div><p>ORGANIZATION</p><h1>{{ title }}</h1><small v-if="description">{{ description }}</small></div>
       <button class="primary" type="button" @click="add">+ Add {{ singular }}</button>
@@ -164,9 +180,10 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <section class="filters" :aria-label="`${title} filters`">
       <label class="search-field"><span>Search {{ title.toLowerCase() }}</span><input v-model="search" type="search" :placeholder="searchPlaceholder || `Search ${title.toLowerCase()}`"></label>
+      <label v-if="resource === 'site'"><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in lookups.agencies || []" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
-    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `Showing ${filteredItems.length} of ${items.length} ${title.toLowerCase()}` }}</span><button v-if="search || statusFilter" type="button" @click="clearFilters">Clear filters</button></div>
+    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `Showing ${filteredItems.length} of ${items.length} ${title.toLowerCase()}` }}</span><button v-if="search || statusFilter || agencyFilter" type="button" @click="clearFilters">Clear filters</button></div>
 
     <div class="desktop-table">
       <table><thead><tr><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th class="actions-heading">Actions</th></tr></thead>
@@ -190,18 +207,23 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       </article>
     </section>
 
-    <Teleport to="body"><div v-if="modalOpen" class="modal-backdrop" @click.self="!busy && (modalOpen = false)"><form class="modal organization-crud-modal" @submit.prevent="save">
+    <Teleport to="body"><div v-if="modalOpen" class="modal-backdrop" @click.self="!busy && (modalOpen = false)"><form class="modal organization-crud-modal" :class="{ 'organization-crud-modal--site': resource === 'site' }" role="dialog" aria-modal="true" aria-labelledby="organization-modal-title" @submit.prevent="save">
       <button type="button" class="close" aria-label="Close" :disabled="busy" @click="modalOpen = false">×</button>
-      <div class="modal-heading"><p>ORGANIZATION</p><h2>{{ modalTitle }}</h2><span>Complete the details below, then save your changes.</span></div>
-      <div class="form-grid">
-        <template v-for="field in fields" :key="field.key">
+      <div class="modal-heading"><p>ORGANIZATION</p><h2 id="organization-modal-title">{{ modalTitle }}</h2><span>{{ resource === 'site' ? 'Set the site details and the agencies that may use this site for rates.' : 'Complete the details below, then save your changes.' }}</span></div>
+      <section v-for="group in formGroups" :key="group.key" class="organization-form-section" :class="{ 'organization-form-section--plain': resource !== 'site' }">
+        <div v-if="group.title" class="organization-form-section__heading"><div><span>{{ group.eyebrow }}</span><h3>{{ group.title }}</h3></div><small v-if="group.key === 'agencies'">A site can be assigned to more than one agency.</small></div>
+        <div class="form-grid">
+        <template v-for="field in group.fields" :key="field.key">
           <label v-if="field.type === 'textarea'" class="form-field form-field--wide"><span>{{ field.label }}</span><textarea v-model="form[field.key]" :required="field.required" /></label>
           <ModernDateField v-else-if="field.type === 'date'" v-model="form[field.key]" :label="field.label" :required="field.required" />
+          <fieldset v-else-if="field.type === 'multiselect'" class="agency-choices form-field--wide"><legend>{{ field.label }}</legend><div class="agency-choices__grid"><label v-for="option in lookups[field.optionsKey || ''] || []" :key="optionValue(field, option)"><input v-model="form[field.key]" type="checkbox" :value="optionValue(field, option)"><span>{{ optionLabel(option) }}</span></label></div><p v-if="!(lookups[field.optionsKey || ''] || []).length">No active agencies available.</p></fieldset>
+          <SearchableSelect v-else-if="field.type === 'searchable-select'" v-model="form[field.key]" class="form-searchable" :label="field.label" :options="searchableOptions(field)" :placeholder="`Search ${field.label.toLowerCase()}`" :required="field.required" :empty-text="`No matching ${field.label.toLowerCase()}s.`" />
           <label v-else-if="field.type === 'select'" class="form-field"><span>{{ field.label }}</span><select v-model="form[field.key]" :required="field.required"><option value="">Select {{ field.label }}</option><template v-if="field.optionsKey"><option v-for="option in lookups[field.optionsKey] || []" :key="optionValue(field, option)" :value="optionValue(field, option)">{{ optionLabel(option) }}</option></template><template v-else><option>Active</option><option>Inactive</option></template></select></label>
           <label v-else-if="field.type === 'file'" class="form-field form-field--wide"><span>{{ field.label }}</span><input type="file" accept="image/png,image/jpeg,image/webp" @change="selectLogo"><small>PNG, JPG, or WEBP, up to 2 MB.</small><div v-if="logoPreview" class="logo-editor"><img :src="logoPreview" alt="Logo preview"><button type="button" @click="removeLogo">Remove logo</button></div></label>
           <label v-else class="form-field"><span>{{ field.label }}</span><input v-model="form[field.key]" :type="field.type || 'text'" :required="field.required"></label>
         </template>
-      </div>
+        </div>
+      </section>
       <p v-if="error" class="error modal-error" role="alert">{{ error }}</p>
       <footer class="modal-footer"><button type="button" :disabled="busy" @click="modalOpen = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving…' : editing ? 'Save changes' : `Add ${singular}` }}</button></footer>
     </form></div></Teleport>
@@ -213,6 +235,33 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 @media(max-width:900px){.organization-page{padding:22px 18px}.desktop-table{display:none}.mobile-list{display:grid;gap:10px}}
 @media(max-width:600px){.organization-page{padding:16px 12px}.page-head{align-items:stretch;flex-direction:column;margin-bottom:18px}.page-head .primary{width:100%}.filters{grid-template-columns:1fr;gap:9px}.list-summary{align-items:flex-start;flex-direction:column;gap:5px}.modal-backdrop{align-items:end;padding:0}.modal{width:100%;max-height:calc(100dvh - 10px);gap:14px;padding:20px 14px;border-radius:16px 16px 0 0}.form-grid{grid-template-columns:1fr}.form-field--wide{grid-column:auto}.modal-footer{position:sticky;bottom:-20px;display:grid;grid-template-columns:1fr 1fr;margin:0 -14px -20px;padding:11px 14px;background:#fff;border-top:1px solid #e5eaf2}.modal-footer>button{width:100%}}
 @media(max-width:360px){.record-card dl>div{grid-template-columns:1fr;gap:2px}.modal-footer{grid-template-columns:1fr}}
+.organization-page--site .filters{grid-template-columns:minmax(260px,1fr) minmax(160px,250px) minmax(160px,220px)}
+.organization-crud-modal--site{width:min(100%,980px);gap:16px;padding:30px;background:#f7f9fc}
+.organization-crud-modal--site .modal-heading{padding-right:42px}
+.organization-crud-modal--site .modal-heading h2{margin:4px 0 5px;font-size:1.75rem;color:#182e4e}
+.organization-crud-modal--site .modal-heading>span{font-size:.88rem;line-height:1.45}
+.organization-crud-modal--site .close{top:20px;right:20px;width:36px;height:36px}
+.organization-form-section{display:grid;gap:13px}
+.organization-crud-modal--site .organization-form-section{padding:18px;border:1px solid #dce4ef;border-radius:14px;background:#fff;box-shadow:0 4px 14px rgba(30,54,85,.035)}
+.organization-crud-modal--site .organization-form-section:has(.form-searchable:focus-within){position:relative;z-index:4}
+.organization-crud-modal--site :deep(.form-searchable>label){color:#475569;font-size:.78rem;font-weight:800}
+.organization-crud-modal--site :deep(.form-searchable>input){min-height:42px;border-color:#cbd6e5;border-radius:9px;padding:8px 11px}
+.organization-crud-modal--site :deep(.form-searchable>input:focus){border-color:#7798d0;box-shadow:0 0 0 3px rgba(35,73,230,.1);outline:0}
+.organization-form-section__heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:10px;border-bottom:1px solid #edf1f6}
+.organization-form-section__heading span{color:#3767ba;font-size:.68rem;font-weight:900;letter-spacing:.09em}
+.organization-form-section__heading h3{margin:2px 0 0;color:#1d304d;font-size:1rem}
+.organization-form-section__heading>small{color:#738196;font-size:.74rem;font-weight:650;text-align:right}
+.agency-choices{min-width:0;margin:0;padding:0;border:0}
+.agency-choices legend{margin-bottom:8px;color:#475569;font-size:.8rem;font-weight:800}
+.agency-choices__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.agency-choices__grid label{display:flex;align-items:center;gap:10px;min-height:44px;padding:9px 12px;border:1px solid #dce4ef;border-radius:9px;background:#fbfcfe;color:#263d5d;font-size:.83rem;font-weight:700;cursor:pointer}
+.agency-choices__grid label:has(input:checked){border-color:#9bb8f1;background:#eef4ff;color:#1746a4}
+.agency-choices__grid input{flex:none;width:17px;height:17px;margin:0;accent-color:#2563eb}
+.agency-choices p{margin:0;color:#9a6700;font-size:.78rem}
+.organization-crud-modal--site .modal-footer{position:sticky;z-index:3;bottom:-30px;margin:0 -30px -30px;padding:15px 30px;border-top:1px solid #dce4ef;background:rgba(255,255,255,.96);box-shadow:0 -8px 20px rgba(30,54,85,.07);backdrop-filter:blur(8px)}
+.organization-crud-modal--site .modal-footer>button{min-height:42px;padding:9px 18px;font-size:.88rem}
+@media(max-width:900px){.organization-page--site .filters{grid-template-columns:repeat(2,minmax(0,1fr))}.organization-page--site .search-field{grid-column:1/-1}}
+@media(max-width:600px){.organization-page--site .filters{grid-template-columns:1fr}.organization-page--site .search-field{grid-column:auto}.organization-crud-modal--site{padding:22px 14px}.organization-crud-modal--site .organization-form-section{padding:14px}.organization-form-section__heading{align-items:flex-start;flex-direction:column;gap:7px}.organization-form-section__heading>small{text-align:left}.agency-choices__grid{grid-template-columns:1fr}.organization-crud-modal--site .modal-footer{bottom:-22px;margin:0 -14px -22px;padding:12px 14px}}
 </style>
 
 <style>
@@ -254,4 +303,16 @@ html[data-theme='dark'] .organization-crud-modal .modern-date-field__days button
 html[data-theme='dark'] .organization-crud-modal .modern-date-field__days button:hover:not(:disabled){background:#243757;color:#fff}
 html[data-theme='dark'] .organization-crud-modal .modern-date-field__days button.outside{color:#66758f}
 html[data-theme='dark'] .organization-crud-modal .modern-date-field__panel footer{border-color:#334562}
+html[data-theme='dark'] .organization-crud-modal--site .organization-form-section{border-color:var(--line);background:#182640;box-shadow:none}
+html[data-theme='dark'] .organization-crud-modal--site .organization-form-section__heading{border-color:#334562}
+html[data-theme='dark'] .organization-crud-modal--site .organization-form-section__heading h3{color:var(--ink)}
+html[data-theme='dark'] .organization-crud-modal--site .organization-form-section__heading>small{color:var(--muted)}
+html[data-theme='dark'] .organization-crud-modal--site .form-searchable>label{color:#c5d1e5}
+html[data-theme='dark'] .organization-crud-modal--site .form-searchable>input{border-color:#405273;background:#1b2946;color:#d3deef}
+html[data-theme='dark'] .organization-crud-modal--site .form-searchable .searchable-select__menu{border-color:#405273;background:#1b2946}
+html[data-theme='dark'] .organization-crud-modal--site .form-searchable .searchable-select__menu li{color:#d3deef}
+html[data-theme='dark'] .organization-crud-modal--site .form-searchable .searchable-select__menu li:is(.active,:hover){background:#243b69}
+html[data-theme='dark'] .organization-crud-modal--site .agency-choices legend{color:#c5d1e5}
+html[data-theme='dark'] .organization-crud-modal--site .agency-choices__grid label{border-color:#405273;background:#1b2946;color:#d3deef}
+html[data-theme='dark'] .organization-crud-modal--site .agency-choices__grid label:has(input:checked){border-color:#6685b6;background:#243b69;color:#fff}
 </style>
