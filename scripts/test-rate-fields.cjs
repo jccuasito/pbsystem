@@ -70,13 +70,31 @@ test('payroll and billing forms submit, reopen, and reset every additional rate'
 })
 
 test('site inline creation sends complete payroll/billing amounts and linked previews expose them', async () => {
-  const { state, calls } = component('components/SiteRateCrud.vue', 'reset,form,save,inlinePayroll,inlineBilling,inlinePayrollAmounts,inlineBillingAmounts,payrollRates,billingRates,selectedPayroll,selectedBilling')
-  state.reset(); state.form.value = { SiteID: 1, AgencyPositionID: 1, PayrollRateID: '', BillingRateID: '', Status: 'Active' }
+  const { state, calls } = component('components/SiteRateCrud.vue', 'reset,form,save,onAgencyChange,agencyOptions,positionOptions,sites,agencyPositions,inlinePayroll,inlineBilling,inlinePayrollAmounts,inlineBillingAmounts,payrollRates,billingRates,selectedPayroll,selectedBilling')
+  state.sites.value = [{ SiteID: 1, RegionID: 10, SiteName: 'Site A' }]
+  state.agencyPositions.value = [
+    { AgencyID: 2, AgencyName: 'Agency B', AgencyPositionID: 3, PositionName: 'Guard' },
+    { AgencyID: 1, AgencyName: 'Agency A', AgencyPositionID: 1, PositionName: 'Guard' },
+    { AgencyID: 1, AgencyName: 'Agency A', AgencyPositionID: 2, PositionName: 'Supervisor' },
+  ]
+  state.reset()
+  assert.deepEqual(Array.from(state.agencyOptions.value, option => option.label), ['Agency A', 'Agency B'])
+  state.form.value.AgencyID = 1
+  assert.deepEqual(Array.from(state.positionOptions.value, option => option.value), ['1', '2'])
+  state.form.value.AgencyPositionID = 1
+  state.form.value.PayrollRateID = 7
+  state.form.value.AgencyID = 2
+  state.onAgencyChange()
+  assert.equal(state.form.value.AgencyPositionID, '')
+  assert.equal(state.form.value.PayrollRateID, '')
+  assert.deepEqual(Array.from(state.positionOptions.value, option => option.value), ['3'])
+  state.form.value = { SiteID: 1, AgencyID: 1, AgencyPositionID: 1, PayrollRateID: '', BillingRateID: '', Status: 'Active' }
   state.inlinePayroll.value = true; state.inlineBilling.value = true
   state.inlinePayrollAmounts.value = { ...fields.emptyRateAmounts(), ...visibleAmounts }
   state.inlineBillingAmounts.value = { ...fields.emptyRateAmounts(), ...visibleAmounts, OTExtRate: 200 }
   await state.save()
   const body = calls.find(call => call.options).options.body
+  assert.equal(body.AgencyID, 1)
   for (const key of visibleAdditional) assert.equal(body.inlinePayrollRate[key], amounts[key])
   for (const rate of [body.inlinePayrollRate, body.inlineBillingRate]) {
     assert.equal(rate.LateDeduction, amounts.LateDeduction); assert.equal(rate.UndertimeDeduction, amounts.UndertimeDeduction)
@@ -85,6 +103,27 @@ test('site inline creation sends complete payroll/billing amounts and linked pre
   state.payrollRates.value = [{ PayrollRateID: 1, ...amounts }]; state.billingRates.value = [{ BillingRateID: 2, ...amounts }]
   state.form.value.PayrollRateID = 1; state.form.value.BillingRateID = 2
   assert.equal(state.selectedPayroll.value.LateDeduction, 87.5); assert.equal(state.selectedBilling.value.RestDayOTRate, 156.75)
+})
+
+test('site picker shows site names and warns before a duplicate active link is saved', async () => {
+  const { state, calls } = component('components/SiteRateCrud.vue', 'reset,form,save,sites,siteOptions,agencyPositions,items,existingSiteLinks,duplicateSiteLink,error')
+  state.sites.value = [{ SiteID: 1, RegionID: 10, SiteName: 'Samsung S.E.P.C.O', ClientName: 'Samsung' }]
+  state.agencyPositions.value = [
+    { AgencyID: 1, AgencyPositionID: 11, AgencyName: 'DJA', PositionName: 'Security Guard' },
+    { AgencyID: 1, AgencyPositionID: 12, AgencyName: 'DJA', PositionName: 'Supervisor' },
+  ]
+  state.items.value = [{ SiteRateID: 91, SiteID: 1, AgencyPositionID: 11, Status: 'Active' }]
+  assert.equal(state.siteOptions.value[0].label, 'Samsung S.E.P.C.O')
+  state.form.value = { SiteID: 1, AgencyID: 1, AgencyPositionID: 11, Status: 'Active' }
+  assert.equal(state.existingSiteLinks.value.length, 1)
+  assert.equal(state.duplicateSiteLink.value, true)
+  await state.save()
+  assert.match(state.error.value, /already has an active/)
+  assert.equal(calls.filter(call => call.options).length, 0)
+  state.form.value.AgencyPositionID = 12
+  assert.equal(state.duplicateSiteLink.value, false)
+  state.reset({ SiteRateID: 91, SiteID: 1, AgencyID: 1, AgencyPositionID: 11, Status: 'Active' })
+  assert.equal(state.existingSiteLinks.value.length, 0, 'Editing a link does not warn about itself')
 })
 
 test('shared money input compiles with the shared field definitions', () => {
@@ -99,7 +138,7 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
   const connection = await require('mysql2/promise').createConnection({ host: env.DB_HOST || '127.0.0.1', port: Number(env.DB_PORT || 3306), user: env.DB_USER || 'root', password: env.DB_PASSWORD, database: env.DB_NAME || 'pbsystem', dateStrings: true })
   await connection.beginTransaction()
   try {
-    const [[position]] = await connection.execute("SELECT AgencyPositionID FROM agency_position WHERE Status='Active' LIMIT 1")
+    const [[position]] = await connection.execute("SELECT ap.AgencyPositionID, ap.AgencyID FROM agency_position ap INNER JOIN agency a ON a.AgencyID = ap.AgencyID INNER JOIN `position` p ON p.PositionID = ap.PositionID WHERE ap.Status='Active' AND a.Status='Active' AND p.Status='Active' LIMIT 1")
     const [[client]] = await connection.execute("SELECT ClientID FROM client WHERE Status='Active' LIMIT 1")
     const [[region]] = await connection.execute("SELECT RegionID FROM region WHERE Status='Active' LIMIT 1")
     assert.ok(position && client && region, 'An active agency position, client, and site region are needed')
@@ -131,7 +170,8 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
       const defaults = (await api.listRateResource({ resource })).items.find(row => row[idKey] === zero.id)
       for (const key of additional) assert.equal(Number(defaults[key]), 0)
     }
-    const clientBody = { SiteID: siteResult.insertId, AgencyPositionID: position.AgencyPositionID, inlinePayrollRate: amounts, inlineBillingRate: { ...amounts, RestDayOTRate: 222 } }
+    const clientBody = { SiteID: siteResult.insertId, AgencyID: position.AgencyID, AgencyPositionID: position.AgencyPositionID, inlinePayrollRate: amounts, inlineBillingRate: { ...amounts, RestDayOTRate: 222 } }
+    await assert.rejects(api.createRateResource({ resource: 'site-rate', body: { ...clientBody, AgencyID: 2147483647 } }), error => error.statusCode === 400)
     const linked = await api.createRateResource({ resource: 'site-rate', body: clientBody })
     const listing = await api.listRateResource({ resource: 'site-rate' })
     const link = listing.items.find(row => row.SiteRateID === linked.id)
@@ -139,7 +179,7 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
     const billing = listing.billingRates.find(row => row.BillingRateID === link.BillingRateID)
     for (const key of additional) assert.equal(Number(payroll[key]), amounts[key])
     assert.equal(Number(billing.RestDayOTRate), 222)
-    await assert.rejects(api.createRateResource({ resource: 'site-rate', body: { SiteID: siteResult.insertId, AgencyPositionID: position.AgencyPositionID, PayrollRateID: link.PayrollRateID, BillingRateID: link.BillingRateID } }), error => error.statusCode === 409)
+    await assert.rejects(api.createRateResource({ resource: 'site-rate', body: { SiteID: siteResult.insertId, AgencyID: position.AgencyID, AgencyPositionID: position.AgencyPositionID, PayrollRateID: link.PayrollRateID, BillingRateID: link.BillingRateID } }), error => error.statusCode === 409)
     const [[before]] = await connection.execute('SELECT COUNT(*) AS Count FROM payroll_rate')
     await assert.rejects(api.createRateResource({ resource: 'site-rate', body: { ...clientBody, inlineBillingRate: { ...amounts, OTExtRate: -1 } } }), /OTExtRate/)
     const [[after]] = await connection.execute('SELECT COUNT(*) AS Count FROM payroll_rate')

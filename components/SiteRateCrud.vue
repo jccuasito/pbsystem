@@ -11,7 +11,7 @@ const sites = ref<any[]>([])
 const agencyPositions = ref<any[]>([])
 const payrollRates = ref<any[]>([])
 const billingRates = ref<any[]>([])
-const form = ref<any>({ SiteID: '', AgencyPositionID: '', PayrollRateID: '', BillingRateID: '', Status: 'Active' })
+const form = ref<any>({ SiteID: '', AgencyID: '', AgencyPositionID: '', PayrollRateID: '', BillingRateID: '', Status: 'Active' })
 const editing = ref<any>(null)
 const open = ref(false)
 const busy = ref(false)
@@ -27,6 +27,12 @@ const agencyFilter = ref('')
 const statusFilter = ref('')
 
 const selectedSite = computed(() => sites.value.find(site => Number(site.SiteID) === Number(form.value.SiteID)) || null)
+const selectedPosition = computed(() => agencyPositions.value.find(position => String(position.AgencyPositionID) === String(form.value.AgencyPositionID)) || null)
+const existingSiteLinks = computed(() => items.value.filter(item => item.Status === 'Active'
+  && String(item.SiteID) === String(form.value.SiteID)
+  && String(item.SiteRateID) !== String(editing.value?.SiteRateID ?? '')))
+const duplicateSiteLink = computed(() => form.value.Status === 'Active' && existingSiteLinks.value.some(item =>
+  String(item.AgencyPositionID) === String(form.value.AgencyPositionID)))
 const matchesSiteRegion = (rate: any) => Number(rate.RegionID) === Number(selectedSite.value?.RegionID)
 const filteredPayroll = computed(() => payrollRates.value.filter(rate => Number(rate.AgencyPositionID) === Number(form.value.AgencyPositionID) && rate.Status === 'Active' && matchesSiteRegion(rate)))
 const filteredBilling = computed(() => billingRates.value.filter(rate => Number(rate.AgencyPositionID) === Number(form.value.AgencyPositionID) && rate.Status === 'Active' && matchesSiteRegion(rate)))
@@ -35,14 +41,17 @@ const selectedBilling = computed(() => billingRates.value.find(rate => Number(ra
 
 const siteOptions = computed(() => sites.value.filter(site => site.RegionID).map(site => ({
   value: site.SiteID,
-  label: `${site.SiteName} — ${site.ClientName}`,
-  search: `${site.ClientName} ${site.SiteName} ${site.RegionCode || ''} ${site.RegionName || ''}`,
+  label: site.SiteName,
+  search: site.SiteName,
 })))
-const agencyPositionOptions = computed(() => agencyPositions.value.map(position => ({
-  value: position.AgencyPositionID,
-  label: `${position.AgencyName} — ${position.PositionName}`,
-  search: `${position.AgencyName} ${position.PositionName}`,
-})))
+const agencyOptions = computed(() => {
+  const unique = new Map<string, string>()
+  agencyPositions.value.forEach(position => unique.set(String(position.AgencyID), position.AgencyName))
+  return [...unique].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+})
+const positionOptions = computed(() => agencyPositions.value
+  .filter(position => String(position.AgencyID) === String(form.value.AgencyID))
+  .map(position => ({ value: String(position.AgencyPositionID), label: position.PositionName })))
 const clients = computed(() => {
   const unique = new Map<string, string>()
   items.value.forEach(item => unique.set(String(item.ClientID), item.ClientName))
@@ -66,7 +75,7 @@ function formatMoney(value: unknown) {
 function rateLabel(rate: any) { return `${formatMoney(rate.RegularRate)} · ${rate.EffectiveDate || 'No effective date'}` }
 function reset(item: any = null) {
   editing.value = item
-  form.value = { SiteID: item?.SiteID ?? '', AgencyPositionID: item?.AgencyPositionID ?? '', PayrollRateID: item?.PayrollRateID ?? '', BillingRateID: item?.BillingRateID ?? '', Status: item?.Status ?? 'Active' }
+  form.value = { SiteID: item?.SiteID ?? '', AgencyID: item?.AgencyID ?? '', AgencyPositionID: item?.AgencyPositionID ?? '', PayrollRateID: item?.PayrollRateID ?? '', BillingRateID: item?.BillingRateID ?? '', Status: item?.Status ?? 'Active' }
   inlinePayroll.value = false
   inlineBilling.value = false
   inlinePayrollAmounts.value = emptyRateAmounts()
@@ -74,7 +83,8 @@ function reset(item: any = null) {
   error.value = ''
 }
 function showForm(item: any = null) { reset(item); open.value = true }
-function clearRateSelection() { form.value.PayrollRateID = ''; form.value.BillingRateID = '' }
+function clearRateSelection() { form.value.PayrollRateID = ''; form.value.BillingRateID = ''; inlinePayroll.value = false; inlineBilling.value = false }
+function onAgencyChange() { form.value.AgencyPositionID = ''; clearRateSelection() }
 function clearFilters() { search.value = ''; clientFilter.value = ''; agencyFilter.value = ''; statusFilter.value = '' }
 
 async function load(silent = false) {
@@ -90,8 +100,21 @@ async function load(silent = false) {
   finally { if (!silent) loading.value = false }
 }
 async function save() {
-  busy.value = true
   error.value = ''
+  if (!selectedSite.value || !selectedPosition.value || String(selectedPosition.value.AgencyID) !== String(form.value.AgencyID)) {
+    error.value = 'Select a site, agency, and position under that agency.'
+    return
+  }
+  if (duplicateSiteLink.value) {
+    error.value = 'This site already has an active payroll and billing rate link for the selected agency position.'
+    return
+  }
+  if ((!inlinePayroll.value && !filteredPayroll.value.some(rate => String(rate.PayrollRateID) === String(form.value.PayrollRateID)))
+    || (!inlineBilling.value && !filteredBilling.value.some(rate => String(rate.BillingRateID) === String(form.value.BillingRateID)))) {
+    error.value = 'Select payroll and billing rates for the chosen position and site region.'
+    return
+  }
+  busy.value = true
   try {
     const body: any = { ...form.value }
     if (!editing.value && inlinePayroll.value) body.inlinePayrollRate = { ...inlinePayrollAmounts.value }
@@ -156,15 +179,28 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       </article>
     </section>
 
-    <Teleport to="body"><div v-if="open" class="backdrop" @click.self="!busy && (open = false)"><form class="modal" @submit.prevent="save">
-      <button class="close" type="button" aria-label="Close" @click="open = false">×</button>
-      <div class="modal-heading"><p class="eyebrow">SITE RATE</p><h2>{{ editing ? 'Edit site rate' : 'Link site rate' }}</h2><span>Search and select the site and agency position, then link the matching regional rates.</span></div>
-      <div class="selection-grid">
-        <SearchableSelect v-model="form.SiteID" label="Site" :options="siteOptions" placeholder="Search site, client, or region" required empty-text="No active sites with a region found." @change="clearRateSelection" />
-        <SearchableSelect v-model="form.AgencyPositionID" label="Agency position" :options="agencyPositionOptions" placeholder="Search agency or position" required @change="clearRateSelection" />
-      </div>
-      <div v-if="selectedSite" class="site-context"><span><small>CLIENT</small><strong>{{ selectedSite.ClientName }}</strong></span><span><small>REGION</small><strong>{{ selectedSite.RegionCode || selectedSite.RegionName }}</strong></span></div>
-      <div v-if="form.SiteID && form.AgencyPositionID" class="rate-grid">
+    <Teleport to="body"><div v-if="open" class="backdrop" @click.self="!busy && (open = false)"><form class="modal site-rate-modal" role="dialog" aria-modal="true" aria-labelledby="site-rate-modal-title" @submit.prevent="save">
+      <button class="close" type="button" aria-label="Close site rate form" :disabled="busy" @click="open = false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+      <header class="modal-heading"><p class="eyebrow">SITE RATE</p><h2 id="site-rate-modal-title">{{ editing ? 'Edit site rate' : 'Link site rate' }}</h2><span>Choose a site, then select an agency and one of its positions.</span></header>
+      <section class="site-rate-section">
+        <div class="section-heading"><div><span>ASSIGNMENT</span><h3>Site and position</h3></div><small>Positions are limited to the agency you choose.</small></div>
+        <div class="selection-grid">
+          <SearchableSelect v-model="form.SiteID" class="site-picker" label="Site" :options="siteOptions" placeholder="Search site" required empty-text="No active sites with a region found." @change="clearRateSelection" />
+          <label class="control-label"><span>Agency</span><select v-model="form.AgencyID" required @change="onAgencyChange"><option value="">Select agency</option><option v-for="agency in agencyOptions" :key="agency.value" :value="agency.value">{{ agency.label }}</option></select></label>
+          <label class="control-label"><span>Position</span><select v-model="form.AgencyPositionID" :disabled="!form.AgencyID" required @change="clearRateSelection"><option value="">{{ form.AgencyID ? 'Select position' : 'Select agency first' }}</option><option v-for="position in positionOptions" :key="position.value" :value="position.value">{{ position.label }}</option></select></label>
+        </div>
+        <p v-if="form.AgencyID && !positionOptions.length" class="field-note">This agency has no active positions available for site rates.</p>
+        <div v-if="selectedSite" class="site-context"><span><small>CLIENT</small><strong>{{ selectedSite.ClientName }}</strong></span><span><small>REGION</small><strong>{{ selectedSite.RegionCode || selectedSite.RegionName }}</strong></span></div>
+        <div v-if="existingSiteLinks.length" class="existing-link-alert" :class="{ 'existing-link-alert--duplicate': duplicateSiteLink }" :role="duplicateSiteLink ? 'alert' : 'status'">
+          <strong>{{ duplicateSiteLink ? 'This position is already linked to this site.' : `This site already has ${existingSiteLinks.length} active rate ${existingSiteLinks.length === 1 ? 'link' : 'links'}.` }}</strong>
+          <span>{{ duplicateSiteLink ? 'Choose a different agency position or edit the existing link. A second active payroll and billing rate link cannot be saved.' : 'You can add another position, but an existing site and agency position cannot be linked twice.' }}</span>
+          <ul><li v-for="link in existingSiteLinks.slice(0, 3)" :key="link.SiteRateID">{{ link.AgencyName }} — {{ link.PositionName }} · Payroll {{ formatMoney(link.PayrollRegularRate) }} / Billing {{ formatMoney(link.BillingRegularRate) }}</li></ul>
+          <small v-if="existingSiteLinks.length > 3">And {{ existingSiteLinks.length - 3 }} more active {{ existingSiteLinks.length - 3 === 1 ? 'link' : 'links' }}.</small>
+        </div>
+      </section>
+      <section v-if="selectedSite && selectedPosition && String(selectedPosition.AgencyID) === String(form.AgencyID)" class="site-rate-section">
+        <div class="section-heading"><div><span>RATE LINKS</span><h3>{{ selectedPosition.PositionName }} rates</h3></div><small>{{ selectedSite.RegionName || selectedSite.RegionCode }}</small></div>
+        <div class="rate-grid">
         <section class="rate-panel">
           <div class="rate-panel__head"><span>Payroll rate</span><small>{{ selectedSite?.RegionName }}</small></div>
           <label class="control-label"><span>Existing rate</span><select v-model="form.PayrollRateID" :disabled="inlinePayroll" :required="!inlinePayroll"><option value="">Select payroll rate</option><option v-for="rate in filteredPayroll" :key="rate.PayrollRateID" :value="rate.PayrollRateID">{{ rateLabel(rate) }}</option></select></label>
@@ -181,10 +217,11 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
           <fieldset v-if="inlineBilling && !editing" class="inline-rates"><legend>Billing amounts</legend><RateMoneyFields v-model="inlineBillingAmounts" /></fieldset>
           <details v-else-if="selectedBilling" class="rate-preview"><summary>View all billing amounts</summary><dl><div v-for="field in rateMoneyFields" :key="field.key"><dt>{{ field.label }}</dt><dd>{{ formatMoney(selectedBilling[field.key]) }}</dd></div></dl></details>
         </section>
-      </div>
-      <label class="status-control"><span>Status</span><select v-model="form.Status"><option>Active</option><option>Inactive</option></select></label>
+        </div>
+      </section>
+      <section class="site-rate-section status-section"><div class="section-heading"><div><span>AVAILABILITY</span><h3>Link status</h3></div></div><label class="status-control"><span>Status</span><select v-model="form.Status"><option>Active</option><option>Inactive</option></select></label></section>
       <p v-if="error" class="error modal-error">{{ error }}</p>
-      <footer class="modal-footer"><button type="button" @click="open = false">Cancel</button><button class="primary" :disabled="busy">{{ busy ? 'Saving…' : editing ? 'Save changes' : 'Save link' }}</button></footer>
+      <footer class="modal-footer"><button type="button" :disabled="busy" @click="open = false">Cancel</button><button class="primary" :disabled="busy || duplicateSiteLink || !selectedSite || !selectedPosition || String(selectedPosition.AgencyID) !== String(form.AgencyID)">{{ busy ? 'Saving…' : editing ? 'Save changes' : 'Save link' }}</button></footer>
     </form></div></Teleport>
   </main>
 </template>
@@ -195,4 +232,34 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 @media(max-width:900px){.site-rate-page{padding:22px 18px}.desktop-table{display:none}.mobile-list{display:grid;gap:10px}.filters{grid-template-columns:repeat(2,minmax(0,1fr))}.search-field{grid-column:1/-1}.rate-grid{grid-template-columns:1fr}.modal{width:min(100%,720px)}}
 @media(max-width:600px){.site-rate-page{padding:16px 12px}.page-head{align-items:stretch;flex-direction:column;margin-bottom:18px}.page-head .primary{width:100%}.filters{grid-template-columns:1fr;gap:9px}.search-field{grid-column:auto}.list-summary{align-items:flex-start;flex-direction:column;gap:5px}.backdrop{align-items:end;padding:0}.modal{width:100%;max-height:calc(100dvh - 10px);gap:12px;padding:20px 14px;border-radius:16px 16px 0 0}.selection-grid{grid-template-columns:1fr}.site-context{grid-template-columns:1fr}.site-context strong{white-space:normal}.rate-panel{padding:12px}.inline-rates :deep(.rate-money-grid),.rate-preview dl{grid-template-columns:1fr}.status-control{width:100%}.modal-footer{bottom:-20px;display:grid;grid-template-columns:1fr 1fr;margin:0 -14px -20px;padding:11px 14px}.modal-footer>button{width:100%}}
 @media(max-width:360px){.rate-card dl>div{grid-template-columns:1fr;gap:2px}.rate-card__amounts{grid-template-columns:1fr}.modal-footer{grid-template-columns:1fr}}
+.site-rate-modal{gap:16px;padding:30px;background:#f7f9fc}
+.site-rate-modal .modal-heading{padding-right:42px}
+.site-rate-modal .modal-heading h2{margin:4px 0 5px;font-size:1.75rem;color:#182e4e}
+.site-rate-modal .modal-heading>span{font-size:.88rem;line-height:1.45}
+.site-rate-modal .close{top:20px;right:20px;width:36px;height:36px}
+.site-rate-modal .close svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.site-rate-section{display:grid;gap:14px;padding:18px;border:1px solid #dce4ef;border-radius:14px;background:#fff;box-shadow:0 4px 14px rgba(30,54,85,.035)}
+.section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:10px;border-bottom:1px solid #edf1f6}
+.section-heading span{color:#3767ba;font-size:.68rem;font-weight:900;letter-spacing:.09em}
+.section-heading h3{margin:2px 0 0;color:#1d304d;font-size:1rem}
+.section-heading>small{color:#738196;font-size:.74rem;font-weight:650;text-align:right}
+.selection-grid .site-picker{grid-column:1/-1}
+.site-rate-modal .control-label>span,.site-rate-modal .status-control>span{font-size:.8rem}
+.site-rate-modal .selection-grid select{min-height:44px}
+.site-rate-modal .selection-grid select:disabled{background:#f4f6fa;color:#8793a7;cursor:not-allowed}
+.site-rate-modal .selection-grid :deep(.searchable-select__menu){max-height:190px}
+.site-rate-modal .site-context{gap:12px;padding:12px 14px}
+.site-rate-modal .site-context strong{font-size:.86rem}
+.site-rate-modal .rate-panel{background:#fbfcfe}
+.site-rate-modal .rate-panel__head>span{font-size:1rem}
+.site-rate-modal .status-section{gap:12px}
+.site-rate-modal .modal-footer{z-index:4;bottom:-30px;margin:0 -30px -30px;padding:15px 30px;border-color:#dce4ef;box-shadow:0 -8px 20px rgba(30,54,85,.07)}
+.site-rate-modal .modal-footer>button{min-height:42px;padding:9px 18px;font-size:.88rem}
+.field-note{margin:0;color:#9a6700;font-size:.78rem}
+.existing-link-alert{display:grid;gap:5px;padding:12px 14px;border:1px solid #f1d38b;border-radius:10px;background:#fff9eb;color:#714d14;font-size:.8rem;line-height:1.4}
+.existing-link-alert strong{font-size:.86rem}
+.existing-link-alert ul{display:grid;gap:3px;margin:3px 0 0;padding-left:18px}
+.existing-link-alert small{font-size:.73rem}
+.existing-link-alert--duplicate{border-color:#f5b8b2;background:#fff2f1;color:#9c2823}
+@media(max-width:600px){.site-rate-modal{padding:22px 14px}.site-rate-section{padding:14px}.section-heading{align-items:flex-start;flex-direction:column;gap:7px}.section-heading>small{text-align:left}.site-rate-modal .modal-footer{bottom:-22px;margin:0 -14px -22px;padding:12px 14px}}
 </style>
