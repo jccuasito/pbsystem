@@ -1,6 +1,7 @@
 import { createError, getQuery, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { loadVersionMap, snapshotAtDate } from './rateVersions'
 
 type Body = Record<string, unknown>
 type Status = 'Draft' | 'For Approval' | 'Approved' | 'Ready for Payroll' | 'Applied' | 'Rejected' | 'Cancelled'
@@ -302,7 +303,7 @@ export async function createPayrollAdjustment(event: any) {
     if (dates.some(item => item < dateOnly(source.PeriodStart) || item > dateOnly(source.PeriodEnd))) throw createError({ statusCode: 400, statusMessage: 'Every original date must be inside the source DTR cutoff.' })
     if (verifiedDays.some(item => item.sourceDate < dateOnly(source.PeriodStart) || item.sourceDate > dateOnly(source.PeriodEnd))) throw createError({ statusCode: 400, statusMessage: 'Every missed date must be inside the original cutoff.' })
 
-    const attendance = dates.length ? await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate,
+    const attendance = dates.length ? await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate, sr.PayrollRateID,
       ${[...earningComponents, ...deductionComponents].map(([hours, rate]) => `at.${hours}, pr.${rate}`).join(', ')},
       at.WorkPayrollRegularRate
       FROM attendance at
@@ -312,20 +313,22 @@ export async function createPayrollAdjustment(event: any) {
       WHERE at.BatchID = ? AND at.EmployeeID = ? AND at.AttendanceDate IN (${dates.map(() => '?').join(', ')})
       ORDER BY at.AttendanceDate FOR UPDATE`, [sourceBatchId, employeeId, ...dates]).then(([rows]) => rows) : []
     if (attendance.length !== dates.length) throw createError({ statusCode: 400, statusMessage: 'Each selected date must have a saved attendance record in the source DTR.' })
+    const attendanceVersions = await loadVersionMap(connection, 'payroll-rate', [...new Set(attendance.map(row => Number(row.PayrollRateID)))])
 
     const lines: any[] = []
     for (const row of attendance) {
       const sourceDate = dateOnly(row.AttendanceDate)
+      const effectiveRate = snapshotAtDate(row, attendanceVersions.get(Number(row.PayrollRateID)) || [], sourceDate)
       for (const [component, rateField, label] of earningComponents) {
         const quantity = Number(row[component] || 0)
         if (!quantity) continue
-        const rate = Number(component === 'RegularHours' && row.WorkPayrollRegularRate != null ? row.WorkPayrollRegularRate : row[rateField] || 0)
+        const rate = Number(component === 'RegularHours' && row.WorkPayrollRegularRate != null ? row.WorkPayrollRegularRate : effectiveRate[rateField] || 0)
         lines.push({ attendanceId: Number(row.AttendanceID), sourceDate, component, label, entrySource: 'DTR Snapshot', direction: 'Earning', quantity, rate, amount: Math.round(quantity * rate * 100) / 100 })
       }
       for (const [component, rateField, label] of deductionComponents) {
         const quantity = Number(row[component] || 0)
         if (!quantity) continue
-        const rate = Number(row[rateField] || 0)
+        const rate = Number(effectiveRate[rateField] || 0)
         lines.push({ attendanceId: Number(row.AttendanceID), sourceDate, component, label, entrySource: 'DTR Snapshot', direction: 'Deduction', quantity, rate, amount: -Math.round(quantity * rate * 100) / 100 })
       }
     }
@@ -349,17 +352,18 @@ export async function createPayrollAdjustment(event: any) {
       [source.AgencyID, ...selectedShiftIds]) : [[]]
       const allowedShifts = new Set(shifts.map(item => Number(item.ShiftCodeID)))
       if (verifiedDays.some(item => item.shiftCodeId != null && !allowedShifts.has(item.shiftCodeId))) throw createError({ statusCode: 400, statusMessage: 'Choose an active shift code from the original DTR agency, or leave it blank and enter verified hours directly.' })
-      const [[rate]] = await connection.execute<any[]>(`SELECT pr.RegularRate, pr.OTRate, pr.OTExtRate, pr.NightDiffRate
+      const [[rate]] = await connection.execute<any[]>(`SELECT pr.PayrollRateID, pr.RegularRate, pr.OTRate, pr.OTExtRate, pr.NightDiffRate
         FROM attendance_dtr_employee roster
         INNER JOIN employee_deployment ed ON ed.DeploymentID = roster.DeploymentID
         INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
         INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
         WHERE roster.BatchID = ? AND roster.EmployeeID = ?`, [sourceBatchId, employeeId])
       if (!rate) throw createError({ statusCode: 409, statusMessage: 'Original deployment payroll rates are unavailable. Review the employee deployment before creating an adjustment.' })
+      const manualVersions = await loadVersionMap(connection, 'payroll-rate', [Number(rate.PayrollRateID)])
       for (const day of verifiedDays) for (const [component, rateField, label] of manualComponents) {
         const quantity = day.hours[component]
         if (!quantity) continue
-        const hourlyRate = Number(rate[rateField])
+        const hourlyRate = Number(snapshotAtDate(rate, manualVersions.get(Number(rate.PayrollRateID)) || [], day.sourceDate)[rateField])
         if (!Number.isFinite(hourlyRate) || hourlyRate < 0) throw createError({ statusCode: 409, statusMessage: `${label} rate is unavailable for this deployment.` })
         lines.push({ attendanceId: null, sourceDate: day.sourceDate, component, label, entrySource: 'Manual Verification', direction: 'Earning', quantity, rate: hourlyRate, amount: Math.round(quantity * hourlyRate * 100) / 100 })
       }

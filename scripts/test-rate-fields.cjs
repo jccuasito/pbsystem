@@ -13,6 +13,7 @@ function evaluate(source, dependencies = {}, globals = {}) {
   return module.exports
 }
 const fields = evaluate(fs.readFileSync('shared/utils/rateFields.ts', 'utf8'))
+const rateVersions = evaluate(fs.readFileSync('server/utils/rateVersions.ts', 'utf8'), { '../../shared/utils/rateFields': fields })
 const additional = ['OTExtRate', 'RestDayOTRate', 'LateDeduction', 'UndertimeDeduction']
 const amounts = { RegularRate: 700, OTRate: 110, OTExtRate: 115.25, RestDayRate: 120, RestDayOTRate: 156.75, LateDeduction: 87.5, UndertimeDeduction: 88.25 }
 const visibleAdditional = additional
@@ -48,7 +49,7 @@ function component(filename, exposed, props = {}) {
   return { state, calls }
 }
 
-test('payroll and billing forms submit, reopen, and reset every additional rate', async () => {
+test('payroll and billing add forms submit and reset every additional rate', async () => {
   for (const resource of ['payroll-rate', 'billing-rate']) {
     const { state, calls } = component('components/RateCrud.vue', 'reset,form,save', { resource, title: resource === 'payroll-rate' ? 'Payroll Rates' : 'Billing Rates' })
     state.reset(); assert.equal(state.form.value.OTExtRate, 0)
@@ -58,15 +59,110 @@ test('payroll and billing forms submit, reopen, and reset every additional rate'
     assert.equal(posted.method, 'POST')
     for (const key of visibleAdditional) assert.equal(posted.body[key], amounts[key])
     assert.equal(posted.body.LateDeduction, amounts.LateDeduction); assert.equal(posted.body.UndertimeDeduction, amounts.UndertimeDeduction)
-    state.reset({ PayrollRateID: 11, BillingRateID: 12, AgencyPositionID: 1, ...amounts })
-    for (const key of visibleAdditional) assert.equal(state.form.value[key], amounts[key])
-    assert.equal(state.form.value.LateDeduction, amounts.LateDeduction); assert.equal(state.form.value.UndertimeDeduction, amounts.UndertimeDeduction)
-    state.form.value.RestDayOTRate = 199.5; await state.save()
-    const updated = calls.filter(call => call.options).at(-1).options
-    assert.equal(updated.method, 'PUT'); assert.equal(updated.body.RestDayOTRate, 199.5)
-    assert.equal(updated.body.LateDeduction, amounts.LateDeduction); assert.equal(updated.body.UndertimeDeduction, amounts.UndertimeDeduction)
-    state.reset(); for (const key of visibleAdditional) assert.equal(state.form.value[key], 0)
+    state.reset()
+    for (const key of visibleAdditional) assert.equal(state.form.value[key], 0)
+    assert.equal(state.form.value.AgencyPositionID, '')
   }
+})
+
+test('rate form searches positions within the selected agency', () => {
+  const { state } = component('components/RateCrud.vue', 'reset,form,selectedAgencyId,agencyPositions,agencyOptions,formPositionOptions,changeFormAgency', { resource: 'payroll-rate', title: 'Payroll Rates' })
+  state.agencyPositions.value = [
+    { AgencyID: 2, AgencyName: 'Agency B', AgencyPositionID: 3, PositionName: 'Guard' },
+    { AgencyID: 1, AgencyName: 'Agency A', AgencyPositionID: 1, PositionName: 'Guard' },
+    { AgencyID: 1, AgencyName: 'Agency A', AgencyPositionID: 2, PositionName: 'Supervisor' },
+  ]
+  state.reset()
+  assert.deepEqual(Array.from(state.agencyOptions.value, option => option.label), ['Agency A', 'Agency B'])
+  state.selectedAgencyId.value = '1'
+  assert.deepEqual(Array.from(state.formPositionOptions.value, option => option.value), [1, 2])
+  state.form.value.AgencyPositionID = 1
+  state.selectedAgencyId.value = '2'
+  state.changeFormAgency()
+  assert.equal(state.form.value.AgencyPositionID, '')
+  assert.deepEqual(Array.from(state.formPositionOptions.value, option => option.value), [3])
+  state.reset()
+  assert.equal(state.selectedAgencyId.value, '')
+  assert.equal(state.form.value.AgencyPositionID, '')
+})
+
+test('rate update keeps the linked rate ID and submits a dated monetary snapshot', async () => {
+  const { state, calls } = component('components/RateCrud.vue', 'openUpdate,saveUpdate,updateForm,updating', { resource: 'payroll-rate', title: 'Payroll Rates' })
+  const item = { PayrollRateID: 17, AgencyName: 'Agency A', PositionName: 'Guard', LinkedSites: 3,
+    RegularRate: 70, OTRate: 20, Versions: [{ EffectiveDate: '2026-09-01', RegularRate: 75, OTRate: 25 }] }
+  state.openUpdate(item)
+  assert.equal(state.updateForm.value.RegularRate, 75)
+  assert.equal(state.updateForm.value.OTRate, 25)
+  state.updateForm.value.EffectiveDate = '2026-10-15'
+  state.updateForm.value.RegularRate = 80
+  await state.saveUpdate()
+  const request = calls.find(call => call.url === '/api/rates/versions')
+  assert.equal(request.options.method, 'POST')
+  assert.equal(request.options.body.resource, 'payroll-rate')
+  assert.equal(request.options.body.id, 17)
+  assert.equal(request.options.body.EffectiveDate, '2026-10-15')
+  assert.equal(request.options.body.RegularRate, 80)
+  assert.equal(state.updating.value, null)
+})
+
+test('Edit current rate preloads the effective version and saves separately from a dated update', async () => {
+  const { state, calls } = component('components/RateCrud.vue', 'openCurrentEdit,editForm,saveCurrentEdit,editingCurrent', { resource: 'billing-rate', title: 'Billing Rates' })
+  state.openCurrentEdit({ BillingRateID: 12, RegularRate: 95, CurrentRate: { RegularRate: 110, OTRate: 65 } })
+  assert.equal(state.editForm.value.RegularRate, 110)
+  assert.equal(state.editForm.value.OTRate, 65)
+  state.editForm.value.RegularRate = 115
+  await state.saveCurrentEdit()
+  const request = calls.find(call => call.options)
+  assert.equal(request.url, '/api/rates/billing-rate')
+  assert.equal(request.options.method, 'PUT')
+  assert.equal(request.options.body.mode, 'current')
+  assert.equal(request.options.body.id, 12)
+  assert.equal(request.options.body.RegularRate, 115)
+  assert.equal(state.editingCurrent.value, null)
+})
+
+test('current edit changes only the effective rate row, leaving future versions untouched', async () => {
+  for (const current of [null, { PayrollRateVersionID: 8, EffectiveDate: '2026-09-25' }]) {
+    const statements = []
+    const connection = {
+      async beginTransaction() {}, async commit() {}, async rollback() {}, release() {},
+      async execute(sql, params) {
+        statements.push({ sql, params })
+        if (sql.startsWith('SELECT PayrollRateID, EffectiveDate, Status FROM payroll_rate')) return [[{ PayrollRateID: 7, EffectiveDate: '2026-01-01', Status: 'Active' }]]
+        if (sql.startsWith('SELECT PayrollRateVersionID, EffectiveDate FROM payroll_rate_version')) return [[...(current ? [current] : [])]]
+        if (sql.startsWith('UPDATE ')) return [{ affectedRows: 1 }]
+        throw new Error(`Unexpected query: ${sql}`)
+      },
+    }
+    const api = evaluate(fs.readFileSync('server/utils/rateCrud.ts', 'utf8'), {
+      '../../shared/utils/rateFields': fields,
+      '../connection/dbconnect': { getConnection: async () => connection },
+      './auth': { requireSession: () => ({ sub: 1 }) },
+      './rateVersions': { dateOnly: value => String(value || '').slice(0, 10), todayInPhilippines: () => '2026-10-09' },
+      h3: { createError: options => Object.assign(new Error(options.statusMessage), options), getRouterParam: event => event.resource, readBody: async event => event.body },
+    })
+    const result = await api.updateRateResource({ resource: 'payroll-rate', body: { id: 7, mode: 'current', RegularRate: 115 } })
+    assert.equal(result.effectiveDate, current ? '2026-09-25' : '2026-01-01')
+    assert.match(statements.at(-1).sql, current ? /^UPDATE payroll_rate_version SET RegularRate = \?/ : /^UPDATE payroll_rate SET RegularRate = \?/)
+    assert.equal(statements.at(-1).params.at(-1), current ? 8 : 7)
+    assert.deepEqual(Array.from(statements.at(-1).params), [115, current ? 8 : 7])
+  }
+})
+
+test('Edit preloads the latest saved version and history includes the original rate', () => {
+  const { state } = component('components/RateCrud.vue', 'openUpdate,updateForm,minimumUpdateDate,viewingHistory,historyEntries', { resource: 'payroll-rate', title: 'Payroll Rates' })
+  const item = { PayrollRateID: 17, EffectiveDate: '2026-01-01', RegularRate: 70, OTRate: 20,
+    Versions: [
+      { PayrollRateVersionID: 1, EffectiveDate: '2026-09-01', RegularRate: 75, OTRate: 25 },
+      { PayrollRateVersionID: 2, EffectiveDate: '2026-10-15', RegularRate: 80, OTRate: 30 },
+    ] }
+  state.openUpdate(item)
+  assert.equal(state.updateForm.value.RegularRate, 80)
+  assert.equal(state.updateForm.value.OTRate, 30)
+  assert.equal(state.minimumUpdateDate.value, '2026-10-16')
+  state.viewingHistory.value = item
+  assert.deepEqual(Array.from(state.historyEntries.value, entry => entry.RegularRate), [80, 75, 70])
+  assert.equal(state.historyEntries.value.at(-1).isOriginal, true)
 })
 
 test('site inline creation sends complete payroll/billing amounts and linked previews expose them', async () => {
@@ -154,6 +250,7 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
       '../../shared/utils/rateFields': fields,
       '../connection/dbconnect': { ...wrapped, getConnection: async () => wrapped },
       './auth': { requireSession: () => ({ sub: 1 }) },
+      './rateVersions': rateVersions,
       h3: { createError: options => Object.assign(new Error(options.statusMessage), options), getRouterParam: event => event.resource, readBody: async event => event.body },
     })
     for (const resource of ['payroll-rate', 'billing-rate']) {
@@ -167,6 +264,16 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
       assert.equal(Number(found.OTExtRate), 201.5); assert.equal(Number(found.UndertimeDeduction), 0)
       assert.equal(Number(found.LateDeduction), amounts.LateDeduction, 'Omitted fields preserve existing amounts')
       assert.equal(Number(found.RestDayOTRate), amounts.RestDayOTRate)
+      await api.updateRateResource({ resource, body: { id, mode: 'current', RegularRate: 210 } })
+      const versionTable = resource === 'payroll-rate' ? 'payroll_rate_version' : 'billing_rate_version'
+      const versionId = resource === 'payroll-rate' ? 'PayrollRateVersionID' : 'BillingRateVersionID'
+      await connection.execute(`INSERT INTO ${versionTable} (${idKey}, EffectiveDate, RegularRate) VALUES (?, ?, ?), (?, ?, ?)`, [id, '2026-10-01', 220, id, '2400-01-01', 240])
+      await api.updateRateResource({ resource, body: { id, mode: 'current', RegularRate: 230 } })
+      const [[baseRate]] = await connection.execute(`SELECT RegularRate FROM ${resource === 'payroll-rate' ? 'payroll_rate' : 'billing_rate'} WHERE ${idKey} = ?`, [id])
+      const [savedVersions] = await connection.execute(`SELECT ${versionId}, EffectiveDate, RegularRate FROM ${versionTable} WHERE ${idKey} = ? ORDER BY EffectiveDate`, [id])
+      assert.equal(Number(baseRate.RegularRate), 210)
+      assert.equal(Number(savedVersions[0].RegularRate), 230)
+      assert.equal(Number(savedVersions[1].RegularRate), 240, 'Editing current leaves a future version unchanged')
       for (const bad of [-1, true, 'not-a-number', 100000000, 0.001]) {
         await assert.rejects(api.createRateResource({ resource, body: { ...body, LateDeduction: bad } }), /LateDeduction/)
       }

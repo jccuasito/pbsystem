@@ -2,6 +2,7 @@ import { createError, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { rateMoneyFields } from '../../shared/utils/rateFields'
+import { dateOnly, loadVersionMap, snapshotAtDate, todayInPhilippines } from './rateVersions'
 
 type Resource = 'payroll-rate' | 'billing-rate' | 'site-rate'
 const moneyFields = rateMoneyFields.map(({ key }) => key)
@@ -9,7 +10,8 @@ const rateFields = ['AgencyPositionID', 'RegionID', ...moneyFields, 'EffectiveDa
 
 const rateListSql = (table: 'payroll_rate' | 'billing_rate', id: 'PayrollRateID' | 'BillingRateID') => `
   SELECT r.${id}, r.AgencyPositionID, a.AgencyName, p.PositionName, r.RegionID, rg.RegionCode, rg.RegionName,
-    ${moneyFields.map(field => `r.${field}`).join(', ')}, r.EffectiveDate, r.Status
+    ${moneyFields.map(field => `r.${field}`).join(', ')}, r.EffectiveDate, r.Status,
+    (SELECT COUNT(DISTINCT sr.SiteID) FROM site_rate sr WHERE sr.${id} = r.${id} AND sr.Status = 'Active') AS LinkedSites
   FROM ${table} r
   INNER JOIN agency_position ap ON ap.AgencyPositionID = r.AgencyPositionID
   INNER JOIN agency a ON a.AgencyID = ap.AgencyID
@@ -105,7 +107,13 @@ export async function listRateResource(event: any) {
   if (selected === 'payroll-rate' || selected === 'billing-rate') {
     const definition = rateTable(selected)
     const [[items], positions, regionRows] = await Promise.all([pool.execute<any[]>(rateListSql(definition.table as any, definition.id as any)), agencyPositions(), regions()])
-    return { items, agencyPositions: positions, regions: regionRows }
+    const versions = await loadVersionMap(pool, selected, items.map(item => Number(item[definition.id])))
+    const today = todayInPhilippines()
+    return { items: items.map(item => {
+      const history = versions.get(Number(item[definition.id])) || []
+      const current = snapshotAtDate(item, history, today)
+      return { ...item, Versions: history, CurrentRate: current, NextEffectiveDate: dateOnly(history.find(version => dateOnly(version.EffectiveDate) > today)?.EffectiveDate) || null }
+    }), agencyPositions: positions, regions: regionRows }
   }
   const [[items], siteRows, positions, regionRows, payrollRates, billingRates] = await Promise.all([
     pool.execute<any[]>(`SELECT sr.SiteRateID, s.ClientID, sr.SiteID, c.ClientName, s.SiteName, sr.PayrollRateID, sr.BillingRateID, sr.Status,
@@ -123,7 +131,22 @@ export async function listRateResource(event: any) {
       ORDER BY c.ClientName, s.SiteName, a.AgencyName, p.PositionName`),
     sites(), agencyPositions(), regions(), pool.execute<any[]>(rateListSql('payroll_rate', 'PayrollRateID')).then(([rows]) => rows), pool.execute<any[]>(rateListSql('billing_rate', 'BillingRateID')).then(([rows]) => rows)
   ])
-  return { items, sites: siteRows, agencyPositions: positions, regions: regionRows, payrollRates, billingRates }
+  const [payrollVersions, billingVersions] = await Promise.all([
+    loadVersionMap(pool, 'payroll-rate', payrollRates.map(rate => Number(rate.PayrollRateID))),
+    loadVersionMap(pool, 'billing-rate', billingRates.map(rate => Number(rate.BillingRateID))),
+  ])
+  const today = todayInPhilippines()
+  const currentPayroll = new Map(payrollRates.map(rate => [Number(rate.PayrollRateID), snapshotAtDate(rate, payrollVersions.get(Number(rate.PayrollRateID)) || [], today)]))
+  const currentBilling = new Map(billingRates.map(rate => [Number(rate.BillingRateID), snapshotAtDate(rate, billingVersions.get(Number(rate.BillingRateID)) || [], today)]))
+  return {
+    items: items.map(item => ({ ...item,
+      PayrollRegularRate: currentPayroll.get(Number(item.PayrollRateID))?.RegularRate ?? item.PayrollRegularRate,
+      BillingRegularRate: currentBilling.get(Number(item.BillingRateID))?.RegularRate ?? item.BillingRegularRate,
+    })),
+    sites: siteRows, agencyPositions: positions, regions: regionRows,
+    payrollRates: payrollRates.map(rate => ({ ...rate, ...Object.fromEntries(moneyFields.map(field => [field, currentPayroll.get(Number(rate.PayrollRateID))?.[field] ?? rate[field]])), EffectiveDate: currentPayroll.get(Number(rate.PayrollRateID))?.EffectiveDate ?? rate.EffectiveDate })),
+    billingRates: billingRates.map(rate => ({ ...rate, ...Object.fromEntries(moneyFields.map(field => [field, currentBilling.get(Number(rate.BillingRateID))?.[field] ?? rate[field]])), EffectiveDate: currentBilling.get(Number(rate.BillingRateID))?.EffectiveDate ?? rate.EffectiveDate })),
+  }
 }
 
 export async function createRateResource(event: any) {
@@ -155,6 +178,29 @@ export async function updateRateResource(event: any) {
   const selected = resource(event); const body = await readBody<Record<string, any>>(event) || {}; const id = validId(body.id, 'id')
   if (!isSiteRate(selected)) {
     const definition = rateTable(selected)
+    const versionTable = selected === 'payroll-rate' ? 'payroll_rate_version' : 'billing_rate_version'
+    if (body.mode === 'current') {
+      const fields = moneyFields.filter(field => Object.hasOwn(body, field))
+      if (!fields.length) throw createError({ statusCode: 400, statusMessage: 'Enter at least one rate amount.' })
+      const values = fields.map(field => amount(body[field], field))
+      const connection = await pool.getConnection()
+      try {
+        await connection.beginTransaction()
+        const [[base]] = await connection.execute<any[]>(`SELECT ${definition.id}, EffectiveDate, Status FROM ${definition.table} WHERE ${definition.id} = ? FOR UPDATE`, [id])
+        if (!base) throw createError({ statusCode: 404, statusMessage: 'Rate not found.' })
+        if (base.Status !== 'Active') throw createError({ statusCode: 409, statusMessage: 'Only active rates can be edited.' })
+        const versionId = selected === 'payroll-rate' ? 'PayrollRateVersionID' : 'BillingRateVersionID'
+        const [[current]] = await connection.execute<any[]>(`SELECT ${versionId}, EffectiveDate FROM ${versionTable} WHERE ${definition.id} = ? AND EffectiveDate <= ? ORDER BY EffectiveDate DESC, ${versionId} DESC LIMIT 1 FOR UPDATE`, [id, todayInPhilippines()])
+        const targetTable = current ? versionTable : definition.table
+        const targetId = current ? versionId : definition.id
+        const [result] = await connection.execute<any>(`UPDATE ${targetTable} SET ${fields.map(field => `${field} = ?`).join(', ')} WHERE ${targetId} = ?`, [...values, current?.[versionId] ?? id])
+        if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Current rate not found.' })
+        await connection.commit()
+        return { success: true, effectiveDate: dateOnly(current?.EffectiveDate || base.EffectiveDate) }
+      } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+    }
+    const [[version]] = await pool.execute<any[]>(`SELECT 1 FROM ${versionTable} WHERE ${definition.id} = ? LIMIT 1`, [id])
+    if (version) throw createError({ statusCode: 409, statusMessage: 'This rate has dated updates. Add a new rate update instead of editing its original amounts.' })
     const [result] = await pool.execute<any>(`UPDATE ${definition.table} SET AgencyPositionID = ?, RegionID = ?, ${moneyFields.map((field) => `${field} = COALESCE(?, ${field})`).join(', ')}, EffectiveDate = ?, Status = ? WHERE ${definition.id} = ?`, [...rateValues(body, true), id])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Rate not found.' })
     return { success: true }

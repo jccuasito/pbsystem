@@ -80,8 +80,10 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
+  - `server/utils/rateVersions.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
+  - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
@@ -251,6 +253,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/rates/site-rate` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/site-rate` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/site-rate` → `server/api/rates/[resource].put.ts`
+  - `POST /api/rates/versions` → `server/api/rates/versions.post.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
@@ -268,6 +271,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateVersionCrud.ts`
+  - `server/utils/rateVersions.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/rateFields.ts`
@@ -619,19 +624,24 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
   - `components/RateCrud.vue`
   - `components/RateMoneyFields.vue`
+  - `components/SearchableSelect.vue`
   - `shared/utils/rateFields.ts`
 - API calls and handlers:
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/[param]` → `server/api/rates/[resource].put.ts`
+  - `POST /api/rates/versions` → `server/api/rates/versions.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateVersionCrud.ts`
+  - `server/utils/rateVersions.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
@@ -643,19 +653,24 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
   - `components/RateCrud.vue`
   - `components/RateMoneyFields.vue`
+  - `components/SearchableSelect.vue`
   - `shared/utils/rateFields.ts`
 - API calls and handlers:
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/[param]` → `server/api/rates/[resource].put.ts`
+  - `POST /api/rates/versions` → `server/api/rates/versions.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateVersionCrud.ts`
+  - `server/utils/rateVersions.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
@@ -681,6 +696,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateVersions.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.

@@ -6,6 +6,7 @@ import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceSt
 import { assertDtrBtrReady } from './dtrBtrCrud'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/alertmessage/messages'
 import { attachPendingEmployeeStatuses, employeeStatusAttendanceStatuses } from './employeeStatusCrud.ts'
+import { effectiveAmountSql } from './rateVersions'
 
 type DtrBody = Record<string, unknown>
 
@@ -466,7 +467,8 @@ async function matchingDtrRate(connection: any, employeeId: number, batch: any) 
 
 async function matchingWorkPositionRate(connection: any, batch: any, agencyPositionId: number, attendanceDate: string) {
   const [[rate]] = await connection.execute<any[]>(`SELECT ap.AgencyPositionID, sr.SiteRateID, p.PositionName,
-      pr.RegularRate AS PayrollRegularRate, br.RegularRate AS BillingRegularRate
+      ${effectiveAmountSql('payroll-rate', 'pr', 'RegularRate', 'DATE(?)')} AS PayrollRegularRate,
+      ${effectiveAmountSql('billing-rate', 'br', 'RegularRate', 'DATE(?)')} AS BillingRegularRate
     FROM site_rate sr
     INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     INNER JOIN billing_rate br ON br.BillingRateID = sr.BillingRateID
@@ -476,7 +478,7 @@ async function matchingWorkPositionRate(connection: any, batch: any, agencyPosit
       AND sr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
       AND (pr.EffectiveDate IS NULL OR DATE(pr.EffectiveDate) <= ?)
       AND (br.EffectiveDate IS NULL OR DATE(br.EffectiveDate) <= ?)
-    ORDER BY pr.EffectiveDate DESC, br.EffectiveDate DESC, sr.SiteRateID DESC LIMIT 1`, [agencyPositionId, batch.AgencyID, batch.SiteID, attendanceDate, attendanceDate])
+    ORDER BY pr.EffectiveDate DESC, br.EffectiveDate DESC, sr.SiteRateID DESC LIMIT 1`, [attendanceDate, attendanceDate, agencyPositionId, batch.AgencyID, batch.SiteID, attendanceDate, attendanceDate])
   if (!rate) throw createError({ statusCode: 400, statusMessage: 'This position has no active site payroll and billing rate for the attendance date.' })
   return rate
 }
@@ -719,7 +721,8 @@ export async function listDtrRecords(event: any) {
           LEFT JOIN shift_code saved_shift ON saved_shift.ShiftCodeID = at.ShiftCodeID
           WHERE at.BatchID = ? AND (duty.AttendanceDutyID IS NOT NULL OR at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL)
           ORDER BY e.LastName, e.FirstName, e.MiddleName, at.AttendanceDate, duty.SourceRowNumber, at.AttendanceID`, [id]), connection.execute<any[]>(`SELECT ap.AgencyPositionID, p.PositionName, sr.SiteRateID,
-          pr.RegularRate AS PayrollRegularRate, br.RegularRate AS BillingRegularRate, pr.EffectiveDate
+          ${effectiveAmountSql('payroll-rate', 'pr', 'RegularRate', 'DATE(?)')} AS PayrollRegularRate,
+          ${effectiveAmountSql('billing-rate', 'br', 'RegularRate', 'DATE(?)')} AS BillingRegularRate, pr.EffectiveDate
           FROM site_rate sr
           INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
           INNER JOIN billing_rate br ON br.BillingRateID = sr.BillingRateID
@@ -727,7 +730,7 @@ export async function listDtrRecords(event: any) {
           INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
           WHERE ap.AgencyID = ? AND sr.SiteID = ?
             AND sr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
-          ORDER BY p.PositionName, pr.EffectiveDate DESC, sr.SiteRateID DESC`, [batch.AgencyID, batch.SiteID])])
+          ORDER BY p.PositionName, pr.EffectiveDate DESC, sr.SiteRateID DESC`, [databaseDate(batch.PeriodEnd), databaseDate(batch.PeriodEnd), batch.AgencyID, batch.SiteID])])
     await connection.commit()
     return { batch, policy, records, shifts, attendanceRows, dutyRows, workPositions, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
