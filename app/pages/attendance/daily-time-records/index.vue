@@ -31,7 +31,7 @@ async function compute(i:Dtr,target:'payroll'|'billing'){
   if(!canCompute(i,target))return
   const destination=target==='payroll'?'payroll':'billing'
   const nextStatus=i.Status.startsWith('Computed')?'Computed to Both':target==='payroll'?'Computed to Payroll':'Computed to Billing'
-  if(!confirm(`Compute DTR-${String(i.BatchID).padStart(4,'0')} to ${destination}?\n\nThis will mark the DTR as “${nextStatus}” and disable attendance editing. It does not yet create payroll or billing records or post payroll adjustments.`))return
+  if(!confirm(`Compute DTR-${String(i.BatchID).padStart(4,'0')} to ${destination}?\n\nThis will mark the DTR as “${nextStatus}” and disable attendance editing. Payroll amounts will be available for review in Payroll Processing. This does not post payroll or billing records or adjustments.`))return
   computingKey.value=`${i.BatchID}-${target}`
   try{await $fetch(`/api/attendance/dtr/${i.BatchID}/compute`,{method:'POST',body:{target}});await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to compute DTR.'}finally{computingKey.value=''}
 }

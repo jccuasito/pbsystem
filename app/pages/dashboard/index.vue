@@ -21,6 +21,7 @@ import DeductionLoanCatalogPage from '../deductions-loans/catalog/index.vue'
 import EmployeeLoanDeductionPage from '../deductions-loans/employees/index.vue'
 import EmployeeAccountTransactionsPage from '../deductions-loans/transactions/index.vue'
 import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
+import PayrollProcessingPage from '../payroll/processing/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -250,6 +251,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'attendance-shift-code': ShiftCodePage,
   'attendance-holiday-manager': HolidayManagerPage,
   'payroll-adjustments': PayrollAdjustmentsPage,
+  'payroll-processing': PayrollProcessingPage,
   'employee-loans-deductions': EmployeeLoanDeductionPage,
   'deductions-loans-transactions': EmployeeAccountTransactionsPage,
   'deductions-loans-catalog': DeductionLoanCatalogPage

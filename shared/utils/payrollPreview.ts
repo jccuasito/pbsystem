@@ -1,0 +1,42 @@
+// A review calculation only. These are configured component amounts, not statutory multipliers.
+export const payrollHourComponents = [
+  ['RegularHours', 'RegularRate', 'Regular'],
+  ['OTHours', 'OTRate', 'OT'],
+  ['OTExtHours', 'OTExtRate', 'OT extension'],
+  ['NightDiffHours', 'NightDiffRate', 'Night diff'],
+  ['RestDayHours', 'RestDayRate', 'WDO / Rest day'],
+  ['RestDayOTHours', 'RestDayOTRate', 'WDO / Rest day OT'],
+  ['LegalHolidayHours', 'LegalHolidayRate', 'Legal holiday'],
+  ['LegalHolidayOTHours', 'LegalHolidayOTRate', 'Legal holiday OT'],
+  ['RestDayLegalHolidayHours', 'LegalHolidayRate', 'Rest day legal holiday'],
+  ['RestDayLegalHolidayOTHours', 'LegalHolidayOTRate', 'Rest day legal holiday OT'],
+  ['SpecialHolidayHours', 'SpecialHolidayRate', 'Special holiday'],
+  ['SpecialHolidayOTHours', 'SpecialHolidayOTRate', 'Special holiday OT'],
+  ['RestDaySpecialHolidayHours', 'SpecialHolidayRate', 'Rest day special holiday'],
+  ['RestDaySpecialHolidayOTHours', 'SpecialHolidayOTRate', 'Rest day special holiday OT'],
+] as const
+
+export const payrollTimeDeductions = [
+  ['LateHours', 'LateDeduction', 'Late'],
+  ['UndertimeHours', 'UndertimeDeduction', 'Undertime'],
+  ['BreakHours', 'BreakDeduction', 'Break'],
+] as const
+
+export function moneyCents(value: unknown) {
+  return Math.round(Number(value || 0) * 100)
+}
+
+export function componentAmountCents(hours: unknown, rate: unknown) {
+  return Math.round(Number(hours || 0) * Number(rate || 0) * 100)
+}
+
+export function previewInstallment(account: any, periodStart: string, periodEnd: string) {
+  const cutoff = Number(periodStart.slice(8, 10)) <= 15 ? 'First' : 'Second'
+  const date = String(account.RepaymentStartDate || '')
+  if (account.Status !== 'Active' || !date || date > periodEnd ||
+      (account.RepaymentCutoff !== cutoff && account.RepaymentCutoff !== 'Both') ||
+      (account.EndDate && String(account.EndDate) < periodStart) ||
+      (Number(account.IsPaused) && (!account.ResumeDate || String(account.ResumeDate) > periodEnd))) return 0
+  const balance = moneyCents(account.RemainingBalance)
+  return Math.max(0, Math.min(balance, moneyCents(account.InstallmentAmount)))
+}

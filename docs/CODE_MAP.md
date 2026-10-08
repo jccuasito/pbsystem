@@ -155,6 +155,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/organization/region/index.vue`
   - `app/pages/organization/site/index.vue`
   - `app/pages/payroll/adjustments/index.vue`
+  - `app/pages/payroll/processing/index.vue`
   - `app/pages/rates/billing/index.vue`
   - `app/pages/rates/payroll/index.vue`
   - `app/pages/rates/site/index.vue`
@@ -172,6 +173,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
+  - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - API calls and handlers:
   - `GET /api/attendance/dtr` → `server/api/attendance/dtr/index.get.ts`
@@ -245,6 +247,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/payroll/adjustments` → `server/api/payroll/adjustments/index.get.ts`
   - `POST /api/payroll/adjustments` → `server/api/payroll/adjustments/index.post.ts`
   - `PUT /api/payroll/adjustments` → `server/api/payroll/adjustments/index.put.ts`
+  - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
@@ -269,12 +272,14 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
+  - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersionCrud.ts`
   - `server/utils/rateVersions.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
+  - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
@@ -614,6 +619,26 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - None detected.
 - Related backend utilities:
   - None detected.
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/payroll/processing`
+
+- Page: `app/pages/payroll/processing/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`
+- Related frontend files:
+  - `shared/utils/payrollPreview.ts`
+- API calls and handlers:
+  - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/payrollProcessingCrud.ts`
+  - `server/utils/rateVersions.ts`
+  - `shared/utils/payrollPreview.ts`
+  - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
