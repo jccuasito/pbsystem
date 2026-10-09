@@ -1,34 +1,44 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { payrollHourComponents, payrollTimeDeductions } from '~~/shared/utils/payrollPreview'
+import PayrollProcessingDetailModal from '~/components/PayrollProcessingDetailModal.vue'
 
-type Result = { cutoffs: { start: string; end: string }[]; selectedCutoff: { start: string; end: string } | null; sites: any[] }
+type Cutoff = { start: string; end: string }
+type Result = { cutoffs: Cutoff[]; selectedCutoff: Cutoff | null; sites: any[]; permissions?: { canReview: boolean } }
 const data = ref<Result>({ cutoffs: [], selectedCutoff: null, sites: [] })
 const loading = ref(false)
+const busy = ref(false)
 const error = ref('')
+const actionError = ref('')
+const success = ref('')
 const cutoff = ref('')
 const search = ref('')
 const agency = ref('')
 const client = ref('')
-const expanded = ref<number | null>(null)
+const statusFilter = ref('current')
+const selectedId = ref<number | null>(null)
+
 const money = (value: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value || 0)
 const day = (value: string) => value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : ''
-const range = (start: string, end: string) => `${day(start)} – ${day(end)}`
+const range = (item: Cutoff) => `${day(item.start)} – ${day(item.end)}`
 const agencies = computed(() => [...new Map(data.value.sites.map(site => [site.AgencyID, site.AgencyName])).entries()])
 const clients = computed(() => [...new Map(data.value.sites.filter(site => !agency.value || String(site.AgencyID) === agency.value).map(site => [site.ClientID, site.ClientName])).entries()])
+const selectedSite = computed(() => data.value.sites.find(site => Number(site.BatchID) === selectedId.value) || null)
 const visible = computed(() => data.value.sites.filter(site =>
   (!agency.value || String(site.AgencyID) === agency.value) &&
   (!client.value || String(site.ClientID) === client.value) &&
-  (!search.value.trim() || `${site.SiteName} ${site.ClientName} ${site.AgencyName} ${site.BatchID} ${site.employees.map((employee: any) => employee.EmployeeName).join(' ')}`.toLowerCase().includes(search.value.trim().toLowerCase()))
+  (statusFilter.value === 'current' ? site.ReviewStatus !== 'Rejected' : (site.ReviewStatus || 'Pending') === statusFilter.value) &&
+  (!search.value.trim() || `${site.SiteName} ${site.ClientName} ${site.AgencyName} ${site.BatchID} ${site.employees.map((person: any) => person.EmployeeName).join(' ')}`.toLowerCase().includes(search.value.trim().toLowerCase()))
 ))
-const totals = computed(() => visible.value.reduce((sum, site) => ({ people: sum.people + site.peopleCount, gross: sum.gross + site.gross, deductions: sum.deductions + site.deductions, net: sum.net + site.netPreview }), { people: 0, gross: 0, deductions: 0, net: 0 }))
-const orderedComponents = [...payrollHourComponents, ...payrollTimeDeductions]
-function siteComponents(site: any) {
-  return orderedComponents.map(([code, , label]) => ({ code, label,
-    hours: site.employees.reduce((sum: number, employee: any) => sum + Number(employee.components.find((line: any) => line.code === code)?.hours || 0), 0),
-    amount: site.employees.reduce((sum: number, employee: any) => sum + Number(employee.components.find((line: any) => line.code === code)?.amount || 0), 0),
-  })).filter(line => line.hours)
-}
+const totals = computed(() => visible.value.reduce((sum, site) => ({
+  people: sum.people + Number(site.peopleCount || 0), gross: sum.gross + Number(site.gross || 0),
+  deductions: sum.deductions + Number(site.deductions || 0), net: sum.net + Number(site.netPreview || 0),
+}), { people: 0, gross: 0, deductions: 0, net: 0 }))
+const counts = computed(() => data.value.sites.reduce((value, site) => {
+  const status = String(site.ReviewStatus || 'Pending')
+  value[status] = (value[status] || 0) + 1
+  return value
+}, {} as Record<string, number>))
+
 async function load() {
   loading.value = true; error.value = ''
   try {
@@ -36,62 +46,41 @@ async function load() {
     const result = await $fetch<Result>('/api/payroll/processing', { query: periodStart && periodEnd ? { periodStart, periodEnd } : {} })
     data.value = result
     if (!cutoff.value && result.selectedCutoff) cutoff.value = `${result.selectedCutoff.start}:${result.selectedCutoff.end}`
-    expanded.value = null
+    if (selectedId.value && !result.sites.some(site => Number(site.BatchID) === selectedId.value)) selectedId.value = null
   } catch (caught: any) { error.value = caught?.data?.statusMessage || caught?.message || 'Unable to load payroll processing.' }
   finally { loading.value = false }
+}
+async function review(action: 'approve' | 'reject', reason = '') {
+  if (!selectedId.value || busy.value) return
+  busy.value = true; actionError.value = ''; success.value = ''
+  try {
+    await $fetch(`/api/payroll/processing/${selectedId.value}`, { method: 'POST', body: { action, reason } })
+    selectedId.value = null
+    await load()
+    success.value = action === 'approve' ? 'Approved for payroll. The reviewed amounts and approver are saved in history.' : 'Returned to Draft. Correct the DTR and compute it again before approval.'
+  } catch (caught: any) { actionError.value = caught?.data?.statusMessage || caught?.message || 'Unable to save payroll review.' }
+  finally { busy.value = false }
 }
 onMounted(load)
 </script>
 
 <template>
   <section class="processing-page">
-    <header class="processing-heading">
-      <div><p class="eyebrow">PAYROLL</p><h1>Payroll Processing</h1><p>Review computed DTR hours, rate amounts, and employee deductions by site.</p></div>
-      <button class="refresh" type="button" :disabled="loading" @click="load">{{ loading ? 'Loading…' : 'Refresh' }}</button>
-    </header>
-    <div class="notice">Review preview only. No payroll or loan transaction is posted here. Amounts follow the rate effective on each attendance date; installments use current balances. Allowances, payroll adjustments, and statutory deductions are not yet included in net preview.</div>
-    <div class="processing-filters">
-      <label class="search-field">Search site or employee<input v-model="search" placeholder="Search site, client, DTR, or employee"></label>
-      <label>Agency<select v-model="agency" @change="client=''">
-        <option value="">All agencies</option><option v-for="[id, name] in agencies" :key="id" :value="String(id)">{{ name }}</option>
-      </select></label>
+    <header class="heading"><div><p class="eyebrow">PAYROLL</p><h1>Payroll Processing</h1><p>Review computed DTRs by site before approving them for payroll.</p></div><button type="button" class="secondary refresh" :disabled="loading" @click="load">{{ loading?'Refreshing…':'Refresh' }}</button></header>
+    <p class="workflow-note">Approval saves a reviewed snapshot and audit history. It does not yet post deductions, generate payslips, or release pay.</p>
+    <div class="filters">
+      <label class="search-field">Search site or employee<input v-model="search" type="search" placeholder="Search site, client, DTR, or employee"></label>
+      <label>Agency<select v-model="agency" @change="client='' "><option value="">All agencies</option><option v-for="[id, name] in agencies" :key="id" :value="String(id)">{{ name }}</option></select></label>
       <label>Client<select v-model="client"><option value="">All clients</option><option v-for="[id, name] in clients" :key="id" :value="String(id)">{{ name }}</option></select></label>
-      <label>Cutoff<select v-model="cutoff" @change="load"><option value="">Latest computed cutoff</option><option v-for="item in data.cutoffs" :key="item.start+item.end" :value="`${item.start}:${item.end}`">{{ range(item.start, item.end) }}</option></select></label>
+      <label>Cutoff<select v-model="cutoff" @change="load"><option value="">Latest cutoff</option><option v-for="item in data.cutoffs" :key="item.start+item.end" :value="`${item.start}:${item.end}`">{{ range(item) }}</option></select></label>
     </div>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <p class="count">Showing {{ visible.length }} of {{ data.sites.length }} computed site DTRs<span v-if="data.selectedCutoff"> · {{ range(data.selectedCutoff.start, data.selectedCutoff.end) }}</span></p>
-    <div v-if="visible.length" class="summary-strip">
-      <div><span>Employees</span><strong>{{ totals.people }}</strong></div><div><span>Gross preview</span><strong>{{ money(totals.gross) }}</strong></div>
-      <div><span>Deductions preview</span><strong>{{ money(totals.deductions) }}</strong></div><div><span>Net preview</span><strong>{{ money(totals.net) }}</strong></div>
-    </div>
-    <div class="processing-table-wrap"><table class="processing-table">
-      <thead><tr><th>Site / Client</th><th>Agency / DTR</th><th>People</th><th>Gross</th><th>Deductions</th><th>Net preview</th><th>Actions</th></tr></thead>
-      <tbody>
-        <template v-for="site in visible" :key="site.BatchID">
-          <tr><td><strong>{{ site.SiteName }}</strong><small>{{ site.ClientName }}</small></td><td><strong>{{ site.AgencyName }}</strong><small>DTR-{{ String(site.BatchID).padStart(4, '0') }}</small></td>
-            <td>{{ site.peopleCount }}</td><td>{{ money(site.gross) }}</td><td>{{ money(site.deductions) }}</td><td><strong>{{ money(site.netPreview) }}</strong></td>
-            <td><button class="details-button" type="button" :aria-expanded="expanded===site.BatchID" @click="expanded=expanded===site.BatchID?null:site.BatchID">{{ expanded===site.BatchID?'Hide details':'View details' }}</button></td></tr>
-          <tr v-if="expanded===site.BatchID" class="details-row"><td colspan="7"><div class="details-panel">
-            <div v-if="site.warningCount" class="warning">{{ site.warningCount }} pricing note{{ site.warningCount===1?'':'s' }} need review before payroll approval.</div>
-            <div class="section-title"><div><p class="eyebrow">SITE TOTALS</p><h2>Hours and rate amounts</h2></div><span>{{ range(site.PeriodStart, site.PeriodEnd) }}</span></div>
-            <div class="component-grid"><div v-for="line in siteComponents(site)" :key="line.code" class="component-card"><span>{{ line.label }}</span><strong>{{ line.hours.toFixed(2) }} h</strong><b>{{ money(line.amount) }} <small>{{ line.code.endsWith('Hours') && ['LateHours','UndertimeHours','BreakHours'].includes(line.code) ? 'deduction' : 'earning' }}</small></b></div></div>
-            <div class="section-title employee-title"><div><p class="eyebrow">EMPLOYEES</p><h2>Individual breakdown</h2></div></div>
-            <details v-for="person in site.employees" :key="person.EmployeeID" class="employee-card">
-              <summary><span><strong>{{ person.EmployeeName }}</strong><small>{{ person.EmployeeNumber || `Employee #${person.EmployeeID}` }} · {{ person.PositionName || 'Position unavailable' }}</small></span><span class="employee-money">Gross {{ money(person.gross) }} · Deductions {{ money(person.timeDeductions + person.accountDeductions) }} · <b>Net {{ money(person.netPreview) }}</b></span></summary>
-              <div class="employee-content"><div class="employee-columns"><div><h3>Attendance and rates</h3><div v-for="line in person.components" :key="line.code" class="amount-line"><span>{{ line.label }} · {{ Number(line.hours).toFixed(2) }} h</span><strong>{{ line.direction==='Deduction'?'−':'+' }}{{ money(line.amount) }}</strong></div><p v-if="!person.components.length" class="muted">No payable attendance hours recorded.</p></div>
-                <div><h3>Linked employee deductions</h3><div v-for="item in person.deductions" :key="`${item.entryType}-${item.recordId}`" class="amount-line"><span>{{ item.name }} <small>({{ item.entryType }}, balance {{ money(item.remainingBalance) }})</small></span><strong>−{{ money(item.amount) }}</strong></div><p v-if="!person.deductions.length" class="muted">No active installment due in this cutoff.</p></div></div>
-                <p v-for="warning in person.warnings" :key="warning" class="warning">{{ warning }}</p>
-              </div>
-            </details>
-          </div></td></tr>
-        </template>
-        <tr v-if="!visible.length"><td colspan="7" class="empty">{{ loading ? 'Loading computed DTRs…' : 'No computed payroll DTRs match this cutoff and search.' }}</td></tr>
-      </tbody>
-    </table></div>
+    <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="success" class="success" role="status">{{ success }}</p>
+    <div class="list-top"><p>Showing {{ visible.length }} site DTRs<span v-if="data.selectedCutoff"> · {{ range(data.selectedCutoff) }}</span></p><div class="status-tabs" aria-label="Review status filters"><button v-for="item in [{key:'current',label:'Current'}, {key:'Pending',label:'To review'}, {key:'Approved',label:'Approved'}, {key:'Rejected',label:'Returned'}]" :key="item.key" type="button" :class="{active:statusFilter===item.key}" @click="statusFilter=item.key">{{ item.label }} <span>{{ item.key==='current'?data.sites.length-(counts.Rejected||0):counts[item.key]||0 }}</span></button></div></div>
+    <div v-if="visible.length" class="summary-strip"><div><span>Employees</span><strong>{{ totals.people }}</strong></div><div><span>Gross</span><strong>{{ money(totals.gross) }}</strong></div><div><span>Deductions</span><strong>{{ money(totals.deductions) }}</strong></div><div><span>Net for review</span><strong>{{ money(totals.net) }}</strong></div></div>
+    <div class="table-wrap"><table class="processing-table"><thead><tr><th>Site / Client</th><th>Agency / DTR</th><th>Employees</th><th>Gross</th><th>Deductions</th><th>Net</th><th>Review</th><th>Action</th></tr></thead><tbody>
+      <tr v-for="site in visible" :key="site.BatchID"><td><strong>{{ site.SiteName }}</strong><small>{{ site.ClientName }}</small></td><td><strong>{{ site.AgencyName }}</strong><small>DTR-{{ String(site.BatchID).padStart(4, '0') }}</small></td><td>{{ site.peopleCount }}</td><td>{{ money(site.gross) }}</td><td>{{ money(site.deductions) }}</td><td><strong>{{ money(site.netPreview) }}</strong></td><td><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus==='Approved'?'Approved':site.ReviewStatus==='Rejected'?'Returned':'To review' }}</span><small v-if="site.warningCount" class="note-count">{{ site.warningCount }} pricing note{{ site.warningCount===1?'':'s' }}</small></td><td><button type="button" class="secondary" @click="selectedId=Number(site.BatchID);actionError='';success=''">{{ site.ReviewStatus==='Pending'?'Review':'View details' }}</button></td></tr>
+      <tr v-if="!visible.length"><td colspan="8" class="empty">{{ loading?'Loading site DTRs…':statusFilter==='current' && counts.Rejected?'No current DTRs. Open Returned to view rejected history.':'No site DTRs match these filters.' }}</td></tr>
+    </tbody></table></div>
+    <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview" :busy="busy" :error="actionError" @close="selectedId=null" @approve="review('approve')" @reject="reason=>review('reject', reason)" />
   </section>
 </template>
-
-<style scoped>
-.processing-page{max-width:1500px;margin:0 auto;color:#17335c}.processing-heading{display:flex;justify-content:space-between;align-items:start;gap:24px;margin-bottom:22px}.eyebrow{margin:0 0 6px;color:#2d65d6;font-size:12px;font-weight:800;letter-spacing:.09em}.processing-heading h1{margin:0;font-size:30px;color:#102a51}.processing-heading p:last-child{margin:7px 0 0;color:#657894}.refresh,.details-button{border:1px solid #cbd9ec;border-radius:9px;padding:10px 14px;background:#fff;color:#204a88;font:inherit;font-weight:700;cursor:pointer}.refresh:disabled{opacity:.5}.notice{padding:14px 17px;border:1px solid #c6dafa;border-radius:10px;background:#edf4ff;color:#315780;line-height:1.5}.processing-filters{display:grid;grid-template-columns:minmax(240px,2fr) repeat(3,minmax(150px,1fr));gap:14px;margin:24px 0 12px}.processing-filters label{display:flex;flex-direction:column;gap:7px;color:#435877;font-size:13px;font-weight:700}.processing-filters input,.processing-filters select{box-sizing:border-box;width:100%;min-height:49px;padding:0 13px;border:1px solid #cbd9ec;border-radius:9px;background:#fff;color:#163258;font:inherit;font-size:15px}.count{color:#697c99;font-size:14px}.summary-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}.summary-strip div{display:flex;flex-direction:column;gap:6px;padding:15px;border:1px solid #d8e4f4;border-radius:11px;background:#fff}.summary-strip span{color:#657b9b;font-size:12px}.summary-strip strong{font-size:20px}.processing-table-wrap{overflow-x:auto;border:1px solid #dbe5f2;border-radius:12px;background:#fff}.processing-table{width:100%;border-collapse:collapse;text-align:left;font-size:14px}.processing-table th{padding:14px 16px;background:#f5f8fc;color:#526b8d;font-size:12px;text-transform:uppercase}.processing-table td{padding:15px 16px;border-top:1px solid #e9eef6;vertical-align:middle}.processing-table td small{display:block;margin-top:4px;color:#69809f;font-size:12px}.processing-table strong{color:#18345f}.details-button{white-space:nowrap}.details-row td{padding:0;background:#f6f9fe}.details-panel{padding:22px}.section-title{display:flex;justify-content:space-between;align-items:end;gap:14px;margin-bottom:16px}.section-title h2{margin:0;font-size:18px}.section-title>span{color:#6e819e;font-size:13px}.component-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.component-card{display:flex;flex-direction:column;gap:5px;padding:13px;border:1px solid #d8e4f4;border-radius:9px;background:#fff}.component-card span,.component-card small{color:#667b99;font-size:12px}.component-card b{color:#173967}.employee-title{margin-top:26px}.employee-card{margin:9px 0;border:1px solid #d8e4f4;border-radius:9px;background:#fff}.employee-card summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:15px;cursor:pointer}.employee-card summary small{display:block;margin-top:5px;color:#6f809a}.employee-money{color:#536b8e;text-align:right}.employee-content{padding:0 16px 16px}.employee-columns{display:grid;grid-template-columns:1fr 1fr;gap:26px}.employee-columns h3{font-size:14px}.amount-line{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #edf1f7}.amount-line small{display:inline!important}.muted{color:#71829c}.warning{margin:10px 0;padding:10px 13px;border:1px solid #f4dbaa;border-radius:8px;background:#fff8e9;color:#795523}.empty{text-align:center;color:#697e9c;padding:40px!important}.error{color:#ad2828}
-@media(max-width:1050px){.processing-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.component-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.processing-table{min-width:900px}}@media(max-width:650px){.processing-heading{flex-wrap:wrap}.processing-filters,.summary-strip,.employee-columns{grid-template-columns:1fr}.component-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.employee-card summary{align-items:start;flex-direction:column}.employee-money{text-align:left}}
-</style>

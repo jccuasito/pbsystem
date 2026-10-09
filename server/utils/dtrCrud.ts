@@ -7,6 +7,7 @@ import { assertDtrBtrReady } from './dtrBtrCrud'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/alertmessage/messages'
 import { attachPendingEmployeeStatuses, employeeStatusAttendanceStatuses } from './employeeStatusCrud.ts'
 import { effectiveAmountSql } from './rateVersions'
+import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 
 type DtrBody = Record<string, unknown>
 
@@ -155,6 +156,9 @@ export async function deleteDtr(event: any) {
     const [[current]] = await connection.execute<any[]>('SELECT Status, PeriodStart, PeriodEnd FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
     if (current.Status !== 'Draft') throw createError({ statusCode: 409, statusMessage: 'Only Draft DTRs can be deleted.' })
+    const [[workflowHistory]] = await connection.execute<any[]>(
+      'SELECT EventID FROM dtr_workflow_event WHERE BatchID = ? LIMIT 1', [id])
+    if (workflowHistory) throw createError({ statusCode: 409, statusMessage: 'This DTR has payroll or billing workflow history and cannot be deleted.' })
     // Only deployments created for this cutoff may leave the fixed timeline.
     // A real, pre-existing deployment can be shared by many DTRs and must survive.
     const [createdDeployments] = await connection.execute<any[]>(`SELECT ed.DeploymentID
@@ -191,6 +195,9 @@ export async function computeDtr(event: any) {
     const [[current]] = await connection.execute<any[]>('SELECT BatchID, AgencyID, SiteID, PeriodStart, PeriodEnd, Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [id])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
     if (current.Status === 'Locked' || current.Status === 'Approved') throw createError({ statusCode: 409, statusMessage: 'This DTR is locked and cannot be computed.' })
+    if (current.Status === 'Computed to Both' || current.Status === (target === 'payroll' ? 'Computed to Payroll' : 'Computed to Billing')) {
+      throw createError({ statusCode: 409, statusMessage: `This DTR was already computed to ${target}.` })
+    }
     await syncBatchHolidays(connection, current, session.sub)
     if (target === 'payroll') await assertDtrBtrReady(connection, current)
     const nextStatus = current.Status === 'Computed to Both'
@@ -199,6 +206,16 @@ export async function computeDtr(event: any) {
         ? 'Computed to Both'
         : target === 'payroll' ? 'Computed to Payroll' : 'Computed to Billing'
     await connection.execute('UPDATE attendance_dtr SET Status = ? WHERE BatchID = ?', [nextStatus, id])
+    if (target === 'payroll') {
+      await connection.execute(`INSERT INTO payroll_processing_review
+        (BatchID, ReviewStatus, SnapshotJson, ApprovedBy, ApprovedAt, RejectedBy, RejectedAt, RejectionReason)
+        VALUES (?, 'Pending', NULL, NULL, NULL, NULL, NULL, NULL)
+        ON DUPLICATE KEY UPDATE ReviewStatus = 'Pending', SnapshotJson = NULL,
+          ApprovedBy = NULL, ApprovedAt = NULL, RejectedBy = NULL, RejectedAt = NULL, RejectionReason = NULL`, [id])
+    }
+    await recordDtrWorkflowEvent(connection, { batchId: id,
+      action: target === 'payroll' ? 'Compute Payroll' : 'Compute Billing',
+      previousStatus: current.Status, nextStatus, actorUserId: session.sub })
     await connection.commit(); return { success: true, status: nextStatus }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }

@@ -1,28 +1,33 @@
-import { getQuery, createError } from 'h3'
+import { getQuery, getRouterParam, readBody, createError } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
 import { componentAmountCents, payrollHourComponents, payrollTimeDeductions, previewInstallment } from '../../shared/utils/payrollPreview'
+import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 
 const hours = [...payrollHourComponents, ...payrollTimeDeductions].map(([column]) => column)
 const pesos = (cents: number) => cents / 100
 
-export async function listPayrollProcessing(event: any) {
-  const session = requireSession(event); void session.sub
-  const query = getQuery(event)
-  const requestedStart = String(query.periodStart || '')
-  const requestedEnd = String(query.periodEnd || '')
+export async function payrollProcessingData(requestedStart = '', requestedEnd = '', connection: any = pool) {
   if ((requestedStart || requestedEnd) && (!/^\d{4}-\d{2}-\d{2}$/.test(requestedStart) || !/^\d{4}-\d{2}-\d{2}$/.test(requestedEnd) || requestedStart > requestedEnd)) {
     throw createError({ statusCode: 400, statusMessage: 'Select a valid payroll cutoff.' })
   }
-  const [batches] = await pool.execute<any[]>(`SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName,
+  const [batches] = await connection.execute<any[]>(`SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName,
       d.SiteID, s.SiteName, DATE_FORMAT(d.PeriodStart, '%Y-%m-%d') AS PeriodStart,
-      DATE_FORMAT(d.PeriodEnd, '%Y-%m-%d') AS PeriodEnd, d.Status
+      DATE_FORMAT(d.PeriodEnd, '%Y-%m-%d') AS PeriodEnd, d.Status,
+      review.ReviewStatus, review.SnapshotJson, review.RejectionReason,
+      DATE_FORMAT(review.ApprovedAt, '%Y-%m-%d %H:%i:%s') AS ApprovedAt,
+      DATE_FORMAT(review.RejectedAt, '%Y-%m-%d %H:%i:%s') AS RejectedAt,
+      CONCAT_WS(' ', approver.FirstName, approver.LastName) AS ApprovedByName,
+      CONCAT_WS(' ', rejector.FirstName, rejector.LastName) AS RejectedByName
     FROM attendance_dtr d
     INNER JOIN agency a ON a.AgencyID = d.AgencyID
     INNER JOIN client c ON c.ClientID = d.ClientID
     INNER JOIN site s ON s.SiteID = d.SiteID
-    WHERE d.Status IN ('Computed to Payroll', 'Computed to Both')
+    LEFT JOIN payroll_processing_review review ON review.BatchID = d.BatchID
+    LEFT JOIN user approver ON approver.UserID = review.ApprovedBy
+    LEFT JOIN user rejector ON rejector.UserID = review.RejectedBy
+    WHERE d.Status IN ('Computed to Payroll', 'Computed to Both') OR review.ReviewStatus IN ('Approved', 'Rejected')
     ORDER BY d.PeriodStart DESC, d.BatchID DESC`)
   const cutoffs = [...new Map(batches.map(batch => [`${batch.PeriodStart}:${batch.PeriodEnd}`, { start: batch.PeriodStart, end: batch.PeriodEnd }])).values()]
   const selected = requestedStart ? batches.filter(batch => batch.PeriodStart === requestedStart && batch.PeriodEnd === requestedEnd)
@@ -30,7 +35,7 @@ export async function listPayrollProcessing(event: any) {
   if (!selected.length) return { cutoffs, selectedCutoff: requestedStart ? { start: requestedStart, end: requestedEnd } : cutoffs[0] || null, sites: [] }
 
   const ids = selected.map(batch => Number(batch.BatchID))
-  const [roster] = await pool.execute<any[]>(`SELECT de.BatchID, de.EmployeeID, e.EmployeeNumber,
+  const [roster] = await connection.execute<any[]>(`SELECT de.BatchID, de.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
       p.PositionName
     FROM attendance_dtr_employee de
@@ -39,7 +44,7 @@ export async function listPayrollProcessing(event: any) {
     LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
     WHERE de.BatchID IN (${ids.map(() => '?').join(', ')})
     ORDER BY e.LastName, e.FirstName, e.EmployeeID`, ids)
-  const [attendance] = await pool.execute<any[]>(`SELECT at.BatchID, at.EmployeeID, at.AttendanceID,
+  const [attendance] = await connection.execute<any[]>(`SELECT at.BatchID, at.EmployeeID, at.AttendanceID,
       DATE_FORMAT(at.AttendanceDate, '%Y-%m-%d') AS WorkDate, at.AttendanceStatus,
       ${hours.map(column => `at.${column}`).join(', ')},
       pr.PayrollRateID, DATE_FORMAT(pr.EffectiveDate, '%Y-%m-%d') AS BaseEffectiveDate,
@@ -52,9 +57,9 @@ export async function listPayrollProcessing(event: any) {
     WHERE at.BatchID IN (${ids.map(() => '?').join(', ')})
     ORDER BY at.BatchID, at.EmployeeID, at.AttendanceDate`, ids)
   const rateIds = [...new Set(attendance.map(row => Number(row.PayrollRateID)).filter(Boolean))]
-  const versions = await loadVersionMap(pool, 'payroll-rate', rateIds)
+  const versions = await loadVersionMap(connection, 'payroll-rate', rateIds)
   const employeeIds = [...new Set(roster.map(row => Number(row.EmployeeID)))]
-  const [accounts] = employeeIds.length ? await pool.execute<any[]>(`SELECT 'Loan' AS EntryType, el.EmployeeID,
+  const [accounts] = employeeIds.length ? await connection.execute<any[]>(`SELECT 'Loan' AS EntryType, el.EmployeeID,
       el.LoanID AS RecordID, lt.LoanName AS ItemName, el.RemainingBalance,
       el.MonthlyDeduction AS InstallmentAmount, DATE_FORMAT(el.RepaymentStartDate, '%Y-%m-%d') AS RepaymentStartDate,
       DATE_FORMAT(el.EndDate, '%Y-%m-%d') AS EndDate, el.RepaymentCutoff, el.IsPaused,
@@ -147,5 +152,110 @@ export async function listPayrollProcessing(event: any) {
       netPreview: pesos(employees.reduce((sum, person) => sum + Math.round(person.netPreview * 100), 0)),
       warningCount: employees.reduce((sum, person) => sum + person.warnings.length, 0) }
   })
-  return { cutoffs, selectedCutoff: requestedStart ? { start: requestedStart, end: requestedEnd } : cutoffs[0], sites }
+  const [events] = await connection.execute<any[]>(`SELECT EventID, BatchID, Action, PreviousDtrStatus, NextDtrStatus,
+    ActorName, ActorRole, ActorDepartment, Reason, DATE_FORMAT(CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt
+    FROM dtr_workflow_event WHERE BatchID IN (${ids.map(() => '?').join(', ')})
+    ORDER BY EventID DESC`, ids)
+  const historyByBatch = new Map<number, any[]>()
+  for (const event of events) {
+    const id = Number(event.BatchID)
+    if (!historyByBatch.has(id)) historyByBatch.set(id, [])
+    historyByBatch.get(id)!.push(event)
+  }
+  return { cutoffs, selectedCutoff: requestedStart ? { start: requestedStart, end: requestedEnd } : cutoffs[0], sites: sites.map(site => {
+    const batch = selected.find(item => Number(item.BatchID) === Number(site.BatchID))
+    const stored = batch?.ReviewStatus === 'Approved' || batch?.ReviewStatus === 'Rejected'
+      ? parseSnapshot(batch.SnapshotJson) : null
+    const { SnapshotJson, ...metadata } = batch || {}
+    return { ...site, ...(stored || {}), ...metadata, ReviewStatus: batch?.ReviewStatus || 'Pending',
+      history: historyByBatch.get(Number(site.BatchID)) || [] }
+  }) }
+}
+
+function parseSnapshot(value: unknown) {
+  try { return typeof value === 'string' ? JSON.parse(value) : value && typeof value === 'object' ? value : null }
+  catch { return null }
+}
+
+export async function listPayrollProcessing(event: any) {
+  const session = requireSession(event)
+  const query = getQuery(event)
+  const result = await payrollProcessingData(String(query.periodStart || ''), String(query.periodEnd || ''))
+  return { ...result, permissions: { canReview: ['Admin', 'Supervisor'].includes(String(session.userType)) } }
+}
+
+export async function reviewPayrollProcessing(event: any) {
+  const session = requireSession(event)
+  if (!['Admin', 'Supervisor'].includes(String(session.userType))) {
+    throw createError({ statusCode: 403, statusMessage: 'Only an Admin or Supervisor can approve or reject payroll processing.' })
+  }
+  const batchId = Number(getRouterParam(event, 'id'))
+  if (!Number.isInteger(batchId) || batchId <= 0) throw createError({ statusCode: 400, statusMessage: 'Select a valid DTR.' })
+  const body = await readBody<{ action?: unknown; reason?: unknown }>(event) || {}
+  const action = body.action === 'approve' || body.action === 'reject' ? body.action : null
+  if (!action) throw createError({ statusCode: 400, statusMessage: 'Choose approve or reject.' })
+  const reason = String(body.reason || '').trim()
+  if (action === 'reject' && (reason.length < 5 || reason.length > 500)) {
+    throw createError({ statusCode: 400, statusMessage: 'Enter a rejection reason of 5–500 characters.' })
+  }
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [[batch]] = await connection.execute<any[]>(`SELECT BatchID, Status,
+      DATE_FORMAT(PeriodStart, '%Y-%m-%d') AS PeriodStart,
+      DATE_FORMAT(PeriodEnd, '%Y-%m-%d') AS PeriodEnd
+      FROM attendance_dtr WHERE BatchID = ? FOR UPDATE`, [batchId])
+    if (!batch) throw createError({ statusCode: 404, statusMessage: 'DTR not found.' })
+    if (!['Computed to Payroll', 'Computed to Both'].includes(batch.Status)) {
+      throw createError({ statusCode: 409, statusMessage: 'Only a DTR computed to payroll can be reviewed.' })
+    }
+    const [[review]] = await connection.execute<any[]>(
+      'SELECT ReviewStatus, SnapshotJson FROM payroll_processing_review WHERE BatchID = ? FOR UPDATE', [batchId],
+    )
+    if (action === 'approve' && review?.ReviewStatus === 'Approved') {
+      throw createError({ statusCode: 409, statusMessage: 'This DTR was already approved for payroll.' })
+    }
+    if (review?.ReviewStatus === 'Rejected') {
+      throw createError({ statusCode: 409, statusMessage: 'Recompute the corrected DTR before reviewing it again.' })
+    }
+    const data = await payrollProcessingData(batch.PeriodStart, batch.PeriodEnd, connection)
+    const currentSite = data.sites.find(site => Number(site.BatchID) === batchId)
+    if (!currentSite) throw createError({ statusCode: 409, statusMessage: 'Payroll breakdown is unavailable for this DTR.' })
+    const { history, SnapshotJson, ...snapshot } = currentSite as any
+    if (action === 'approve') {
+      if (Number(snapshot.warningCount) > 0) {
+        throw createError({ statusCode: 409, statusMessage: 'Resolve the pricing notes before approving this payroll cutoff.' })
+      }
+      await connection.execute(`INSERT INTO payroll_processing_review
+        (BatchID, ReviewStatus, SnapshotJson, ApprovedBy, ApprovedAt, RejectedBy, RejectedAt, RejectionReason)
+        VALUES (?, 'Approved', ?, ?, NOW(), NULL, NULL, NULL)
+        ON DUPLICATE KEY UPDATE ReviewStatus = 'Approved', SnapshotJson = VALUES(SnapshotJson),
+          ApprovedBy = VALUES(ApprovedBy), ApprovedAt = VALUES(ApprovedAt),
+          RejectedBy = NULL, RejectedAt = NULL, RejectionReason = NULL`,
+      [batchId, JSON.stringify(snapshot), session.sub])
+      await recordDtrWorkflowEvent(connection, { batchId, action: 'Approve Payroll',
+        previousStatus: batch.Status, nextStatus: batch.Status, actorUserId: session.sub, snapshot })
+      await connection.commit()
+      return { success: true, reviewStatus: 'Approved', dtrStatus: batch.Status }
+    }
+    const [[posted]] = await connection.execute<any[]>(`SELECT py.PayrollID FROM payroll py
+      INNER JOIN attendance_dtr_employee de ON de.EmployeeID = py.EmployeeID AND de.BatchID = ?
+      WHERE py.PayrollType = 'Regular' AND py.StartDate = ? AND py.EndDate = ? LIMIT 1`,
+    [batchId, batch.PeriodStart, batch.PeriodEnd])
+    if (posted) throw createError({ statusCode: 409, statusMessage: 'A payroll record already exists for this cutoff. It must be reversed through payroll history.' })
+    const savedSnapshot = review?.ReviewStatus === 'Approved' ? parseSnapshot(review.SnapshotJson) || snapshot : snapshot
+    await connection.execute(`INSERT INTO payroll_processing_review
+      (BatchID, ReviewStatus, SnapshotJson, ApprovedBy, ApprovedAt, RejectedBy, RejectedAt, RejectionReason)
+      VALUES (?, 'Rejected', ?, NULL, NULL, ?, NOW(), ?)
+      ON DUPLICATE KEY UPDATE ReviewStatus = 'Rejected', SnapshotJson = VALUES(SnapshotJson),
+        RejectedBy = VALUES(RejectedBy), RejectedAt = VALUES(RejectedAt),
+        RejectionReason = VALUES(RejectionReason)`,
+    [batchId, JSON.stringify(savedSnapshot), session.sub, reason])
+    await connection.execute("UPDATE attendance_dtr SET Status = 'Draft' WHERE BatchID = ?", [batchId])
+    await recordDtrWorkflowEvent(connection, { batchId, action: 'Reject Payroll',
+      previousStatus: batch.Status, nextStatus: 'Draft', actorUserId: session.sub, reason,
+      snapshot: savedSnapshot })
+    await connection.commit()
+    return { success: true, reviewStatus: 'Rejected', dtrStatus: 'Draft' }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
