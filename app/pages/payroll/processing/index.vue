@@ -26,7 +26,7 @@ const selectedSite = computed(() => data.value.sites.find(site => Number(site.Ba
 const visible = computed(() => data.value.sites.filter(site =>
   (!agency.value || String(site.AgencyID) === agency.value) &&
   (!client.value || String(site.ClientID) === client.value) &&
-  (statusFilter.value === 'current' ? site.ReviewStatus !== 'Rejected' : (site.ReviewStatus || 'Pending') === statusFilter.value) &&
+  (statusFilter.value === 'current' ? !['Rejected', 'Cancelled'].includes(site.ReviewStatus) : (site.ReviewStatus || 'Pending') === statusFilter.value) &&
   (!search.value.trim() || `${site.SiteName} ${site.ClientName} ${site.AgencyName} ${site.BatchID} ${site.employees.map((person: any) => person.EmployeeName).join(' ')}`.toLowerCase().includes(search.value.trim().toLowerCase()))
 ))
 const totals = computed(() => visible.value.reduce((sum, site) => ({
@@ -50,14 +50,14 @@ async function load() {
   } catch (caught: any) { error.value = caught?.data?.statusMessage || caught?.message || 'Unable to load payroll processing.' }
   finally { loading.value = false }
 }
-async function review(action: 'finalize' | 'reject', reason = '') {
+async function review(action: 'finalize' | 'reject' | 'cancel', reason = '') {
   if (!selectedId.value || busy.value) return
   busy.value = true; actionError.value = ''; success.value = ''
   try {
     await $fetch(`/api/payroll/processing/${selectedId.value}`, { method: 'POST', body: { action, reason } })
     selectedId.value = null
     await load()
-    success.value = action === 'finalize' ? 'Payroll finalized. Employee payroll records, eligible deductions, and approved adjustments were posted.' : 'Returned to Draft. Correct the DTR and compute it again before finalizing.'
+    success.value = action === 'finalize' ? 'Payroll finalized. Employee payroll records, eligible deductions, and approved adjustments were posted.' : action === 'cancel' ? 'Finalization cancelled. Payroll and deduction receipts were voided, balances restored, and the DTR returned to Draft.' : 'Returned to Draft. Correct the DTR and compute it again before finalizing.'
   } catch (caught: any) { actionError.value = caught?.data?.statusMessage || caught?.message || 'Unable to save payroll review.' }
   finally { busy.value = false }
 }
@@ -75,12 +75,12 @@ onMounted(load)
       <label>Cutoff<select v-model="cutoff" @change="load"><option value="">Latest cutoff</option><option v-for="item in data.cutoffs" :key="item.start+item.end" :value="`${item.start}:${item.end}`">{{ range(item) }}</option></select></label>
     </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="success" class="success" role="status">{{ success }}</p>
-    <div class="list-top"><p>Showing {{ visible.length }} site DTRs<span v-if="data.selectedCutoff"> · {{ range(data.selectedCutoff) }}</span></p><div class="status-tabs" aria-label="Review status filters"><button v-for="item in [{key:'current',label:'Current'}, {key:'Pending',label:'To review'}, {key:'Approved',label:'Approved'}, {key:'Rejected',label:'Returned'}]" :key="item.key" type="button" :class="{active:statusFilter===item.key}" @click="statusFilter=item.key">{{ item.label }} <span>{{ item.key==='current'?data.sites.length-(counts.Rejected||0):counts[item.key]||0 }}</span></button></div></div>
+    <div class="list-top"><p>Showing {{ visible.length }} site DTRs<span v-if="data.selectedCutoff"> · {{ range(data.selectedCutoff) }}</span></p><div class="status-tabs" aria-label="Review status filters"><button v-for="item in [{key:'current',label:'Current'}, {key:'Pending',label:'To review'}, {key:'Approved',label:'Finalized'}, {key:'Rejected',label:'Returned'}, {key:'Cancelled',label:'Cancelled'}]" :key="item.key" type="button" :class="{active:statusFilter===item.key}" @click="statusFilter=item.key">{{ item.label }} <span>{{ item.key==='current'?data.sites.length-(counts.Rejected||0)-(counts.Cancelled||0):counts[item.key]||0 }}</span></button></div></div>
     <div v-if="visible.length" class="summary-strip"><div><span>Employees</span><strong>{{ totals.people }}</strong></div><div><span>Gross</span><strong>{{ money(totals.gross) }}</strong></div><div><span>Deductions</span><strong>{{ money(totals.deductions) }}</strong></div><div><span>Net for review</span><strong>{{ money(totals.net) }}</strong></div></div>
     <div class="table-wrap"><table class="processing-table"><thead><tr><th>Site / Client</th><th>Agency / DTR</th><th>Employees</th><th>Gross</th><th>Deductions</th><th>Net</th><th>Review</th><th>Action</th></tr></thead><tbody>
-      <tr v-for="site in visible" :key="site.BatchID"><td><strong>{{ site.SiteName }}</strong><small>{{ site.ClientName }}</small></td><td><strong>{{ site.AgencyName }}</strong><small>DTR-{{ String(site.BatchID).padStart(4, '0') }}</small></td><td>{{ site.peopleCount }}</td><td>{{ money(site.gross) }}</td><td>{{ money(site.deductions) }}</td><td><strong>{{ money(site.netPreview) }}</strong></td><td><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus==='Approved'?'Finalized':site.ReviewStatus==='Rejected'?'Returned':'To review' }}</span><small v-if="site.warningCount" class="note-count">{{ site.warningCount }} payroll note{{ site.warningCount===1?'':'s' }}</small></td><td><button type="button" class="secondary" @click="selectedId=Number(site.BatchID);actionError='';success=''">{{ site.ReviewStatus==='Pending'?'Review':'View details' }}</button></td></tr>
+      <tr v-for="site in visible" :key="site.BatchID"><td><strong>{{ site.SiteName }}</strong><small>{{ site.ClientName }}</small></td><td><strong>{{ site.AgencyName }}</strong><small>DTR-{{ String(site.BatchID).padStart(4, '0') }}</small></td><td>{{ site.peopleCount }}</td><td>{{ money(site.gross) }}</td><td>{{ money(site.deductions) }}</td><td><strong>{{ money(site.netPreview) }}</strong></td><td><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus==='Approved'?'Finalized':site.ReviewStatus==='Rejected'?'Returned':site.ReviewStatus==='Cancelled'?'Cancelled':'To review' }}</span><small v-if="site.warningCount && site.ReviewStatus==='Pending'" class="note-count">{{ site.warningCount }} payroll note{{ site.warningCount===1?'':'s' }}</small></td><td><button type="button" class="secondary" @click="selectedId=Number(site.BatchID);actionError='';success=''">{{ site.ReviewStatus==='Pending'?'Review':'View details' }}</button></td></tr>
       <tr v-if="!visible.length"><td colspan="8" class="empty">{{ loading?'Loading site DTRs…':statusFilter==='current' && counts.Rejected?'No current DTRs. Open Returned to view rejected history.':'No site DTRs match these filters.' }}</td></tr>
     </tbody></table></div>
-    <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview" :busy="busy" :error="actionError" @close="selectedId=null" @approve="review('finalize')" @reject="reason=>review('reject', reason)" />
+    <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview" :busy="busy" :error="actionError" @close="selectedId=null" @approve="review('finalize')" @reject="reason=>review('reject', reason)" @cancel="reason=>review('cancel', reason)" />
   </section>
 </template>

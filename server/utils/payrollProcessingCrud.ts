@@ -16,7 +16,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
   const [batches] = await connection.execute<any[]>(`SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName,
       d.SiteID, s.SiteName, DATE_FORMAT(d.PeriodStart, '%Y-%m-%d') AS PeriodStart,
       DATE_FORMAT(d.PeriodEnd, '%Y-%m-%d') AS PeriodEnd, d.Status,
-      EXISTS (SELECT 1 FROM payroll_processing_posting pp WHERE pp.BatchID = d.BatchID) AS IsFinalized,
+      EXISTS (SELECT 1 FROM payroll_processing_posting pp WHERE pp.BatchID = d.BatchID AND pp.Status = 'Active') AS IsFinalized,
       review.ReviewStatus, review.SnapshotJson, review.RejectionReason,
       DATE_FORMAT(review.ApprovedAt, '%Y-%m-%d %H:%i:%s') AS ApprovedAt,
       DATE_FORMAT(review.RejectedAt, '%Y-%m-%d %H:%i:%s') AS RejectedAt,
@@ -29,7 +29,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     LEFT JOIN payroll_processing_review review ON review.BatchID = d.BatchID
     LEFT JOIN user approver ON approver.UserID = review.ApprovedBy
     LEFT JOIN user rejector ON rejector.UserID = review.RejectedBy
-    WHERE d.Status IN ('Computed to Payroll', 'Computed to Both') OR review.ReviewStatus IN ('Approved', 'Rejected')
+    WHERE d.Status IN ('Computed to Payroll', 'Computed to Both') OR review.ReviewStatus IN ('Approved', 'Rejected', 'Cancelled')
     ORDER BY d.PeriodStart DESC, d.BatchID DESC`)
   const cutoffs = [...new Map(batches.map(batch => [`${batch.PeriodStart}:${batch.PeriodEnd}`, { start: batch.PeriodStart, end: batch.PeriodEnd }])).values()]
   const selected = requestedStart ? batches.filter(batch => batch.PeriodStart === requestedStart && batch.PeriodEnd === requestedEnd)
@@ -230,7 +230,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
   }
   return { cutoffs, selectedCutoff: requestedStart ? { start: requestedStart, end: requestedEnd } : cutoffs[0], sites: sites.map(site => {
     const batch = selected.find(item => Number(item.BatchID) === Number(site.BatchID))
-    const stored = batch?.IsFinalized || batch?.ReviewStatus === 'Rejected'
+    const stored = batch?.IsFinalized || ['Rejected', 'Cancelled'].includes(batch?.ReviewStatus)
       ? parseSnapshot(batch.SnapshotJson) : null
     const { SnapshotJson, ...metadata } = batch || {}
     return { ...site, ...(stored || {}), ...metadata,
@@ -254,16 +254,16 @@ export async function listPayrollProcessing(event: any) {
 export async function reviewPayrollProcessing(event: any) {
   const session = requireSession(event)
   if (!['Admin', 'Supervisor'].includes(String(session.userType))) {
-    throw createError({ statusCode: 403, statusMessage: 'Only an Admin or Supervisor can approve or reject payroll processing.' })
+    throw createError({ statusCode: 403, statusMessage: 'Only an Admin or Supervisor can finalize, reject, or cancel payroll processing.' })
   }
   const batchId = Number(getRouterParam(event, 'id'))
   if (!Number.isInteger(batchId) || batchId <= 0) throw createError({ statusCode: 400, statusMessage: 'Select a valid DTR.' })
   const body = await readBody<{ action?: unknown; reason?: unknown }>(event) || {}
-  const action = body.action === 'finalize' || body.action === 'reject' ? body.action : null
-  if (!action) throw createError({ statusCode: 400, statusMessage: 'Choose finalize or reject.' })
+  const action = body.action === 'finalize' || body.action === 'reject' || body.action === 'cancel' ? body.action : null
+  if (!action) throw createError({ statusCode: 400, statusMessage: 'Choose finalize, reject, or cancel.' })
   const reason = String(body.reason || '').trim()
-  if (action === 'reject' && (reason.length < 5 || reason.length > 500)) {
-    throw createError({ statusCode: 400, statusMessage: 'Enter a rejection reason of 5–500 characters.' })
+  if (action !== 'finalize' && (reason.length < 5 || reason.length > 500)) {
+    throw createError({ statusCode: 400, statusMessage: 'Enter a reason of 5–500 characters.' })
   }
   const connection = await pool.getConnection()
   try {
@@ -280,8 +280,59 @@ export async function reviewPayrollProcessing(event: any) {
       'SELECT ReviewStatus, SnapshotJson FROM payroll_processing_review WHERE BatchID = ? FOR UPDATE', [batchId],
     )
     const [existingPostings] = await connection.execute<any[]>(
-      'SELECT PayrollID FROM payroll_processing_posting WHERE BatchID = ? LIMIT 1 FOR UPDATE', [batchId],
+      `SELECT pp.PayrollID, pp.EmployeeID, py.Status AS PayrollStatus
+       FROM payroll_processing_posting pp INNER JOIN payroll py ON py.PayrollID = pp.PayrollID
+       WHERE pp.BatchID = ? AND pp.Status = 'Active' FOR UPDATE`, [batchId],
     )
+    if (action === 'cancel') {
+      if (review?.ReviewStatus !== 'Approved' || !existingPostings.length) {
+        throw createError({ statusCode: 409, statusMessage: 'Only a finalized payroll can be cancelled.' })
+      }
+      if (existingPostings.some(row => row.PayrollStatus !== 'Approved')) {
+        throw createError({ statusCode: 409, statusMessage: 'Released or changed payroll cannot be cancelled here.' })
+      }
+      for (const posting of existingPostings) {
+        const [receipts] = await connection.execute<any[]>(`SELECT TransactionRecordID, EntryType, SourceRecordID,
+          Amount, BalanceBefore, BalanceAfter, Status FROM employee_account_transaction
+          WHERE PayrollID = ? FOR UPDATE`, [posting.PayrollID])
+        for (const receipt of receipts) {
+          if (receipt.Status !== 'Posted') throw createError({ statusCode: 409, statusMessage: 'A deduction receipt has changed. Cancellation needs manual review.' })
+          const sourceTable = receipt.EntryType === 'Loan' ? 'employee_loan' : 'employee_deduction'
+          const sourceId = receipt.EntryType === 'Loan' ? 'LoanID' : 'EmployeeDeductionID'
+          const [[source]] = await connection.execute<any[]>(`SELECT RemainingBalance, Status FROM ${sourceTable} WHERE ${sourceId} = ? FOR UPDATE`, [receipt.SourceRecordID])
+          const [[later]] = await connection.execute<any[]>(`SELECT TransactionRecordID FROM employee_account_transaction
+            WHERE EntryType = ? AND SourceRecordID = ? AND TransactionRecordID > ? LIMIT 1`,
+          [receipt.EntryType, receipt.SourceRecordID, receipt.TransactionRecordID])
+          if (!source || later || Math.round(Number(source.RemainingBalance) * 100) !== Math.round(Number(receipt.BalanceAfter) * 100) ||
+              !['Active', 'Paid', 'Completed'].includes(source.Status)) {
+            throw createError({ statusCode: 409, statusMessage: 'A loan or deduction balance changed after finalization. Cancellation needs manual review.' })
+          }
+          await connection.execute(`UPDATE ${sourceTable} SET RemainingBalance = ?, Status = 'Active' WHERE ${sourceId} = ?`,
+            [receipt.BalanceBefore, receipt.SourceRecordID])
+          await connection.execute(`UPDATE employee_account_transaction SET Status = 'Voided', VoidedAt = NOW() WHERE TransactionRecordID = ?`,
+            [receipt.TransactionRecordID])
+        }
+        const [adjustments] = await connection.execute<any[]>(`SELECT AdjustmentID, Status, PreAppliedStatus FROM payroll_adjustment
+          WHERE TargetPayrollID = ? FOR UPDATE`, [posting.PayrollID])
+        for (const adjustment of adjustments) {
+          if (adjustment.Status !== 'Applied') throw createError({ statusCode: 409, statusMessage: 'An applied adjustment has changed. Cancellation needs manual review.' })
+          await connection.execute(`UPDATE payroll_adjustment SET Status = COALESCE(PreAppliedStatus,
+            CASE WHEN ApprovedBy IS NULL THEN 'Ready for Payroll' ELSE 'Approved' END),
+            PreAppliedStatus = NULL, TargetPayrollID = NULL, AppliedBy = NULL, AppliedAt = NULL WHERE AdjustmentID = ?`,
+          [adjustment.AdjustmentID])
+        }
+        await connection.execute("UPDATE payroll SET Status = 'Cancelled' WHERE PayrollID = ?", [posting.PayrollID])
+        await connection.execute(`UPDATE payroll_processing_posting SET Status = 'Cancelled', CancelledBy = ?, CancelledAt = NOW()
+          WHERE BatchID = ? AND PayrollID = ? AND Status = 'Active'`, [session.sub, batchId, posting.PayrollID])
+      }
+      await connection.execute(`UPDATE payroll_processing_review SET ReviewStatus = 'Cancelled', RejectionReason = ?,
+        RejectedBy = ?, RejectedAt = NOW() WHERE BatchID = ?`, [reason, session.sub, batchId])
+      await connection.execute("UPDATE attendance_dtr SET Status = 'Draft' WHERE BatchID = ?", [batchId])
+      await recordDtrWorkflowEvent(connection, { batchId, action: 'Cancel Payroll', previousStatus: batch.Status,
+        nextStatus: 'Draft', actorUserId: session.sub, reason, snapshot: parseSnapshot(review.SnapshotJson) })
+      await connection.commit()
+      return { success: true, reviewStatus: 'Cancelled', dtrStatus: 'Draft', payrollCount: existingPostings.length }
+    }
     if (existingPostings.length) {
       throw createError({ statusCode: 409, statusMessage: 'This DTR is already finalized. Posted payroll must be reversed through payroll history.' })
     }
@@ -299,7 +350,7 @@ export async function reviewPayrollProcessing(event: any) {
       if (!snapshot.employees.length) throw createError({ statusCode: 409, statusMessage: 'Add employees before finalizing this DTR.' })
       const [[priorPayroll]] = await connection.execute<any[]>(`SELECT py.PayrollID FROM payroll py
         INNER JOIN attendance_dtr_employee de ON de.DeploymentID = py.DeploymentID AND de.EmployeeID = py.EmployeeID
-        WHERE de.BatchID = ? AND py.PayrollType = 'Regular' AND py.StartDate = ? AND py.EndDate = ? LIMIT 1 FOR UPDATE`,
+        WHERE de.BatchID = ? AND py.PayrollType = 'Regular' AND py.Status <> 'Cancelled' AND py.StartDate = ? AND py.EndDate = ? LIMIT 1 FOR UPDATE`,
       [batchId, batch.PeriodStart, batch.PeriodEnd])
       if (priorPayroll) throw createError({ statusCode: 409, statusMessage: 'A payroll record already exists for this DTR deployment and cutoff.' })
       for (const person of snapshot.employees) {
@@ -343,7 +394,7 @@ export async function reviewPayrollProcessing(event: any) {
         const adjustmentIds = [...new Set(person.adjustments.map((line: any) => Number(line.adjustmentId)))]
         for (const adjustmentId of adjustmentIds) {
           const [result] = await connection.execute<any>(`UPDATE payroll_adjustment
-            SET Status = 'Applied', TargetPayrollID = ?, AppliedBy = ?, AppliedAt = NOW()
+            SET PreAppliedStatus = Status, Status = 'Applied', TargetPayrollID = ?, AppliedBy = ?, AppliedAt = NOW()
             WHERE AdjustmentID = ? AND TargetBatchID = ? AND EmployeeID = ?
               AND Status IN ('Approved', 'Ready for Payroll') AND TargetPayrollID IS NULL`,
           [payrollId, session.sub, adjustmentId, batchId, person.EmployeeID])
@@ -364,7 +415,7 @@ export async function reviewPayrollProcessing(event: any) {
     }
     const [[posted]] = await connection.execute<any[]>(`SELECT py.PayrollID FROM payroll py
       INNER JOIN attendance_dtr_employee de ON de.EmployeeID = py.EmployeeID AND de.DeploymentID = py.DeploymentID AND de.BatchID = ?
-      WHERE py.PayrollType = 'Regular' AND py.StartDate = ? AND py.EndDate = ? LIMIT 1`,
+      WHERE py.PayrollType = 'Regular' AND py.Status <> 'Cancelled' AND py.StartDate = ? AND py.EndDate = ? LIMIT 1`,
     [batchId, batch.PeriodStart, batch.PeriodEnd])
     if (posted) throw createError({ statusCode: 409, statusMessage: 'A payroll record already exists for this cutoff. It must be reversed through payroll history.' })
     const savedSnapshot = review?.ReviewStatus === 'Approved' ? parseSnapshot(review.SnapshotJson) || snapshot : snapshot

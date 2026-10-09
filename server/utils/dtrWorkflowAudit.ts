@@ -1,6 +1,6 @@
 export async function recordDtrWorkflowEvent(connection: any, entry: {
   batchId: number
-  action: 'Compute Payroll' | 'Compute Billing' | 'Approve Payroll' | 'Reject Payroll'
+  action: 'Compute Payroll' | 'Compute Billing' | 'Approve Payroll' | 'Reject Payroll' | 'Cancel Payroll'
   previousStatus: string
   nextStatus: string
   actorUserId: number

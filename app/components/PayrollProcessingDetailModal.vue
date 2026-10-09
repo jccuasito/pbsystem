@@ -7,10 +7,11 @@ const emit = defineEmits<{
   (event: 'close'): void
   (event: 'approve'): void
   (event: 'reject', reason: string): void
+  (event: 'cancel', reason: string): void
 }>()
 const activeTab = ref<'amounts' | 'employees' | 'history'>('amounts')
 const selectedEmployeeId = ref<number | null>(null)
-const requestedAction = ref<'approve' | 'reject' | null>(null)
+const requestedAction = ref<'approve' | 'reject' | 'cancel' | null>(null)
 const rejectionReason = ref('')
 const previouslyOverflow = ref('')
 const money = (value: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value || 0)
@@ -31,15 +32,15 @@ const historyCycles = computed(() => {
   const cycles: { events: any[]; revision: number; status: string; date: string }[] = []
   for (const event of [...(props.site.history || [])].reverse()) {
     let cycle = cycles[cycles.length - 1]
-    if (!cycle || (event.Action === 'Compute Payroll' && cycle.events.some(item => ['Compute Payroll', 'Approve Payroll', 'Reject Payroll'].includes(item.Action)))) {
+    if (!cycle || (event.Action === 'Compute Payroll' && cycle.events.some(item => ['Compute Payroll', 'Approve Payroll', 'Reject Payroll', 'Cancel Payroll'].includes(item.Action)))) {
       cycle = { events: [], revision: cycles.length + 1, status: '', date: '' }
       cycles.push(cycle)
     }
     cycle.events.unshift(event)
   }
   for (const cycle of cycles) {
-    const decision = cycle.events.find(event => ['Approve Payroll', 'Reject Payroll'].includes(event.Action))
-    cycle.status = decision?.Action === 'Approve Payroll' ? 'Approved' : decision?.Action === 'Reject Payroll' ? 'Returned' : 'In review'
+    const decision = cycle.events.find(event => ['Cancel Payroll', 'Approve Payroll', 'Reject Payroll'].includes(event.Action))
+    cycle.status = decision?.Action === 'Cancel Payroll' ? 'Cancelled' : decision?.Action === 'Approve Payroll' ? 'Finalized' : decision?.Action === 'Reject Payroll' ? 'Returned' : 'In review'
     cycle.date = cycle.events[0]?.CreatedAt || ''
   }
   return cycles.reverse()
@@ -52,6 +53,7 @@ onBeforeUnmount(() => { document.body.style.overflow = previouslyOverflow.value;
 function submitAction() {
   if (requestedAction.value === 'approve') emit('approve')
   if (requestedAction.value === 'reject' && rejectionReason.value.trim().length >= 5) emit('reject', rejectionReason.value.trim())
+  if (requestedAction.value === 'cancel' && rejectionReason.value.trim().length >= 5) emit('cancel', rejectionReason.value.trim())
 }
 </script>
 
@@ -64,9 +66,10 @@ function submitAction() {
           <button type="button" class="close-button" aria-label="Close payroll details" @click="emit('close')">×</button>
         </header>
         <div class="modal-body">
-          <div class="context-row"><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus === 'Approved' ? 'Payroll finalized' : site.ReviewStatus === 'Rejected' ? 'Returned to Draft' : 'Ready for review' }}</span><span>{{ site.peopleCount }} {{ site.peopleCount===1?'employee':'employees' }} · DTR status: {{ site.Status }}</span></div>
+          <div class="context-row"><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus === 'Approved' ? 'Payroll finalized' : site.ReviewStatus === 'Rejected' ? 'Returned to Draft' : site.ReviewStatus === 'Cancelled' ? 'Finalization cancelled' : 'Ready for review' }}</span><span>{{ site.peopleCount }} {{ site.peopleCount===1?'employee':'employees' }} · DTR status: {{ site.Status }}</span></div>
           <p v-if="site.ReviewStatus==='Approved'" class="info">Finalized payroll and posted deductions are saved. Later rate or account changes will not rewrite this cutoff.</p>
           <p v-else-if="site.ReviewStatus==='Rejected'" class="info">This review was rejected. Correct the Draft DTR, then compute it to payroll again for a new review.</p>
+          <p v-else-if="site.ReviewStatus==='Cancelled'" class="info">This finalization was cancelled. The DTR is Draft again; correct it and compute it to payroll before finalizing.</p>
           <p v-else class="info">Review attendance, adjustments, and eligible fixed-site deductions. Finalize to post payroll and deduction receipts. Payslip release happens later.</p>
           <div v-if="site.warningCount" class="warning" role="alert">{{ site.warningCount }} payroll note{{ site.warningCount===1?'':'s' }} must be resolved before finalization. See Employees for details.</div>
           <p v-for="warning in site.siteWarnings || []" :key="warning" class="warning" role="alert">{{ warning }}</p>
@@ -110,7 +113,7 @@ function submitAction() {
           </div>
           <div v-else class="tab-panel history-panel">
             <div class="section-heading"><h3>Workflow history</h3><p>Newest revision first. Open an earlier revision to see its actions.</p></div>
-            <div v-if="historyCycles.length" class="history-overview" aria-label="Workflow totals"><span><strong>{{ historyCycles.length }}</strong> revision{{ historyCycles.length===1?'':'s' }}</span><span><strong>{{ returnedCount }}</strong> returned</span><span><strong>{{ approvedCount }}</strong> approved</span></div>
+            <div v-if="historyCycles.length" class="history-overview" aria-label="Workflow totals"><span><strong>{{ historyCycles.length }}</strong> revision{{ historyCycles.length===1?'':'s' }}</span><span><strong>{{ returnedCount }}</strong> returned</span><span><strong>{{ approvedCount }}</strong> finalized</span><span><strong>{{ (site.history || []).filter((event: any) => event.Action === 'Cancel Payroll').length }}</strong> cancelled</span></div>
             <div v-if="historyCycles.length" class="history-scroll" tabindex="0" aria-label="Scrollable workflow revisions">
               <details v-for="(cycle, index) in historyCycles" :key="cycle.revision" class="history-cycle" :open="index===0">
                 <summary><span class="cycle-heading"><strong>Revision {{ cycle.revision }}</strong><small>{{ moment(cycle.date) }}</small></span><span class="cycle-status" :class="cycle.status.toLowerCase().replace(' ', '-')">{{ cycle.status }}</span><span class="cycle-count">{{ cycle.events.length }} action{{ cycle.events.length===1?'':'s' }}</span><span class="cycle-chevron" aria-hidden="true">⌄</span></summary>
@@ -130,12 +133,13 @@ function submitAction() {
           </div>
           <div v-if="requestedAction" class="action-confirmation">
             <template v-if="requestedAction==='approve'"><strong>Finalize this DTR payroll?</strong><p>This posts employee payroll records, eligible account installments, and approved adjustments with your name and time. This does not release payslips.</p></template>
+            <template v-else-if="requestedAction==='cancel'"><strong>Cancel this finalized payroll?</strong><p>Approved payroll records and deduction receipts will be voided, installment balances restored, and applied adjustments reopened. The DTR returns to Draft. Released or subsequently changed payroll cannot be cancelled here.</p><label>Reason for cancellation<textarea v-model="rejectionReason" rows="3" maxlength="500" placeholder="Explain why this finalization must be cancelled"></textarea></label></template>
             <template v-else><strong>Return this DTR to Draft?</strong><p>Payroll approval and billing compute status, if any, will be invalidated. The history remains visible.</p><label>Reason for rejection<textarea v-model="rejectionReason" rows="3" maxlength="500" placeholder="Explain what needs correction"></textarea></label></template>
             <p v-if="error" class="error" role="alert">{{ error }}</p>
-            <div class="confirm-actions"><button type="button" class="secondary" :disabled="busy" @click="requestedAction=null">Cancel</button><button type="button" :class="requestedAction==='reject'?'danger':'primary'" :disabled="busy || (requestedAction==='reject' && rejectionReason.trim().length<5)" @click="submitAction">{{ busy?'Saving…':requestedAction==='approve'?'Finalize payroll':'Reject and return to Draft' }}</button></div>
+            <div class="confirm-actions"><button type="button" class="secondary" :disabled="busy" @click="requestedAction=null">{{ requestedAction==='cancel'?'Keep payroll':'Back' }}</button><button type="button" :class="requestedAction==='approve'?'primary':'danger'" :disabled="busy || (requestedAction!=='approve' && rejectionReason.trim().length<5)" @click="submitAction">{{ busy?'Saving…':requestedAction==='approve'?'Finalize payroll':requestedAction==='cancel'?'Cancel finalization':'Reject and return to Draft' }}</button></div>
           </div>
         </div>
-        <footer class="modal-footer"><button type="button" class="secondary" @click="emit('close')">Close</button><template v-if="canReview && site.ReviewStatus!=='Rejected' && site.ReviewStatus!=='Approved'"><button type="button" class="danger-outline" :disabled="busy" @click="requestedAction='reject';activeTab='amounts'">Reject</button><button v-if="site.ReviewStatus!=='Approved'" type="button" class="primary" :disabled="busy || !!site.warningCount" @click="requestedAction='approve'">Finalize payroll</button></template></footer>
+        <footer class="modal-footer"><button type="button" class="secondary" @click="emit('close')">Close</button><button v-if="canReview && site.ReviewStatus==='Approved'" type="button" class="danger-outline" :disabled="busy" @click="requestedAction='cancel';rejectionReason='';activeTab='amounts'">Cancel finalization</button><template v-if="canReview && site.ReviewStatus==='Pending'"><button type="button" class="danger-outline" :disabled="busy" @click="requestedAction='reject';rejectionReason='';activeTab='amounts'">Reject</button><button type="button" class="primary" :disabled="busy || !!site.warningCount" @click="requestedAction='approve'">Finalize payroll</button></template></footer>
       </section>
     </div>
   </Teleport>
