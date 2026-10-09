@@ -88,7 +88,7 @@ const planOpen = ref(false)
 const planRecord = ref<RecordItem | null>(null)
 const historyScope = ref<'Active' | 'Archive'>('Active')
 const historyType = ref<'All' | 'Loan' | 'Deduction'>('All')
-const today = () => new Date().toISOString().slice(0, 10)
+const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const form = reactive({ EntryType: 'Loan' as 'Loan' | 'Deduction', CatalogItemID: '', IssuanceCode: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: 'Second' as RepaymentCutoff, Remarks: '' })
 const pauseForm = reactive({ PauseStartDate: today(), ResumeDate: '', PauseReason: '' })
 
@@ -310,7 +310,9 @@ async function changeStatus(item: RecordItem, status: string, askForConfirmation
 
 function openPause(item: RecordItem) {
   pauseRecord.value = item
-  Object.assign(pauseForm, { PauseStartDate: today(), ResumeDate: '', PauseReason: '' })
+  Object.assign(pauseForm, { PauseStartDate: Number(item.IsPaused) && item.PauseStartDate ? item.PauseStartDate : today(),
+    ResumeDate: Number(item.IsPaused) ? item.ResumeDate || '' : '',
+    PauseReason: Number(item.IsPaused) ? item.PauseReason || '' : '' })
   profileError.value = ''
   pauseOpen.value = true
 }
@@ -328,7 +330,12 @@ function openRepaymentPreview() {
 
 function statusLabel(item: RecordItem) {
   if (item.Status === 'Cancelled' || item.Status === 'Inactive') return 'Voided'
-  return Number(item.IsPaused) ? 'Paused' : item.Status
+  if (Number(item.IsPaused)) {
+    if (item.PauseStartDate && item.PauseStartDate > today()) return 'Pause scheduled'
+    if (item.ResumeDate && item.ResumeDate <= today()) return 'Resumed'
+    return 'Paused'
+  }
+  return item.Status
 }
 
 async function voidIssuance(item: RecordItem) {
@@ -473,13 +480,13 @@ onMounted(load)
           <article v-for="record in filteredHistory" v-else :key="`${record.EntryType}-${record.RecordID}`" class="record-card">
             <header>
               <div class="record-heading"><span class="kind" :class="record.EntryType.toLowerCase()">{{ record.EntryType }}</span><div><strong>{{ record.ItemName }}</strong><small>{{ record.ClassificationName || 'Unclassified' }} · Account {{ record.AccountReference || 'Legacy' }} · Issuance {{ record.IssuanceCode || 'Legacy record' }}</small><small v-if="record.Transactions.length" class="posted-transaction">Latest transaction {{ record.Transactions[0]?.TransactionID }} · {{ record.Transactions.length }} receipt{{ record.Transactions.length === 1 ? '' : 's' }}</small><small v-else>No approved payroll deduction receipts yet</small></div></div>
-              <span class="status" :class="{ 'status-active': record.Status === 'Active' && !Number(record.IsPaused), 'status-paused': Number(record.IsPaused), 'status-paid': record.Status === 'Paid', 'status-completed': record.Status === 'Completed', 'status-cancelled': record.Status === 'Cancelled', 'status-inactive': record.Status === 'Inactive' }">{{ statusLabel(record) }}</span>
+              <span class="status" :class="{ 'status-active': record.Status === 'Active' && statusLabel(record) !== 'Paused', 'status-paused': statusLabel(record) === 'Paused', 'status-paid': record.Status === 'Paid', 'status-completed': record.Status === 'Completed', 'status-cancelled': record.Status === 'Cancelled', 'status-inactive': record.Status === 'Inactive' }">{{ statusLabel(record) }}</span>
             </header>
             <div class="record-details">
               <div><span>Issued</span><strong>{{ date(record.IssuanceDate) }}</strong><small>Original amount {{ money(record.OriginalAmount) }}</small></div>
               <div><span>Schedule</span><strong>{{ cutoffLabel(record.RepaymentCutoff) }} · {{ record.RepaymentPeriods }} period{{ Number(record.RepaymentPeriods) === 1 ? '' : 's' }}</strong><small>{{ date(record.RepaymentStartDate) }} – {{ date(record.RepaymentEndDate) }} · {{ fifoLabel(record) }}</small></div>
               <div><span>Installment</span><strong>{{ money(record.InstallmentAmount) }}</strong><small>Per selected cutoff<span v-if="Number(record.FinalInstallmentAmount) !== Number(record.InstallmentAmount)"> · final {{ money(record.FinalInstallmentAmount) }}</span></small></div>
-              <div><span>Outstanding balance</span><strong>{{ record.Status === 'Active' ? money(record.OutstandingAmount) : money(0) }}</strong><small v-if="Number(record.IsPaused)">{{ record.ResumeDate ? `Resumes ${date(record.ResumeDate)}` : 'Manual resume required' }}</small><small v-else>{{ record.PlanStatus }}</small></div>
+              <div><span>Outstanding balance</span><strong>{{ record.Status === 'Active' ? money(record.OutstandingAmount) : money(0) }}</strong><small v-if="Number(record.IsPaused)">{{ statusLabel(record) === 'Pause scheduled' ? 'Pauses ' + date(record.PauseStartDate) : statusLabel(record) === 'Resumed' ? 'Pause period complete' : record.ResumeDate ? 'Resumes ' + date(record.ResumeDate) : 'Manual resume required' }}</small><small v-else>{{ record.PlanStatus }}</small></div>
             </div>
             <details v-if="record.Transactions.length" class="issuance-transactions">
               <summary>View {{ record.Transactions.length }} posted transaction{{ record.Transactions.length === 1 ? '' : 's' }}</summary>
@@ -487,7 +494,7 @@ onMounted(load)
             </details>
             <footer>
               <button class="view-plan" @click="openRepaymentPlan(record)">View repayment plan</button>
-              <div v-if="record.Status==='Active'" class="record-actions"><button v-if="Number(record.IsPaused)" @click="resumePlan(record)">Resume now</button><button v-else @click="openPause(record)">Pause plan</button><button v-if="record.EntryType==='Loan'" @click="changeStatus(record,'Paid')">Mark paid</button><button v-else @click="changeStatus(record,'Completed')">Complete</button><button class="danger-action" @click="voidIssuance(record)">Void issuance</button></div>
+              <div v-if="record.Status==='Active'" class="record-actions"><button v-if="statusLabel(record) === 'Paused'" @click="resumePlan(record)">Resume now</button><button v-else @click="openPause(record)">{{ statusLabel(record) === 'Pause scheduled' ? 'Change pause' : 'Pause plan' }}</button><button v-if="record.EntryType==='Loan'" @click="changeStatus(record,'Paid')">Mark paid</button><button v-else @click="changeStatus(record,'Completed')">Complete</button><button class="danger-action" @click="voidIssuance(record)">Void issuance</button></div>
             </footer>
           </article>
         </div>

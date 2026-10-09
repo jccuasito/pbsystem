@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { componentAmountCents, previewInstallment } = require('../shared/utils/payrollPreview.ts')
+const { componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment } = require('../shared/utils/payrollPreview.ts')
 
 test('daily components use their configured amount and keep cent precision', () => {
   const days = [
@@ -11,14 +11,30 @@ test('daily components use their configured amount and keep cent precision', () 
   assert.equal(componentAmountCents(1.25, 72.5), 9063)
 })
 
+test('loan and deduction plans follow only the fixed-site DTR', () => {
+  const selected = fixedDeductionBatchByEmployee([
+    { EmployeeID: 1, BatchID: 10, IsPermanentSite: 1, AttendanceType: 'Regular' },
+    { EmployeeID: 1, BatchID: 11, IsPermanentSite: 0, AttendanceType: 'Reliever' },
+    { EmployeeID: 2, BatchID: 11, IsPermanentSite: 0, AttendanceType: 'Reliever' },
+  ], [
+    { EmployeeID: 1, BatchID: 10 },
+    { EmployeeID: 1, BatchID: 11 }, { EmployeeID: 1, BatchID: 11 },
+  ])
+  assert.equal(selected.get(1), 10)
+  assert.equal(selected.has(2), false)
+})
+
 test('installment is due only for its cutoff, effective dates, and remaining balance', () => {
   const account = {
     Status: 'Active', RepaymentStartDate: '2026-09-16', EndDate: '2026-12-31',
     RepaymentCutoff: 'Second', RemainingBalance: 300, InstallmentAmount: 500,
-    IsPaused: 0, ResumeDate: null,
+    IsPaused: 0, PauseStartDate: null, ResumeDate: null,
   }
   assert.equal(previewInstallment(account, '2026-09-01', '2026-09-15'), 0)
   assert.equal(previewInstallment(account, '2026-09-16', '2026-09-30'), 30000)
   assert.equal(previewInstallment({ ...account, IsPaused: 1 }, '2026-09-16', '2026-09-30'), 0)
+  assert.equal(previewInstallment({ ...account, IsPaused: 1, PauseStartDate: '2026-10-01' }, '2026-09-16', '2026-09-30'), 30000)
+  assert.equal(previewInstallment({ ...account, IsPaused: 1, PauseStartDate: '2026-09-16', ResumeDate: '2026-10-01' }, '2026-09-16', '2026-09-30'), 0)
+  assert.equal(previewInstallment({ ...account, IsPaused: 1, PauseStartDate: '2026-09-16', ResumeDate: '2026-09-16' }, '2026-09-16', '2026-09-30'), 30000)
   assert.equal(previewInstallment({ ...account, Status: 'Paid' }, '2026-09-16', '2026-09-30'), 0)
 })

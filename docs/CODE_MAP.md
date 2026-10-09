@@ -642,6 +642,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/dtrWorkflowAudit.ts`
+  - `server/utils/employeeAccountTransactionCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/rateVersions.ts`

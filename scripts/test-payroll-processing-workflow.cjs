@@ -1,7 +1,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 
-test('compute, approve, reject, and audit a temporary DTR', {
+test('compute, reject, recompute, and block finalizing an empty DTR', {
   skip: process.env.PAYROLL_WORKFLOW_TEST_DATABASE !== '1',
 }, async () => {
   const mysql = require('mysql2/promise')
@@ -34,11 +34,11 @@ test('compute, approve, reject, and audit a temporary DTR', {
     batchId = insert.insertId
     assert.equal((await request(`/api/attendance/dtr/${batchId}/compute`, { target: 'payroll' })).status, 'Computed to Payroll')
     assert.equal((await request(`/api/attendance/dtr/${batchId}/compute`, { target: 'billing' })).status, 'Computed to Both')
-    assert.equal((await request(`/api/payroll/processing/${batchId}`, { action: 'approve' })).reviewStatus, 'Approved')
-    const approved = await request('/api/payroll/processing?periodStart=2099-01-01&periodEnd=2099-01-15')
-    assert.equal(approved.sites[0].ReviewStatus, 'Approved')
-    assert.deepEqual(approved.sites[0].history.map(entry => entry.Action), ['Approve Payroll', 'Compute Billing', 'Compute Payroll'])
-    assert.equal(approved.sites[0].history[0].ActorRole, 'Admin')
+    const emptyResponse = await fetch(base + `/api/payroll/processing/${batchId}`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'finalize' }),
+    })
+    assert.equal(emptyResponse.status, 409)
     assert.equal((await request(`/api/payroll/processing/${batchId}`, { action: 'reject', reason: 'Correct the DTR hours.' })).dtrStatus, 'Draft')
     const rejected = await request('/api/payroll/processing?periodStart=2099-01-01&periodEnd=2099-01-15')
     assert.equal(rejected.sites[0].ReviewStatus, 'Rejected')
@@ -48,7 +48,7 @@ test('compute, approve, reject, and audit a temporary DTR', {
     assert.equal((await request(`/api/attendance/dtr/${batchId}/compute`, { target: 'payroll' })).status, 'Computed to Payroll')
     const recomputed = await request('/api/payroll/processing?periodStart=2099-01-01&periodEnd=2099-01-15')
     assert.equal(recomputed.sites[0].ReviewStatus, 'Pending')
-    assert.equal(recomputed.sites[0].history.length, 5)
+    assert.equal(recomputed.sites[0].history.length, 4)
   } finally {
     if (batchId) {
       await connection.execute('DELETE FROM dtr_workflow_event WHERE BatchID = ?', [batchId])

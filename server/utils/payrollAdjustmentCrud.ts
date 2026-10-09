@@ -256,6 +256,7 @@ export async function listPayrollAdjustments(event: any) {
           INNER JOIN client c ON c.ClientID = target.ClientID
           INNER JOIN site s ON s.SiteID = target.SiteID
           WHERE target.AgencyID = ? AND target.PeriodStart > ? AND target.Status <> 'Locked'
+            AND NOT EXISTS (SELECT 1 FROM payroll_processing_posting posted WHERE posted.BatchID = target.BatchID)
           ORDER BY target.PeriodStart, target.BatchID`, [employeeId, source.AgencyID, dateOnly(source.PeriodEnd)])
       }
     }
@@ -300,6 +301,10 @@ export async function createPayrollAdjustment(event: any) {
     if (Number(target.AgencyID) !== Number(source.AgencyID) || dateOnly(target.PeriodStart) <= dateOnly(source.PeriodEnd)) throw createError({ statusCode: 400, statusMessage: 'Choose a later cutoff under the same agency.' })
     if (!Number(target.HasEmployee)) throw createError({ statusCode: 400, statusMessage: 'Add the employee to the target DTR before assigning this adjustment.' })
     if (target.Status === 'Locked') throw createError({ statusCode: 409, statusMessage: 'The target cutoff is already locked.' })
+    const [[finalizedTarget]] = await connection.execute<any[]>(
+      'SELECT PayrollID FROM payroll_processing_posting WHERE BatchID = ? LIMIT 1', [targetBatchId],
+    )
+    if (finalizedTarget) throw createError({ statusCode: 409, statusMessage: 'The target payroll is already finalized. Choose a later cutoff.' })
     if (dates.some(item => item < dateOnly(source.PeriodStart) || item > dateOnly(source.PeriodEnd))) throw createError({ statusCode: 400, statusMessage: 'Every original date must be inside the source DTR cutoff.' })
     if (verifiedDays.some(item => item.sourceDate < dateOnly(source.PeriodStart) || item.sourceDate > dateOnly(source.PeriodEnd))) throw createError({ statusCode: 400, statusMessage: 'Every missed date must be inside the original cutoff.' })
 
