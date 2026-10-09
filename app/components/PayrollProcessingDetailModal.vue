@@ -9,6 +9,7 @@ const emit = defineEmits<{
   (event: 'reject', reason: string): void
 }>()
 const activeTab = ref<'amounts' | 'employees' | 'history'>('amounts')
+const selectedEmployeeId = ref<number | null>(null)
 const requestedAction = ref<'approve' | 'reject' | null>(null)
 const rejectionReason = ref('')
 const previouslyOverflow = ref('')
@@ -21,6 +22,9 @@ const lines = computed(() => [...payrollHourComponents, ...payrollTimeDeductions
   amount: props.site.employees.reduce((sum: number, employee: any) => sum + Number(employee.components.find((line: any) => line.code === code)?.amount || 0), 0),
 })).filter(line => line.hours))
 const accountDeductions = computed(() => props.site.employees.reduce((sum: number, employee: any) => sum + Number(employee.accountDeductions || 0), 0))
+const selectedEmployee = computed(() => props.site.employees.find((employee: any) => Number(employee.EmployeeID) === selectedEmployeeId.value) || null)
+const earningLines = computed(() => selectedEmployee.value?.components.filter((line: any) => line.direction === 'Earning') || [])
+const timeDeductionLines = computed(() => selectedEmployee.value?.components.filter((line: any) => line.direction === 'Deduction') || [])
 const historyCycles = computed(() => {
   const cycles: { events: any[]; revision: number; status: string; date: string }[] = []
   for (const event of [...(props.site.history || [])].reverse()) {
@@ -65,7 +69,7 @@ function submitAction() {
           <div v-if="site.warningCount" class="warning" role="alert">{{ site.warningCount }} pricing note{{ site.warningCount===1?'':'s' }} must be resolved before approval. See Employees for details.</div>
           <div class="amount-summary"><div><span>Gross</span><strong>{{ money(site.gross) }}</strong></div><div><span>Deductions</span><strong>{{ money(site.deductions) }}</strong></div><div><span>Net for review</span><strong>{{ money(site.netPreview) }}</strong></div></div>
           <div class="modal-tabs" role="tablist" aria-label="Payroll details">
-            <button v-for="tab in (['amounts','employees','history'] as const)" :key="tab" type="button" role="tab" :aria-selected="activeTab===tab" :class="{selected:activeTab===tab}" @click="activeTab=tab">{{ tab==='amounts'?'Hours & amounts':tab==='employees'?'Employees':'History' }}</button>
+            <button v-for="tab in (['amounts','employees','history'] as const)" :key="tab" type="button" role="tab" :aria-selected="activeTab===tab" :class="{selected:activeTab===tab}" @click="activeTab=tab;selectedEmployeeId=null">{{ tab==='amounts'?'Hours & amounts':tab==='employees'?'Employees':'History' }}</button>
           </div>
           <div v-if="activeTab==='amounts'" class="tab-panel">
             <div class="section-heading"><h3>Site totals</h3><p>Amounts use the rate effective on each saved attendance date.</p></div>
@@ -76,12 +80,28 @@ function submitAction() {
             </tbody></table></div>
           </div>
           <div v-else-if="activeTab==='employees'" class="tab-panel employee-list">
-            <details v-for="person in site.employees" :key="person.EmployeeID" class="employee-item">
-              <summary><span><strong>{{ person.EmployeeName }}</strong><small>{{ person.EmployeeNumber || `Employee #${person.EmployeeID}` }} · {{ person.PositionName || 'Position unavailable' }}</small></span><span class="employee-net">{{ money(person.netPreview) }} <small>net for review</small></span></summary>
-              <div class="employee-breakdown"><div><h4>Attendance amounts</h4><div v-for="line in person.components" :key="line.code" class="breakdown-line"><span>{{ line.label }} · {{ Number(line.hours).toFixed(2) }} h</span><strong>{{ line.direction==='Deduction'?'−':'+' }}{{ money(line.amount) }}</strong></div><p v-if="!person.components.length" class="muted">No payable attendance hours.</p></div>
-                <div><h4>Linked deductions</h4><div v-for="item in person.deductions" :key="`${item.entryType}-${item.recordId}`" class="breakdown-line"><span>{{ item.name }} <small>{{ item.entryType }} · balance {{ money(item.remainingBalance) }}</small></span><strong>−{{ money(item.amount) }}</strong></div><p v-if="!person.deductions.length" class="muted">No installment due in this cutoff.</p></div></div>
-              <p v-for="warning in person.warnings" :key="warning" class="warning">{{ warning }}</p>
-            </details>
+            <template v-if="!selectedEmployee">
+              <div class="section-heading"><h3>Employee payslip previews</h3><p>Select an employee to review the cutoff breakdown.</p></div>
+              <button v-for="person in site.employees" :key="person.EmployeeID" type="button" class="employee-choice" @click="selectedEmployeeId=Number(person.EmployeeID)">
+                <span class="employee-choice-name"><strong>{{ person.EmployeeName }}</strong><small>{{ person.EmployeeNumber || `Employee #${person.EmployeeID}` }} · {{ person.PositionName || 'Position unavailable' }}</small></span>
+                <span class="employee-choice-amount"><strong>{{ money(person.netPreview) }}</strong><small>net preview</small></span><span class="employee-choice-arrow" aria-hidden="true">›</span>
+              </button>
+              <p v-if="!site.employees.length" class="muted">No employees are enrolled in this DTR.</p>
+            </template>
+            <div v-else class="payslip-view">
+              <button type="button" class="payslip-back" @click="selectedEmployeeId=null">← Back to employees</button>
+              <article class="payslip-preview" aria-label="Payslip preview">
+                <header class="payslip-head"><div><p class="payslip-kicker">PAYSLIP PREVIEW · FOR REVIEW</p><h3>{{ site.AgencyName }}</h3><p>{{ site.SiteName }} · {{ site.ClientName }}</p></div><span class="payslip-period">{{ day(site.PeriodStart) }} – {{ day(site.PeriodEnd) }}</span></header>
+                <div class="payslip-person"><div><span>Employee</span><strong>{{ selectedEmployee.EmployeeName }}</strong></div><div><span>Employee no.</span><strong>{{ selectedEmployee.EmployeeNumber || `#${selectedEmployee.EmployeeID}` }}</strong></div><div><span>Position</span><strong>{{ selectedEmployee.PositionName || 'Unavailable' }}</strong></div><div><span>DTR</span><strong>DTR-{{ String(site.BatchID).padStart(4, '0') }}</strong></div></div>
+                <div class="payslip-columns">
+                  <section class="payslip-section"><h4>Gross income</h4><div class="payslip-table-head"><span>Pay item</span><span>Hours</span><span>Amount</span></div><div v-for="line in earningLines" :key="line.code" class="payslip-line"><span>{{ line.label }}</span><span>{{ Number(line.hours).toFixed(2) }}</span><strong>{{ money(line.amount) }}</strong></div><p v-if="!earningLines.length" class="payslip-empty">No earnings recorded.</p><div class="payslip-subtotal"><span>Total earnings</span><strong>{{ money(selectedEmployee.gross) }}</strong></div></section>
+                  <section class="payslip-section"><h4>Deductions</h4><div class="payslip-table-head payslip-deduction-head"><span>Deduction item</span><span>Amount</span></div><div v-for="line in timeDeductionLines" :key="line.code" class="payslip-line payslip-deduction-line"><span>{{ line.label }} <small>{{ Number(line.hours).toFixed(2) }} h</small></span><strong>{{ money(line.amount) }}</strong></div><div v-for="item in selectedEmployee.deductions" :key="`${item.entryType}-${item.recordId}`" class="payslip-line payslip-deduction-line"><span>{{ item.name }} <small>{{ item.entryType }} · balance {{ money(item.remainingBalance) }}</small></span><strong>{{ money(item.amount) }}</strong></div><p v-if="!timeDeductionLines.length && !selectedEmployee.deductions.length" class="payslip-empty">No linked deductions due.</p><div class="payslip-subtotal"><span>Total deductions</span><strong>{{ money(Number(selectedEmployee.timeDeductions || 0) + Number(selectedEmployee.accountDeductions || 0)) }}</strong></div></section>
+                </div>
+                <div class="payslip-total"><span>Net preview <small>Gross income less included deductions</small></span><strong>{{ money(selectedEmployee.netPreview) }}</strong></div>
+                <p class="payslip-caveat">For review only. Statutory contributions, allowances, payroll adjustments, and final payslip posting are not yet included.</p>
+                <div v-for="warning in selectedEmployee.warnings" :key="warning" class="warning payslip-warning">{{ warning }}</div>
+              </article>
+            </div>
           </div>
           <div v-else class="tab-panel history-panel">
             <div class="section-heading"><h3>Workflow history</h3><p>Newest revision first. Open an earlier revision to see its actions.</p></div>

@@ -194,15 +194,49 @@
 .payroll-modal-backdrop .line-table tr:last-child td { border: 0; }
 .payroll-modal-backdrop .total-line { font-weight: 800; }
 .payroll-modal-backdrop .empty { color: #70819a; text-align: center !important; }
-.payroll-modal-backdrop .employee-item { margin-bottom: 10px; border: 1px solid #dce5f2; border-radius: 10px; background: #fff; }
-.payroll-modal-backdrop .employee-item summary { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 15px; cursor: pointer; }
-.payroll-modal-backdrop .employee-item summary small { display: block; margin-top: 5px; color: #71829d; font-size: 12px; }
-.payroll-modal-backdrop .employee-net { text-align: right; font-weight: 800; }
-.payroll-modal-backdrop .employee-breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 4px 16px 18px; }
-.payroll-modal-backdrop .employee-breakdown h4 { margin: 8px 0; font-size: 14px; }
-.payroll-modal-backdrop .breakdown-line { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #edf1f7; font-size: 13px; }
-.payroll-modal-backdrop .breakdown-line small { display: block; color: #71839c; }
-.payroll-modal-backdrop .employee-item > .warning { margin: 0 16px 16px; }
+.payroll-modal-backdrop .employee-choice { display: flex; align-items: center; width: 100%; gap: 16px; margin-bottom: 10px; padding: 15px 17px; border: 1px solid #dce5f2; border-radius: 10px; background: #fff; color: #18355f; font: inherit; text-align: left; cursor: pointer; }
+.payroll-modal-backdrop .employee-choice:hover,
+.payroll-modal-backdrop .employee-choice:focus-visible { border-color: #92afe8; background: #f8fbff; }
+.payroll-modal-backdrop .employee-choice-name { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.payroll-modal-backdrop .employee-choice-name strong { font-size: 14px; }
+.payroll-modal-backdrop .employee-choice-name small,
+.payroll-modal-backdrop .employee-choice-amount small { color: #71829d; font-size: 12px; }
+.payroll-modal-backdrop .employee-choice-amount { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
+.payroll-modal-backdrop .employee-choice-arrow { color: #4571bc; font-size: 23px; }
+.payroll-modal-backdrop .payslip-back { margin: 0 0 13px; padding: 3px 0; border: 0; background: none; color: #2865c6; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; }
+.payroll-modal-backdrop .payslip-preview { overflow: hidden; border: 1px solid #cddcf0; border-radius: 12px; background: #fff; }
+.payroll-modal-backdrop .payslip-head { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding: 20px 22px; border-bottom: 1px solid #dce6f2; background: #f4f8ff; }
+.payroll-modal-backdrop .payslip-kicker { margin: 0 0 5px; color: #2960c4; font-size: 11px; font-weight: 800; letter-spacing: .09em; }
+.payroll-modal-backdrop .payslip-head h3 { margin: 0; color: #163561; font-size: 19px; }
+.payroll-modal-backdrop .payslip-head p:last-child { margin: 5px 0 0; color: #657b9b; font-size: 12px; }
+.payroll-modal-backdrop .payslip-period { color: #405c82; font-size: 13px; font-weight: 700; }
+.payroll-modal-backdrop .payslip-person { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 14px; padding: 17px 22px; border-bottom: 1px solid #e2eaf4; }
+.payroll-modal-backdrop .payslip-person div { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.payroll-modal-backdrop .payslip-person span { color: #7286a1; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.payroll-modal-backdrop .payslip-person strong { overflow-wrap: anywhere; font-size: 13px; }
+.payroll-modal-backdrop .payslip-columns { display: grid; grid-template-columns: 1fr 1fr; }
+.payroll-modal-backdrop .payslip-section { display: flex; flex-direction: column; min-width: 0; padding: 19px 22px 17px; }
+.payroll-modal-backdrop .payslip-section + .payslip-section { border-left: 1px solid #e2eaf4; }
+.payroll-modal-backdrop .payslip-section h4 { margin: 0 0 13px; color: #1e4e99; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+.payroll-modal-backdrop .payslip-table-head,
+.payroll-modal-backdrop .payslip-line { display: grid; grid-template-columns: minmax(0, 1fr) 65px 115px; gap: 8px; align-items: baseline; }
+.payroll-modal-backdrop .payslip-table-head { padding: 0 0 8px; border-bottom: 1px solid #d9e4f1; color: #7286a1; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.payroll-modal-backdrop .payslip-line { padding: 9px 0; border-bottom: 1px solid #eef2f7; color: #30496d; font-size: 12px; }
+.payroll-modal-backdrop .payslip-table-head span:nth-child(n+2),
+.payroll-modal-backdrop .payslip-line > span:nth-child(2),
+.payroll-modal-backdrop .payslip-line > strong { text-align: right; }
+.payroll-modal-backdrop .payslip-line strong { color: #193a69; font-size: 12px; }
+.payroll-modal-backdrop .payslip-line small { display: block; margin-top: 3px; color: #8293ab; font-size: 11px; }
+.payroll-modal-backdrop .payslip-deduction-head,
+.payroll-modal-backdrop .payslip-deduction-line { grid-template-columns: minmax(0, 1fr) 115px; }
+.payroll-modal-backdrop .payslip-empty { margin: 11px 0; color: #7a8da6; font-size: 12px; }
+.payroll-modal-backdrop .payslip-subtotal { display: flex; justify-content: space-between; gap: 12px; margin-top: auto; padding-top: 15px; color: #193a69; font-size: 13px; font-weight: 800; }
+.payroll-modal-backdrop .payslip-total { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 16px 22px; border-top: 1px solid #d3e1f1; background: #eaf2ff; color: #174178; }
+.payroll-modal-backdrop .payslip-total > span { font-size: 15px; font-weight: 800; }
+.payroll-modal-backdrop .payslip-total small { display: block; margin-top: 4px; color: #607ca2; font-size: 11px; font-weight: 500; }
+.payroll-modal-backdrop .payslip-total strong { font-size: 22px; white-space: nowrap; }
+.payroll-modal-backdrop .payslip-caveat { margin: 0; padding: 12px 22px; border-top: 1px solid #e2eaf4; color: #647e9f; font-size: 11px; line-height: 1.5; }
+.payroll-modal-backdrop .payslip-warning { margin: 0 22px 12px; font-size: 12px; }
 .payroll-modal-backdrop .muted { color: #71849d; }
 .payroll-modal-backdrop .history-overview { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .payroll-modal-backdrop .history-overview span { padding: 7px 11px; border: 1px solid #dce5f2; border-radius: 8px; background: #fff; color: #637a99; font-size: 12px; }
@@ -261,12 +295,18 @@
   .payroll-modal-backdrop .modal-body { padding: 18px; }
   .payroll-modal-backdrop .modal-footer { padding: 13px; flex-wrap: wrap; }
   .payroll-modal-backdrop .amount-summary,
-  .payroll-modal-backdrop .employee-breakdown { grid-template-columns: 1fr; }
+  .payroll-modal-backdrop .payslip-columns { grid-template-columns: 1fr; }
+  .payroll-modal-backdrop .payslip-section + .payslip-section { border-left: 0; border-top: 1px solid #e2eaf4; }
+  .payroll-modal-backdrop .payslip-person { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .payroll-modal-backdrop .section-heading { display: block; }
   .payroll-modal-backdrop .section-heading p { margin-top: 7px; }
   .payroll-modal-backdrop .modal-tabs button { padding: 10px; }
-  .payroll-modal-backdrop .employee-item summary { align-items: flex-start; flex-direction: column; }
-  .payroll-modal-backdrop .employee-net { text-align: left; }
+  .payroll-modal-backdrop .employee-choice { align-items: flex-start; flex-wrap: wrap; }
+  .payroll-modal-backdrop .employee-choice-amount { align-items: flex-start; }
+  .payroll-modal-backdrop .payslip-head,
+  .payroll-modal-backdrop .payslip-person,
+  .payroll-modal-backdrop .payslip-section { padding-right: 15px; padding-left: 15px; }
+  .payroll-modal-backdrop .payslip-total { align-items: flex-start; flex-direction: column; padding-right: 15px; padding-left: 15px; }
   .payroll-modal-backdrop .history-scroll { max-height: 46vh; }
   .payroll-modal-backdrop .cycle-count { display: none; }
 }
