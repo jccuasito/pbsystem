@@ -17,7 +17,9 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
   let deductionId = null
   let contributionClassificationId = null
   let contributionTypeId = null
+  let secondContributionTypeId = null
   let agencyPlanId = null
+  let bulkCreatedPlanId = null
   let alternatePlanId = null
   let adjustmentId = null
   try {
@@ -81,6 +83,10 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
       (DeductionName, ClassificationID, DeductionCategory, DeductionPeriod, Status)
       VALUES (?, ?, 'Government', 'Monthly', 'Active')`, [`TEST PREMIUM ${batchId}`, contributionClassificationId])
     contributionTypeId = Number(typeInsert.insertId)
+    const [secondTypeInsert] = await connection.execute(`INSERT INTO deduction_type
+      (DeductionName, ClassificationID, DeductionCategory, DeductionPeriod, Status)
+      VALUES (?, ?, 'Government', 'Monthly', 'Active')`, [`TEST SECOND PREMIUM ${batchId}`, contributionClassificationId])
+    secondContributionTypeId = Number(secondTypeInsert.insertId)
     const createPlan = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ AgencyID: worker.AgencyID, SiteRateID: worker.SiteRateID, DeductionTypeID: contributionTypeId,
@@ -116,6 +122,81 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     const planList = await (await fetch(`${base}/api/deductions-loans/agency-contributions`, { headers: { cookie } })).json()
     assert.ok(planList.items.some(item => Number(item.AgencyContributionID) === agencyPlanId))
     assert.ok(planList.siteRates.some(item => Number(item.SiteRateID) === Number(worker.SiteRateID)))
+    const bulkUrl = `${base}/api/deductions-loans/agency-contributions/bulk`
+    const bulkBody = { AgencyID: worker.AgencyID, EffectiveDate: '2098-11-10',
+      Rows: [{ SiteRateID: worker.SiteRateID,
+        DeductionTypeID: contributionTypeId, AmountPerCutoff: 30, DeductOn: 'First' },
+      { SiteRateID: worker.SiteRateID, DeductionTypeID: secondContributionTypeId,
+        AmountPerCutoff: 7, DeductOn: 'Second' }] }
+    const dryRunResponse = await fetch(bulkUrl, { method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...bulkBody, DryRun: true }) })
+    const dryRun = await dryRunResponse.json()
+    assert.equal(dryRunResponse.status, 200, dryRun.statusMessage || JSON.stringify(dryRun))
+    assert.equal(dryRun.counts.duplicate, 1)
+    assert.equal(dryRun.counts.create, 1)
+    const [[beforeVersion]] = await connection.execute('SELECT COUNT(*) AS total FROM agency_contribution_plan_version WHERE AgencyContributionID = ?', [agencyPlanId])
+    assert.equal(beforeVersion.total, 0, 'Preview must not save changes')
+    const bulkResponse = await fetch(bulkUrl, { method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(bulkBody) })
+    assert.equal(bulkResponse.status, 409, 'A duplicate must block the entire bulk save')
+    const [[blockedInsert]] = await connection.execute('SELECT COUNT(*) AS total FROM agency_contribution_plan WHERE SiteRateID = ? AND DeductionTypeID = ?', [worker.SiteRateID, secondContributionTypeId])
+    assert.equal(blockedInsert.total, 0, 'The nonduplicate row must also roll back')
+    const createOnlyResponse = await fetch(bulkUrl, { method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...bulkBody, Rows: bulkBody.Rows.slice(1) }) })
+    const bulkSaved = await createOnlyResponse.json()
+    assert.equal(createOnlyResponse.status, 200, bulkSaved.statusMessage || JSON.stringify(bulkSaved))
+    assert.equal(bulkSaved.counts.create, 1)
+    bulkCreatedPlanId = Number(bulkSaved.results.find(item => item.action === 'create').AgencyContributionID)
+    const correctionResponse = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'original', AgencyContributionID: bulkCreatedPlanId,
+        EffectiveStartDate: '2098-11-09', EffectiveEndDate: null,
+        AmountPerCutoff: 8, DeductOn: 'Second', Reason: 'Corrected original amount and start date' }),
+    })
+    assert.equal(correctionResponse.status, 200, JSON.stringify(await correctionResponse.json()))
+    const initialUpdate = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'version', AgencyContributionID: agencyPlanId,
+        EffectiveDate: '2098-11-10', AmountPerCutoff: 29, DeductOn: 'First',
+        Reason: 'Test contribution schedule update' }),
+    })
+    assert.equal(initialUpdate.status, 200, JSON.stringify(await initialUpdate.json()))
+    const correctedUpdate = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'version-correction', AgencyContributionID: agencyPlanId,
+        EffectiveDate: '2098-11-10', AmountPerCutoff: 30, DeductOn: 'First',
+        Reason: 'Corrected latest amount before posting' }),
+    })
+    assert.equal(correctedUpdate.status, 200, JSON.stringify(await correctedUpdate.json()))
+    const lockedCorrection = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'original', AgencyContributionID: agencyPlanId,
+        EffectiveStartDate: '2098-10-31', EffectiveEndDate: null, AmountPerCutoff: 25, DeductOn: 'First' }),
+    })
+    assert.equal(lockedCorrection.status, 409, 'A dated amount update locks original date corrections')
+    const updateResponse = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'version', AgencyContributionID: agencyPlanId,
+        EffectiveDate: '2098-11-16', AmountPerCutoff: 35, DeductOn: 'Second',
+        Reason: 'Next cutoff contribution schedule' }),
+    })
+    assert.equal(updateResponse.status, 200, JSON.stringify(await updateResponse.json()))
+    const versionList = await (await fetch(`${base}/api/deductions-loans/agency-contributions`, { headers: { cookie } })).json()
+    const versionedPlan = versionList.items.find(item => Number(item.AgencyContributionID) === agencyPlanId)
+    const correctedPlan = versionList.items.find(item => Number(item.AgencyContributionID) === bulkCreatedPlanId)
+    assert.equal(correctedPlan.EffectiveStartDate, '2098-11-09')
+    assert.equal(Number(correctedPlan.AmountPerCutoff), 8)
+    assert.equal(correctedPlan.DateCorrections[0].PreviousStartDate, '2098-11-10')
+    assert.equal(Number(correctedPlan.DateCorrections[0].PreviousAmountPerCutoff), 7)
+    assert.equal(Number(correctedPlan.DateCorrections[0].NewAmountPerCutoff), 8)
+    assert.equal(correctedPlan.DateCorrections[0].Reason, 'Corrected original amount and start date')
+    assert.ok(correctedPlan.DateCorrections[0].CreatedByName)
+    assert.deepEqual(versionedPlan.Versions.map(item => item.EffectiveDate), ['2098-11-10', '2098-11-16'])
+    assert.equal(versionedPlan.Versions[0].Reason, 'Test contribution schedule update')
+    assert.equal(Number(versionedPlan.DateCorrections[0].PreviousAmountPerCutoff), 29)
+    assert.equal(Number(versionedPlan.DateCorrections[0].NewAmountPerCutoff), 30)
+    assert.equal(versionedPlan.DateCorrections[0].CorrectionKind, 'Version')
+    assert.ok(versionedPlan.Versions.every(item => item.CreatedAt && item.CreatedByName))
     const [[restWorker]] = await connection.execute(`SELECT ed.EmployeeID, ed.DeploymentID
       FROM employee_deployment ed INNER JOIN employee e ON e.EmployeeID = ed.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
@@ -148,7 +229,7 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     assert.ok(site)
     assert.equal(site.peopleCount, 1)
     assert.ok(site.gross > 0)
-    assert.equal(site.employees[0].accountDeductions, 45)
+    assert.equal(site.employees[0].accountDeductions, 50)
     assert.deepEqual(site.employees[0].dueDeductions.filter(item => item.entryType === 'AgencyContribution')
       .map(item => Number(item.recordId)), [agencyPlanId])
     const overrideUrl = `${base}/api/payroll/processing/${batchId}/deductions`
@@ -183,9 +264,9 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     const [[charged]] = await connection.execute('SELECT RemainingBalance FROM employee_deduction WHERE EmployeeDeductionID = ?', [deductionId])
     assert.equal(Number(charged.RemainingBalance), 10)
     const [[contributionPosted]] = await connection.execute("SELECT Amount FROM payroll_deduction WHERE PayrollID = ? AND ReferenceType = 'Agency Contribution' AND ReferenceID = ?", [payroll.PayrollID, agencyPlanId])
-    assert.equal(Number(contributionPosted.Amount), 25)
+    assert.equal(Number(contributionPosted.Amount), 30)
     const postedHistory = await (await fetch(`${base}/api/deductions-loans/agency-contributions/history?employeeId=${worker.EmployeeID}`, { headers: { cookie } })).json()
-    assert.ok(postedHistory.items.some(item => Number(item.PayrollID) === Number(payroll.PayrollID) && Number(item.Amount) === 25))
+    assert.ok(postedHistory.items.some(item => Number(item.PayrollID) === Number(payroll.PayrollID) && Number(item.Amount) === 30))
     const cancelResponse = await fetch(`${base}/api/payroll/processing/${batchId}`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'cancel', reason: 'Incorrect approval, please recompute.' }),
@@ -237,6 +318,19 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     await connection.execute('UPDATE employee_deduction SET RemainingBalance = 9 WHERE EmployeeDeductionID = ?', [deductionId])
     assert.equal((await cancel()).status, 409)
     await connection.execute('UPDATE employee_deduction SET RemainingBalance = 10 WHERE EmployeeDeductionID = ?', [deductionId])
+    const planEndpoint = `${base}/api/deductions-loans/agency-contributions`
+    const planAction = (id, action) => fetch(planEndpoint, {
+      method: 'DELETE', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ AgencyContributionID: id, action }),
+    })
+    assert.equal((await planAction(bulkCreatedPlanId, 'delete')).status, 409)
+    assert.equal((await planAction(bulkCreatedPlanId, 'deactivate')).status, 200)
+    assert.equal((await planAction(bulkCreatedPlanId, 'delete')).status, 200)
+    const [[deletedPlan]] = await connection.execute('SELECT COUNT(*) AS n FROM agency_contribution_plan WHERE AgencyContributionID = ?', [bulkCreatedPlanId])
+    assert.equal(deletedPlan.n, 0)
+    bulkCreatedPlanId = null
+    assert.equal((await planAction(agencyPlanId, 'deactivate')).status, 200)
+    assert.equal((await planAction(agencyPlanId, 'delete')).status, 409)
   } finally {
     if (batchId) {
       await connection.execute('DELETE FROM attendance_dtr_btr WHERE BatchID = ?', [batchId])
@@ -254,7 +348,9 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
       for (const row of posted) await connection.execute('DELETE FROM payroll WHERE PayrollID = ?', [row.PayrollID])
       if (deductionId) await connection.execute('DELETE FROM employee_deduction WHERE EmployeeDeductionID = ?', [deductionId])
       if (alternatePlanId) await connection.execute('DELETE FROM agency_contribution_plan WHERE AgencyContributionID = ?', [alternatePlanId])
+      if (bulkCreatedPlanId) await connection.execute('DELETE FROM agency_contribution_plan WHERE AgencyContributionID = ?', [bulkCreatedPlanId])
       if (agencyPlanId) await connection.execute('DELETE FROM agency_contribution_plan WHERE AgencyContributionID = ?', [agencyPlanId])
+      if (secondContributionTypeId) await connection.execute('DELETE FROM deduction_type WHERE DeductionTypeID = ?', [secondContributionTypeId])
       if (contributionTypeId) await connection.execute('DELETE FROM deduction_type WHERE DeductionTypeID = ?', [contributionTypeId])
       if (contributionClassificationId) await connection.execute('DELETE FROM deduction_loan_classification WHERE ClassificationID = ?', [contributionClassificationId])
       await connection.execute('DELETE FROM payroll_deduction_override WHERE BatchID = ?', [batchId])

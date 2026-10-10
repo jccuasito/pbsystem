@@ -116,6 +116,19 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     WHERE plan.AgencyID IN (${agencyIds.map(() => '?').join(', ')})
       AND plan.Status = 'Active' AND sr.Status = 'Active' AND dt.Status = 'Active' AND c.Status = 'Active'
       AND c.AppliesTo = 'Contribution'`, agencyIds)
+  const contributionIds = agencyContributions.map(plan => Number(plan.RecordID))
+  const [contributionVersionRows] = contributionIds.length
+    ? await connection.execute<any[]>(`SELECT AgencyContributionID, AgencyContributionVersionID,
+      DATE_FORMAT(EffectiveDate, '%Y-%m-%d') AS EffectiveDate, AmountPerCutoff, DeductOn
+      FROM agency_contribution_plan_version
+      WHERE AgencyContributionID IN (${contributionIds.map(() => '?').join(', ')})
+      ORDER BY AgencyContributionID, EffectiveDate, AgencyContributionVersionID`, contributionIds)
+    : [[]]
+  const contributionVersions = new Map<number, any[]>()
+  for (const version of contributionVersionRows) {
+    const id = Number(version.AgencyContributionID)
+    contributionVersions.set(id, [...(contributionVersions.get(id) || []), version])
+  }
   const [overrides] = await connection.execute<any[]>(`SELECT o.OverrideID, o.BatchID, o.EmployeeID, o.EntryType,
     o.SourceRecordID, o.Reason, DATE_FORMAT(o.CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
     DATE_FORMAT(o.RemovedAt, '%Y-%m-%d %H:%i:%s') AS RemovedAt,
@@ -253,11 +266,18 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         remainingBalance: null,
         amount: pesos(previewRecurringDeduction(plan, batch.PeriodStart, batch.PeriodEnd)),
       })).filter(plan => plan.amount > 0)
-      const dueContributions = contributionPlans.map(plan => ({
-        entryType: 'AgencyContribution', recordId: plan.RecordID, name: plan.ItemName,
-        accountTypeId: plan.AccountTypeID, catalogKind: 'Contribution', remainingBalance: null,
-        amount: pesos(previewRecurringDeduction(plan, batch.PeriodStart, batch.PeriodEnd)),
-      })).filter(plan => plan.amount > 0)
+      const dueContributions = contributionPlans.map(plan => {
+        // A contribution is collected on the cutoff end date; a dated update
+        // becomes eligible for the first scheduled cutoff ending on/after it.
+        const version = snapshotAtDate(plan, contributionVersions.get(Number(plan.RecordID)) || [], batch.PeriodEnd)
+        return {
+          entryType: 'AgencyContribution', recordId: plan.RecordID, name: plan.ItemName,
+          accountTypeId: plan.AccountTypeID, catalogKind: 'Contribution', remainingBalance: null,
+          effectiveDate: version.EffectiveDate || plan.EffectiveStartDate,
+          amount: pesos(previewRecurringDeduction({ ...plan,
+            AmountPerCutoff: version.AmountPerCutoff, DeductOn: version.DeductOn }, batch.PeriodStart, batch.PeriodEnd)),
+        }
+      }).filter(plan => plan.amount > 0)
       const dueDeductions = [...dueAccounts, ...dueRecurring, ...dueContributions].map(item => ({ ...item,
         override: overridesBySource.get(`${batch.BatchID}:${person.EmployeeID}:${item.entryType}:${item.recordId}`) || null }))
       const deductions = dueDeductions.filter(item => !item.override)

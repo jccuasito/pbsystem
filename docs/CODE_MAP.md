@@ -213,6 +213,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.get.ts`
   - `POST /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.post.ts`
   - `PUT /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.put.ts`
+  - `POST /api/deductions-loans/agency-contributions/bulk` → `server/api/deductions-loans/agency-contributions/bulk.post.ts`
   - `GET /api/deductions-loans/agency-contributions/history` → `server/api/deductions-loans/agency-contributions/history.get.ts`
   - `GET /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].get.ts`
   - `POST /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].post.ts`
@@ -336,11 +337,14 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.get.ts`
   - `POST /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.post.ts`
   - `PUT /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.put.ts`
+  - `POST /api/deductions-loans/agency-contributions/bulk` → `server/api/deductions-loans/agency-contributions/bulk.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/rateVersions.ts`
+  - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
@@ -362,6 +366,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/rateVersions.ts`
+  - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
