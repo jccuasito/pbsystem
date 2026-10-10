@@ -19,6 +19,7 @@ import ShiftCodePage from '../attendance/shift-code/index.vue'
 import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
 import DeductionLoanCatalogPage from '../deductions-loans/catalog/index.vue'
 import EmployeeLoanDeductionPage from '../deductions-loans/employees/index.vue'
+import AgencyContributionsPage from '../deductions-loans/contributions/index.vue'
 import EmployeeAccountTransactionsPage from '../deductions-loans/transactions/index.vue'
 import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 import PayrollProcessingPage from '../payroll/processing/index.vue'
@@ -39,13 +40,13 @@ type WorkspaceView =
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
   | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
-  | 'employee-loans-deductions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
+  | 'employee-loans-deductions' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
   'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
-  'employee-loans-deductions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
+  'employee-loans-deductions', 'deductions-loans-contributions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
 ])
 const activeWorkspaceView = computed<WorkspaceView | null>(() => {
   const value = Array.isArray(route.query.view) ? route.query.view[0] : route.query.view
@@ -202,6 +203,7 @@ const navGroups = [
     label: 'Deductions & Loans', icon: 'wallet', key: 'deductions',
     children: [
       { label: 'Employee Accounts', to: '/deductions-loans/employees', icon: 'user', view: 'employee-loans-deductions' },
+      { label: 'Contributions', to: '/deductions-loans/contributions', icon: 'peso', view: 'deductions-loans-contributions' },
       { label: 'Transaction Receipts', to: '/deductions-loans/transactions', icon: 'file-text', view: 'deductions-loans-transactions' },
       { label: 'Catalog', to: '/deductions-loans/catalog', icon: 'tag', view: 'deductions-loans-catalog' }
     ]
@@ -253,6 +255,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'payroll-adjustments': PayrollAdjustmentsPage,
   'payroll-processing': PayrollProcessingPage,
   'employee-loans-deductions': EmployeeLoanDeductionPage,
+  'deductions-loans-contributions': AgencyContributionsPage,
   'deductions-loans-transactions': EmployeeAccountTransactionsPage,
   'deductions-loans-catalog': DeductionLoanCatalogPage
 }

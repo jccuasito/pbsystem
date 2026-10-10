@@ -49,8 +49,9 @@ test('employee loan and deduction page compiles with one employee-centered issua
   assert.match(descriptor.template.content, /Void issuance/)
   assert.match(descriptor.template.content, /Archive/)
   assert.match(descriptor.template.content, /No active loans or deductions/)
-  assert.match(descriptor.template.content, /v-model="recurringForm.CatalogKind"/)
-  assert.match(descriptor.template.content, /<option value="Contribution">Contribution<\/option>/)
+  assert.match(descriptor.template.content, /Total contributed/)
+  assert.match(descriptor.template.content, /contributionReceipts/)
+  assert.doesNotMatch(descriptor.template.content, /Add recurring/)
 })
 
 test('MySQL issuance CRUD and posted-deduction receipts keep separate audit records', { skip: process.env.EMPLOYEE_FINANCIAL_TEST_DATABASE !== '1' }, async () => {

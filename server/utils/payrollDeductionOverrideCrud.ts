@@ -14,7 +14,7 @@ export async function changePayrollDeductionOverride(event: any) {
   const action = String(body.action || '')
   const reason = String(body.reason || '').trim()
   if (![batchId, employeeId, recordId].every(value => Number.isInteger(value) && value > 0) ||
-      !['Loan', 'Deduction', 'Recurring'].includes(entryType) || !['skip', 'restore'].includes(action) ||
+      !['Loan', 'Deduction', 'Recurring', 'AgencyContribution'].includes(entryType) || !['skip', 'restore'].includes(action) ||
       (action === 'skip' && (reason.length < 5 || reason.length > 500))) {
     throw createError({ statusCode: 400, statusMessage: 'Select a deduction and enter a reason of 5–500 characters to skip it.' })
   }

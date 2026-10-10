@@ -146,6 +146,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/attendance/holiday-manager/index.vue`
   - `app/pages/attendance/shift-code/index.vue`
   - `app/pages/deductions-loans/catalog/index.vue`
+  - `app/pages/deductions-loans/contributions/index.vue`
   - `app/pages/deductions-loans/employees/index.vue`
   - `app/pages/deductions-loans/transactions/index.vue`
   - `app/pages/employees/deployment-history/index.vue`
@@ -208,6 +209,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `DELETE /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].delete.ts`
   - `POST /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].post.ts`
   - `PUT /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].put.ts`
+  - `DELETE /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.delete.ts`
+  - `GET /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.get.ts`
+  - `POST /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.post.ts`
+  - `PUT /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.put.ts`
+  - `GET /api/deductions-loans/agency-contributions/history` → `server/api/deductions-loans/agency-contributions/history.get.ts`
   - `GET /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].get.ts`
   - `POST /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].post.ts`
   - `PUT /api/deductions-loans/classification` → `server/api/deductions-loans/[resource].put.ts`
@@ -216,8 +222,6 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.post.ts`
   - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
   - `GET /api/deductions-loans/loan-type` → `server/api/deductions-loans/[resource].get.ts`
-  - `GET /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.get.ts`
-  - `POST /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.post.ts`
   - `PUT /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.put.ts`
   - `GET /api/deductions-loans/transactions` → `server/api/deductions-loans/transactions/index.get.ts`
   - `GET /api/employees` → `server/api/employees/index.get.ts`
@@ -268,6 +272,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
+  - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
   - `server/utils/deductionLoanCatalogCrud.ts`
   - `server/utils/dtrBtrCrud.ts`
@@ -320,6 +325,26 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - None detected.
 - Links to: none detected.
 
+### `/deductions-loans/contributions`
+
+- Page: `app/pages/deductions-loans/contributions/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - `components/ModernDateField.vue`
+- API calls and handlers:
+  - `DELETE /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.delete.ts`
+  - `GET /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.get.ts`
+  - `POST /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.post.ts`
+  - `PUT /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.put.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/agencyContributionCrud.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
 ### `/deductions-loans/employees`
 
 - Page: `app/pages/deductions-loans/employees/index.vue`
@@ -327,18 +352,16 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `components/ModernDateField.vue`
 - API calls and handlers:
+  - `GET /api/deductions-loans/agency-contributions/history` → `server/api/deductions-loans/agency-contributions/history.get.ts`
   - `GET /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.get.ts`
   - `POST /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.post.ts`
   - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
-  - `GET /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.get.ts`
-  - `POST /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.post.ts`
-  - `PUT /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.put.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
+  - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/jwt.ts`
-  - `server/utils/recurringDeductionCrud.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.

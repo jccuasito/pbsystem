@@ -15,11 +15,14 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
   let batchId = null
   let sourceBatchId = null
   let deductionId = null
-  let recurringId = null
+  let contributionClassificationId = null
+  let contributionTypeId = null
+  let agencyPlanId = null
+  let alternatePlanId = null
   let adjustmentId = null
   try {
     const [[owner]] = await connection.execute("SELECT UserID, Email, UserType FROM user WHERE UserType = 'Admin' AND Status = 'Active' LIMIT 1")
-    const [[worker]] = await connection.execute(`SELECT ed.DeploymentID, ed.EmployeeID, ed.SiteID, s.ClientID, ap.AgencyID
+    const [[worker]] = await connection.execute(`SELECT ed.DeploymentID, ed.EmployeeID, ed.SiteID, ed.SiteRateID, s.ClientID, ap.AgencyID
       FROM employee_deployment ed
       INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
       INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
@@ -71,30 +74,48 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     const cookie = 'pbs_session=' + jwt.sign({ sub: owner.UserID, email: owner.Email, userType: owner.UserType },
       process.env.JWT_SECRET, { expiresIn: '5m', issuer: 'pbsystem', audience: 'pbsystem-web' })
     const base = process.env.PAYROLL_WORKFLOW_TEST_URL || 'http://localhost:3100'
-    const createRecurring = await fetch(`${base}/api/deductions-loans/recurring`, {
+    const [classificationInsert] = await connection.execute(`INSERT INTO deduction_loan_classification
+      (ClassificationName, AppliesTo, Status) VALUES (?, 'Contribution', 'Active')`, [`TEST CONTRIBUTION ${batchId}`])
+    contributionClassificationId = Number(classificationInsert.insertId)
+    const [typeInsert] = await connection.execute(`INSERT INTO deduction_type
+      (DeductionName, ClassificationID, DeductionCategory, DeductionPeriod, Status)
+      VALUES (?, ?, 'Government', 'Monthly', 'Active')`, [`TEST PREMIUM ${batchId}`, contributionClassificationId])
+    contributionTypeId = Number(typeInsert.insertId)
+    const createPlan = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ EmployeeID: worker.EmployeeID, DeductionTypeID: deductionType.DeductionTypeID,
+      body: JSON.stringify({ AgencyID: worker.AgencyID, SiteRateID: worker.SiteRateID, DeductionTypeID: contributionTypeId,
         AmountPerCutoff: 25, DeductOn: 'First', EffectiveStartDate: start, Status: 'Active' }),
     })
-    const recurringResult = await createRecurring.json()
-    assert.equal(createRecurring.status, 200, recurringResult.statusMessage || JSON.stringify(recurringResult))
-    recurringId = Number(recurringResult.id)
-    const duplicateRecurring = await fetch(`${base}/api/deductions-loans/recurring`, {
+    const planResult = await createPlan.json()
+    assert.equal(createPlan.status, 200, planResult.statusMessage || JSON.stringify(planResult))
+    agencyPlanId = Number(planResult.id)
+    const duplicatePlan = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ EmployeeID: worker.EmployeeID, DeductionTypeID: deductionType.DeductionTypeID,
+      body: JSON.stringify({ AgencyID: worker.AgencyID, SiteRateID: worker.SiteRateID, DeductionTypeID: contributionTypeId,
         AmountPerCutoff: 25, DeductOn: 'First', EffectiveStartDate: start, Status: 'Active' }),
     })
-    assert.equal(duplicateRecurring.status, 409)
-    const recurringList = await (await fetch(`${base}/api/deductions-loans/recurring?employeeId=${worker.EmployeeID}`, { headers: { cookie } })).json()
-    assert.ok(recurringList.items.some(item => Number(item.RecurringDeductionID) === recurringId))
-    const pauseRecurring = (action) => fetch(`${base}/api/deductions-loans/recurring`, {
-      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ RecurringDeductionID: recurringId, action, PauseStartDate: start }),
-    })
-    assert.equal((await pauseRecurring('pause')).status, 200)
-    const pausedPreview = await (await fetch(`${base}/api/payroll/processing?periodStart=${start}&periodEnd=${end}`, { headers: { cookie } })).json()
-    assert.equal(pausedPreview.sites.find(item => Number(item.BatchID) === batchId).employees[0].accountDeductions, 20)
-    assert.equal((await pauseRecurring('resume')).status, 200)
+    assert.equal(duplicatePlan.status, 409)
+    const [[alternateRate]] = await connection.execute(`SELECT sr.SiteRateID FROM site_rate sr
+      INNER JOIN site s ON s.SiteID = sr.SiteID
+      INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+      INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+      WHERE ap.AgencyID = ? AND sr.SiteRateID <> ? AND sr.Status = 'Active'
+        AND s.Status = 'Active' AND pr.Status = 'Active' AND ap.Status = 'Active'
+      ORDER BY (sr.SiteID <> ?) DESC LIMIT 1`, [worker.AgencyID, worker.SiteRateID, worker.SiteID])
+    if (alternateRate) {
+      const alternateResponse = await fetch(`${base}/api/deductions-loans/agency-contributions`, {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ AgencyID: worker.AgencyID, SiteRateID: alternateRate.SiteRateID,
+          DeductionTypeID: contributionTypeId, AmountPerCutoff: 99, DeductOn: 'First',
+          EffectiveStartDate: start, Status: 'Active' }),
+      })
+      const alternateResult = await alternateResponse.json()
+      assert.equal(alternateResponse.status, 200, alternateResult.statusMessage || JSON.stringify(alternateResult))
+      alternatePlanId = Number(alternateResult.id)
+    }
+    const planList = await (await fetch(`${base}/api/deductions-loans/agency-contributions`, { headers: { cookie } })).json()
+    assert.ok(planList.items.some(item => Number(item.AgencyContributionID) === agencyPlanId))
+    assert.ok(planList.siteRates.some(item => Number(item.SiteRateID) === Number(worker.SiteRateID)))
     const [[restWorker]] = await connection.execute(`SELECT ed.EmployeeID, ed.DeploymentID
       FROM employee_deployment ed INNER JOIN employee e ON e.EmployeeID = ed.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
@@ -128,17 +149,19 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     assert.equal(site.peopleCount, 1)
     assert.ok(site.gross > 0)
     assert.equal(site.employees[0].accountDeductions, 45)
+    assert.deepEqual(site.employees[0].dueDeductions.filter(item => item.entryType === 'AgencyContribution')
+      .map(item => Number(item.recordId)), [agencyPlanId])
     const overrideUrl = `${base}/api/payroll/processing/${batchId}/deductions`
     const override = (action, entryType, recordId, reason = '') => fetch(overrideUrl, {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ action, employeeId: worker.EmployeeID, entryType, recordId, reason }),
     })
-    assert.equal((await override('skip', 'Recurring', recurringId, 'Low duty days this cutoff')).status, 200)
+    assert.equal((await override('skip', 'AgencyContribution', agencyPlanId, 'Low duty days this cutoff')).status, 200)
     const skipped = await (await fetch(`${base}/api/payroll/processing?periodStart=${start}&periodEnd=${end}`, { headers: { cookie } })).json()
     const skippedPerson = skipped.sites.find(item => Number(item.BatchID) === batchId).employees[0]
     assert.equal(skippedPerson.accountDeductions, 20)
-    assert.equal(skippedPerson.dueDeductions.find(item => item.entryType === 'Recurring').override.Reason, 'Low duty days this cutoff')
-    assert.equal((await override('restore', 'Recurring', recurringId)).status, 200)
+    assert.equal(skippedPerson.dueDeductions.find(item => item.entryType === 'AgencyContribution').override.Reason, 'Low duty days this cutoff')
+    assert.equal((await override('restore', 'AgencyContribution', agencyPlanId)).status, 200)
     assert.equal((await override('skip', 'Deduction', deductionId, 'Pause installment for this cutoff')).status, 200)
     assert.equal((await override('restore', 'Deduction', deductionId)).status, 200)
     assert.equal(site.employees[0].adjustments[0].amount, 10)
@@ -159,8 +182,10 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     assert.equal((await post()).status, 409)
     const [[charged]] = await connection.execute('SELECT RemainingBalance FROM employee_deduction WHERE EmployeeDeductionID = ?', [deductionId])
     assert.equal(Number(charged.RemainingBalance), 10)
-    const [[recurringPosted]] = await connection.execute("SELECT Amount FROM payroll_deduction WHERE PayrollID = ? AND ReferenceType = 'Recurring Deduction' AND ReferenceID = ?", [payroll.PayrollID, recurringId])
-    assert.equal(Number(recurringPosted.Amount), 25)
+    const [[contributionPosted]] = await connection.execute("SELECT Amount FROM payroll_deduction WHERE PayrollID = ? AND ReferenceType = 'Agency Contribution' AND ReferenceID = ?", [payroll.PayrollID, agencyPlanId])
+    assert.equal(Number(contributionPosted.Amount), 25)
+    const postedHistory = await (await fetch(`${base}/api/deductions-loans/agency-contributions/history?employeeId=${worker.EmployeeID}`, { headers: { cookie } })).json()
+    assert.ok(postedHistory.items.some(item => Number(item.PayrollID) === Number(payroll.PayrollID) && Number(item.Amount) === 25))
     const cancelResponse = await fetch(`${base}/api/payroll/processing/${batchId}`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'cancel', reason: 'Incorrect approval, please recompute.' }),
@@ -174,6 +199,8 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     assert.equal(restored.Status, 'Active')
     const [[oldPayroll]] = await connection.execute('SELECT Status FROM payroll WHERE PayrollID = ?', [payroll.PayrollID])
     assert.equal(oldPayroll.Status, 'Cancelled')
+    const cancelledHistory = await (await fetch(`${base}/api/deductions-loans/agency-contributions/history?employeeId=${worker.EmployeeID}`, { headers: { cookie } })).json()
+    assert.ok(!cancelledHistory.items.some(item => Number(item.PayrollID) === Number(payroll.PayrollID)))
     const [[oldReceipt]] = await connection.execute('SELECT Status FROM employee_account_transaction WHERE PayrollID = ?', [payroll.PayrollID])
     assert.equal(oldReceipt.Status, 'Voided')
     const [[reopened]] = await connection.execute('SELECT Status, TargetPayrollID FROM payroll_adjustment WHERE AdjustmentID = ?', [adjustmentId])
@@ -189,7 +216,7 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
       method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ target: 'payroll' }),
     })
     assert.equal(recomputeResponse.status, 200)
-    assert.equal((await override('skip', 'Recurring', recurringId, 'Skip contribution on revised cutoff')).status, 200)
+    assert.equal((await override('skip', 'AgencyContribution', agencyPlanId, 'Skip contribution on revised cutoff')).status, 200)
     const second = await post()
     assert.equal(second.status, 200, JSON.stringify(await second.json()))
     const [[active]] = await connection.execute("SELECT COUNT(*) AS n FROM payroll_processing_posting WHERE BatchID = ? AND Status = 'Active'", [batchId])
@@ -198,7 +225,7 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     assert.equal(reapplied.Status, 'Applied')
     assert.equal(reapplied.PreAppliedStatus, 'Ready for Payroll')
     const [[currentPayroll]] = await connection.execute("SELECT PayrollID FROM payroll_processing_posting WHERE BatchID = ? AND Status = 'Active'", [batchId])
-    const [[skippedPosting]] = await connection.execute("SELECT COUNT(*) AS n FROM payroll_deduction WHERE PayrollID = ? AND ReferenceType = 'Recurring Deduction'", [currentPayroll.PayrollID])
+    const [[skippedPosting]] = await connection.execute("SELECT COUNT(*) AS n FROM payroll_deduction WHERE PayrollID = ? AND ReferenceType = 'Agency Contribution'", [currentPayroll.PayrollID])
     assert.equal(skippedPosting.n, 0)
     await connection.execute("UPDATE payroll SET Status = 'Released' WHERE PayrollID = ?", [currentPayroll.PayrollID])
     const cancel = () => fetch(`${base}/api/payroll/processing/${batchId}`, {
@@ -226,7 +253,10 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
       await connection.execute('DELETE FROM payroll_processing_posting WHERE BatchID = ?', [batchId])
       for (const row of posted) await connection.execute('DELETE FROM payroll WHERE PayrollID = ?', [row.PayrollID])
       if (deductionId) await connection.execute('DELETE FROM employee_deduction WHERE EmployeeDeductionID = ?', [deductionId])
-      if (recurringId) await connection.execute('DELETE FROM employee_recurring_deduction WHERE RecurringDeductionID = ?', [recurringId])
+      if (alternatePlanId) await connection.execute('DELETE FROM agency_contribution_plan WHERE AgencyContributionID = ?', [alternatePlanId])
+      if (agencyPlanId) await connection.execute('DELETE FROM agency_contribution_plan WHERE AgencyContributionID = ?', [agencyPlanId])
+      if (contributionTypeId) await connection.execute('DELETE FROM deduction_type WHERE DeductionTypeID = ?', [contributionTypeId])
+      if (contributionClassificationId) await connection.execute('DELETE FROM deduction_loan_classification WHERE ClassificationID = ?', [contributionClassificationId])
       await connection.execute('DELETE FROM payroll_deduction_override WHERE BatchID = ?', [batchId])
       await connection.execute('DELETE FROM dtr_workflow_event WHERE BatchID = ?', [batchId])
       await connection.execute('DELETE FROM payroll_processing_review WHERE BatchID = ?', [batchId])
