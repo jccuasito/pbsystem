@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 
 type Status = 'Active' | 'Inactive'
-type Kind = 'Loan' | 'Deduction'
+type Kind = 'Loan' | 'Deduction' | 'Contribution'
 type AppliesTo = Kind
 
 type Classification = {
@@ -22,6 +22,8 @@ type CatalogItem = {
   ClassificationID: number | null
   ClassificationName: string | null
   Status: Status
+  DeductionCategory?: 'Government' | 'Loan' | 'Company' | 'Other'
+  DeductionPeriod?: 'Monthly' | 'Semi-Monthly' | 'Weekly' | 'One-Time'
 }
 
 const loanTypes = ref<any[]>([])
@@ -48,6 +50,8 @@ const typeForm = ref({
   Name: '',
   ClassificationID: '',
   Status: 'Active' as Status,
+  DeductionCategory: 'Company' as 'Government' | 'Loan' | 'Company' | 'Other',
+  DeductionPeriod: 'Monthly' as 'Monthly' | 'Semi-Monthly' | 'Weekly' | 'One-Time',
 })
 
 const classificationForm = ref({
@@ -68,10 +72,12 @@ const catalogItems = computed<CatalogItem[]>(() => [
   ...deductionTypes.value.map(item => ({
     id: Number(item.DeductionTypeID),
     name: item.DeductionName,
-    kind: 'Deduction' as Kind,
+    kind: (item.AppliesTo === 'Contribution' ? 'Contribution' : 'Deduction') as Kind,
     ClassificationID: item.ClassificationID ? Number(item.ClassificationID) : null,
     ClassificationName: item.ClassificationName,
     Status: item.Status,
+    DeductionCategory: item.DeductionCategory,
+    DeductionPeriod: item.DeductionPeriod,
   })),
 ].sort((a, b) => a.name.localeCompare(b.name)))
 
@@ -161,9 +167,12 @@ function openType(item: CatalogItem | null = null) {
     Name: item.name,
     ClassificationID: String(item.ClassificationID || ''),
     Status: item.Status,
+    DeductionCategory: item.DeductionCategory || 'Other',
+    DeductionPeriod: item.DeductionPeriod || 'Monthly',
   } : {
-    Kind: kindFilter.value === 'Deduction' ? 'Deduction' : 'Loan',
+    Kind: kindFilter.value === 'Deduction' || kindFilter.value === 'Contribution' ? kindFilter.value as Kind : 'Loan',
     Name: '', ClassificationID: '', Status: 'Active',
+    DeductionCategory: 'Company', DeductionPeriod: 'Monthly',
   }
   modalOpen.value = true
 }
@@ -216,6 +225,8 @@ async function save() {
         body.LoanName = typeForm.value.Name
       } else {
         body.DeductionName = typeForm.value.Name
+        body.DeductionCategory = typeForm.value.Kind === 'Contribution' ? 'Government' : typeForm.value.DeductionCategory
+        body.DeductionPeriod = typeForm.value.DeductionPeriod
       }
       await $fetch(`/api/deductions-loans/${resource}`, { method: editing.value ? 'PUT' : 'POST', body })
     }
@@ -271,8 +282,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
     <header class="page-head">
       <div>
         <p>DEDUCTIONS &amp; LOANS</p>
-        <h1>Loan &amp; Deduction Catalog</h1>
-        <small>Maintain the names available when assigning loans and deductions to employees.</small>
+        <h1>Loan, Deduction &amp; Contribution Catalog</h1>
+        <small>Maintain the names available when assigning loans, deductions, and contributions to employees.</small>
       </div>
       <button class="primary" type="button" @click="openPrimaryModal">+ Add classification</button>
     </header>
@@ -281,7 +292,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 
     <section class="filters" aria-label="Catalog filters">
       <label class="search-field"><span>Search catalog</span><input v-model="search" type="search" placeholder="Search classification or sub-classification"></label>
-      <label><span>Type</span><select v-model="kindFilter"><option value="">All</option><option value="Loan">Loans</option><option value="Deduction">Deductions</option></select></label>
+      <label><span>Type</span><select v-model="kindFilter"><option value="">All</option><option value="Loan">Loans</option><option value="Deduction">Deductions</option><option value="Contribution">Contributions</option></select></label>
       <label><span>Classification</span><select v-model="classificationFilter"><option value="">All classifications</option><option v-for="item in classifications" :key="item.ClassificationID" :value="String(item.ClassificationID)">{{ item.ClassificationName }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
@@ -357,18 +368,18 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
       <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">
         <form class="catalog-modal" @submit.prevent="save">
           <button type="button" class="close" aria-label="Close" :disabled="busy" @click="closeModal">×</button>
-          <header class="modal-heading"><p>DEDUCTIONS &amp; LOANS</p><h2>{{ modalTitle }}</h2><span>{{ modalKind === 'classification' ? (editing ? 'Update this catalog classification.' : 'Create a classification for reusable loan or deduction names.') : editing ? 'Update this reusable name and its parent classification.' : 'Add a reusable name that can be selected during employee assignment.' }}</span></header>
+          <header class="modal-heading"><p>DEDUCTIONS, LOANS &amp; CONTRIBUTIONS</p><h2>{{ modalTitle }}</h2><span>{{ modalKind === 'classification' ? (editing ? 'Update this catalog classification.' : 'Create a classification for reusable loan, deduction, or contribution names.') : editing ? 'Update this reusable name and its parent classification.' : 'Add a reusable name that can be selected during employee assignment.' }}</span></header>
 
           <div v-if="modalKind === 'type'" class="form-grid">
-            <label class="form-field"><span>Type</span><select v-model="typeForm.Kind" :disabled="Boolean(editing) || parentClassificationLocked" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option></select></label>
+            <label class="form-field"><span>Type</span><select v-model="typeForm.Kind" :disabled="Boolean(editing) || parentClassificationLocked" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option><option value="Contribution">Contribution</option></select></label>
             <label class="form-field"><span>Sub-classification name</span><input v-model="typeForm.Name" maxlength="100" :placeholder="typeForm.Kind === 'Loan' ? 'e.g. SSS Salary Loan' : 'e.g. Uniform deduction'" required></label>
-            <label class="form-field form-field--wide"><span>Parent classification</span><select v-model="typeForm.ClassificationID" :disabled="parentClassificationLocked" required><option value="">Select classification</option><option v-for="item in compatibleClassifications" :key="item.ClassificationID" :value="String(item.ClassificationID)">{{ item.ClassificationName }}{{ item.Status === 'Inactive' ? ' (Inactive)' : '' }}</option></select><small v-if="parentClassificationLocked">This sub-classification will be added under the selected parent.</small></label>
+            <label class="form-field form-field--wide"><span>Parent classification</span><select v-model="typeForm.ClassificationID" :disabled="parentClassificationLocked" required><option value="">Select classification</option><option v-for="item in compatibleClassifications" :key="item.ClassificationID" :value="String(item.ClassificationID)">{{ item.ClassificationName }}{{ item.Status === 'Inactive' ? ' (Inactive)' : '' }}</option></select></label>
             <label class="form-field"><span>Status</span><select v-model="typeForm.Status"><option>Active</option><option>Inactive</option></select></label>
           </div>
 
           <div v-else class="form-grid">
             <label class="form-field"><span>Classification name</span><input v-model="classificationForm.ClassificationName" maxlength="100" placeholder="e.g. PAG-IBIG or SSS" required></label>
-            <label class="form-field"><span>Applies to</span><select v-model="classificationForm.AppliesTo"><option>Loan</option><option>Deduction</option></select></label>
+            <label class="form-field"><span>Applies to</span><select v-model="classificationForm.AppliesTo"><option>Loan</option><option>Deduction</option><option>Contribution</option></select></label>
             <label class="form-field"><span>Status</span><select v-model="classificationForm.Status"><option>Active</option><option>Inactive</option></select></label>
           </div>
 
@@ -427,6 +438,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 @media(max-width:900px){.catalog-page{padding:22px 18px}.desktop-table{display:none}.mobile-list{display:grid;gap:10px}}
 @media(max-width:650px){.catalog-page{padding:16px 12px}.page-head{align-items:stretch;flex-direction:column;margin-bottom:17px}.page-head .primary{width:100%}.tabs{width:100%}.tabs button{justify-content:center;flex:1}.filters,.filters--classifications{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.filters .search-field,.filters--classifications .search-field{grid-column:1/-1;grid-row:1}.filters label:nth-child(2){grid-column:1;grid-row:2}.filters label:nth-child(4){grid-column:2;grid-row:2}.filters label:nth-child(3){grid-column:1/-1;grid-row:3}.list-summary{align-items:flex-start;flex-direction:column;gap:5px}.mobile-group__badges .status{display:none}.modal-backdrop{align-items:end;padding:0}.catalog-modal{width:100%;max-height:calc(100dvh - 10px);gap:14px;padding:20px 14px;border-radius:16px 16px 0 0}.form-grid{grid-template-columns:1fr}.form-field--wide{grid-column:auto}.modal-footer{position:sticky;bottom:-20px;display:grid;grid-template-columns:1fr 1fr;margin:0 -14px -20px;padding:11px 14px;background:#fff;border-top:1px solid #e5eaf2}.modal-footer>button{width:100%}.confirm-modal{align-self:center;width:calc(100% - 24px);grid-template-columns:1fr;padding:20px}.confirm-modal .confirm-icon{margin-bottom:-4px}.confirm-modal footer{grid-column:auto;display:grid;grid-template-columns:1fr 1fr}.confirm-modal footer button{min-height:40px}}
 @media(max-width:370px){.tabs{display:grid;width:100%}.filters,.filters--classifications{grid-template-columns:1fr}.filters label:nth-child(n){grid-column:1;grid-row:auto}.mobile-group__head{grid-template-columns:auto minmax(0,1fr)}.mobile-group__badges{grid-column:2;justify-content:flex-start}.mobile-empty{align-items:stretch;flex-direction:column}.confirm-modal footer,.modal-footer{grid-template-columns:1fr}}
+.kind--contribution{background:#dcfce7;color:#166534}
 </style>
 
 <style>

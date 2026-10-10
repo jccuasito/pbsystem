@@ -154,13 +154,13 @@ function money(value: unknown) {
 async function catalogLookups() {
   const [items] = await pool.execute<any[]>(
     `SELECT 'Loan' AS EntryType, lt.LoanTypeID AS CatalogItemID, lt.LoanName AS ItemName,
-            c.ClassificationID, c.ClassificationName
+            c.ClassificationID, c.ClassificationName, c.AppliesTo AS CatalogKind
        FROM loan_type lt
        INNER JOIN deduction_loan_classification c ON c.ClassificationID = lt.ClassificationID
       WHERE lt.Status = 'Active' AND c.Status = 'Active'
       UNION ALL
      SELECT 'Deduction' AS EntryType, dt.DeductionTypeID AS CatalogItemID, dt.DeductionName AS ItemName,
-            c.ClassificationID, c.ClassificationName
+            c.ClassificationID, c.ClassificationName, c.AppliesTo AS CatalogKind
        FROM deduction_type dt
        INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
       WHERE dt.Status = 'Active' AND c.Status = 'Active'
@@ -200,7 +200,7 @@ async function employeeRecords(employeeId: number) {
                 el.IsPaused, DATE_FORMAT(el.PauseStartDate, '%Y-%m-%d') AS PauseStartDate,
                 DATE_FORMAT(el.ResumeDate, '%Y-%m-%d') AS ResumeDate, el.PauseReason,
                 el.Status, el.Remarks, el.LoanTypeID AS CatalogItemID,
-                lt.LoanName AS ItemName, c.ClassificationName, el.CreatedAt, el.UpdatedAt
+                lt.LoanName AS ItemName, c.ClassificationName, c.AppliesTo AS CatalogKind, el.CreatedAt, el.UpdatedAt
            FROM employee_loan el
            INNER JOIN loan_type lt ON lt.LoanTypeID = el.LoanTypeID
            LEFT JOIN deduction_loan_classification c ON c.ClassificationID = lt.ClassificationID
@@ -216,7 +216,7 @@ async function employeeRecords(employeeId: number) {
                 ed.IsPaused, DATE_FORMAT(ed.PauseStartDate, '%Y-%m-%d') AS PauseStartDate,
                 DATE_FORMAT(ed.ResumeDate, '%Y-%m-%d') AS ResumeDate, ed.PauseReason,
                 ed.Status, ed.Remarks, ed.DeductionTypeID AS CatalogItemID,
-                dt.DeductionName AS ItemName, c.ClassificationName, ed.CreatedAt, ed.UpdatedAt
+                dt.DeductionName AS ItemName, c.ClassificationName, c.AppliesTo AS CatalogKind, ed.CreatedAt, ed.UpdatedAt
            FROM employee_deduction ed
            INNER JOIN deduction_type dt ON dt.DeductionTypeID = ed.DeductionTypeID
            LEFT JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
@@ -405,6 +405,7 @@ export async function createEmployeeLoanDeduction(event: any) {
          FROM deduction_type dt
          INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
         WHERE dt.DeductionTypeID = ? AND dt.Status = 'Active' AND c.Status = 'Active'
+          AND c.AppliesTo = 'Deduction'
         LIMIT 1`,
       [catalogItemId],
     )

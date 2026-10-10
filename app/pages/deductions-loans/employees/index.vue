@@ -16,7 +16,8 @@ type EmployeeRow = {
   OutstandingDeductionBalance: number
   OutstandingBalance: number
 }
-type CatalogItem = { EntryType: 'Loan' | 'Deduction'; CatalogItemID: number; ItemName: string; ClassificationID: number; ClassificationName: string }
+type CatalogItem = { EntryType: 'Loan' | 'Deduction'; CatalogKind: 'Loan' | 'Deduction' | 'Contribution'; CatalogItemID: number; ItemName: string; ClassificationID: number; ClassificationName: string }
+type RecurringItem = { RecurringDeductionID: number; EmployeeID: number; DeductionTypeID: number; DeductionName: string; DeductionCategory: string; CatalogKind: 'Deduction' | 'Contribution' | null; AmountPerCutoff: number; DeductOn: RepaymentCutoff; EffectiveStartDate: string; EffectiveEndDate: string | null; IsPaused: number; PauseStartDate: string | null; ResumeDate: string | null; PauseReason: string | null; Status: 'Active' | 'Inactive' }
 type SchedulePeriod = {
   Period: number
   CutoffStartDate: string
@@ -80,6 +81,10 @@ const pagination = reactive({ page: 1, pageSize: 25, total: 0, pages: 1 })
 const selectedEmployee = ref<EmployeeRow | null>(null)
 const profileEmployee = ref<any>(null)
 const profileRecords = ref<RecordItem[]>([])
+const recurringItems = ref<RecurringItem[]>([])
+const recurringOpen = ref(false)
+const recurringSaving = ref(false)
+const recurringForm = reactive({ RecurringDeductionID: 0, CatalogKind: 'Deduction' as 'Deduction' | 'Contribution', DeductionTypeID: '', AmountPerCutoff: '', DeductOn: 'Second' as RepaymentCutoff, EffectiveStartDate: '', EffectiveEndDate: '', Status: 'Active' as 'Active' | 'Inactive', IsPaused: 0, PauseStartDate: '', ResumeDate: '', PauseReason: '' })
 const profileOpen = ref(false)
 const issuanceOpen = ref(false)
 const pauseOpen = ref(false)
@@ -100,7 +105,8 @@ function historyCount(kind: 'All' | 'Loan' | 'Deduction') {
 function historyScopeCount(scope: 'Active' | 'Archive') {
   return profileRecords.value.filter(item => scope === 'Active' ? item.Status === 'Active' : item.Status !== 'Active').length
 }
-const availableCatalog = computed(() => catalogItems.value.filter(item => item.EntryType === form.EntryType))
+const availableCatalog = computed(() => catalogItems.value.filter(item => item.EntryType === form.EntryType && item.CatalogKind === form.EntryType))
+const deductionCatalog = computed(() => catalogItems.value.filter(item => item.EntryType === 'Deduction' && item.CatalogKind === recurringForm.CatalogKind))
 const catalogGroups = computed(() => {
   const groups = new Map<string, CatalogItem[]>()
   for (const item of availableCatalog.value) {
@@ -240,9 +246,13 @@ async function loadProfile(employee: EmployeeRow | { EmployeeID: number }) {
   profileLoading.value = true
   profileError.value = ''
   try {
-    const response = await $fetch<any>('/api/deductions-loans/employee-records', { query: { employeeId: employee.EmployeeID } })
+    const [response, recurringResponse] = await Promise.all([
+      $fetch<any>('/api/deductions-loans/employee-records', { query: { employeeId: employee.EmployeeID } }),
+      $fetch<{ items: RecurringItem[] }>('/api/deductions-loans/recurring', { query: { employeeId: employee.EmployeeID } }),
+    ])
     profileEmployee.value = response.employee
     profileRecords.value = response.records || []
+    recurringItems.value = recurringResponse.items || []
     catalogItems.value = response.catalogItems || catalogItems.value
   } catch (cause: any) {
     profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to load this employee history.'
@@ -255,10 +265,36 @@ async function openProfile(employee: EmployeeRow) {
   selectedEmployee.value = employee
   profileEmployee.value = employee
   profileRecords.value = []
+  recurringItems.value = []
   historyScope.value = 'Active'
   historyType.value = 'All'
   profileOpen.value = true
   await loadProfile(employee)
+}
+
+function openRecurring(item?: RecurringItem) {
+  Object.assign(recurringForm, item ? { RecurringDeductionID: item.RecurringDeductionID, CatalogKind: item.CatalogKind === 'Contribution' ? 'Contribution' : 'Deduction', DeductionTypeID: String(item.DeductionTypeID), AmountPerCutoff: String(item.AmountPerCutoff), DeductOn: item.DeductOn, EffectiveStartDate: item.EffectiveStartDate, EffectiveEndDate: item.EffectiveEndDate || '', Status: item.Status, IsPaused: item.IsPaused, PauseStartDate: item.PauseStartDate || '', ResumeDate: item.ResumeDate || '', PauseReason: item.PauseReason || '' } : { RecurringDeductionID: 0, CatalogKind: 'Deduction', DeductionTypeID: '', AmountPerCutoff: '', DeductOn: 'Second', EffectiveStartDate: today(), EffectiveEndDate: '', Status: 'Active', IsPaused: 0, PauseStartDate: '', ResumeDate: '', PauseReason: '' })
+  profileError.value = ''
+  recurringOpen.value = true
+}
+
+async function saveRecurring() {
+  if (!selectedEmployee.value || recurringSaving.value) return
+  recurringSaving.value = true; profileError.value = ''
+  try {
+    await $fetch('/api/deductions-loans/recurring', { method: 'POST', body: { ...recurringForm, EmployeeID: selectedEmployee.value.EmployeeID, DeductionTypeID: Number(recurringForm.DeductionTypeID), EffectiveEndDate: recurringForm.EffectiveEndDate || null } })
+    recurringOpen.value = false
+    await loadProfile(selectedEmployee.value)
+  } catch (cause: any) { profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to save recurring deduction.' }
+  finally { recurringSaving.value = false }
+}
+
+async function changeRecurringPause(item: RecurringItem, action: 'pause' | 'resume') {
+  profileError.value = ''
+  try {
+    await $fetch('/api/deductions-loans/recurring', { method: 'PUT', body: { RecurringDeductionID: item.RecurringDeductionID, action, PauseStartDate: today(), PauseReason: action === 'pause' ? 'Paused from employee account' : '' } })
+    if (selectedEmployee.value) await loadProfile(selectedEmployee.value)
+  } catch (cause: any) { profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to change pause.' }
 }
 
 function openIssuance(employee: EmployeeRow | any, type: 'Loan' | 'Deduction' = 'Loan') {
@@ -455,6 +491,11 @@ onMounted(load)
           <button class="primary" @click="openIssuance(profileEmployee || selectedEmployee)">+ Add issuance</button>
         </header>
         <div class="summary-cards"><div><span>Lifetime issued</span><strong>{{ money(profileTotals.issued) }}</strong></div><div><span>Outstanding balance</span><strong>{{ money(profileTotals.balance) }}</strong></div><div><span>Active plans</span><strong>{{ profileTotals.active }}</strong></div></div>
+        <section class="recurring-section">
+          <div class="recurring-heading"><div><h3>Recurring deductions and contributions</h3><p>Fixed amount per selected cutoff. Charged only on this employee's fixed-site payroll; no declining balance.</p></div><button type="button" @click="openRecurring()">+ Add recurring</button></div>
+          <p v-if="!recurringItems.length" class="recurring-empty">No recurring deductions assigned.</p>
+          <div v-else class="recurring-list"><article v-for="item in recurringItems" :key="item.RecurringDeductionID" class="recurring-card"><div><strong>{{ item.DeductionName }}</strong><small>{{ item.CatalogKind === 'Contribution' ? 'Contribution' : 'Deduction' }} · {{ item.DeductOn === 'Second' ? '2nd cutoff' : item.DeductOn === 'First' ? '1st cutoff' : 'Both cutoffs' }} · from {{ date(item.EffectiveStartDate) }}</small></div><strong>{{ money(item.AmountPerCutoff) }}</strong><span class="status" :class="item.Status === 'Active' && !item.IsPaused ? 'status-active' : 'status-paused'">{{ item.Status === 'Inactive' ? 'Inactive' : item.IsPaused ? 'Paused' : 'Active' }}</span><div class="recurring-actions"><button type="button" @click="openRecurring(item)">Edit</button><button v-if="item.Status === 'Active'" type="button" @click="changeRecurringPause(item, item.IsPaused ? 'resume' : 'pause')">{{ item.IsPaused ? 'Resume' : 'Pause' }}</button></div></article></div>
+        </section>
         <div class="history-heading">
           <div><h3>Issuance history</h3><p>Active records are separated from completed or voided records.</p></div>
         </div>
@@ -501,6 +542,8 @@ onMounted(load)
       </section>
     </div>
 
+    <div v-if="recurringOpen" class="modal-backdrop recurring-layer" @click.self="recurringOpen=false"><form class="issuance-modal recurring-modal" @submit.prevent="saveRecurring"><button class="close" type="button" aria-label="Close" @click="recurringOpen=false">×</button><header><span class="eyebrow">EMPLOYEE RECURRING PLAN</span><h2>{{ recurringForm.RecurringDeductionID ? 'Edit' : 'Add' }} recurring {{ recurringForm.CatalogKind.toLowerCase() }}</h2><p>Set a fixed amount and the cutoff when it will be collected.</p></header><div class="form-grid"><label>Type<select v-model="recurringForm.CatalogKind" @change="recurringForm.DeductionTypeID = ''"><option value="Deduction">Deduction</option><option value="Contribution">Contribution</option></select></label><label class="wide">Catalog entry<select v-model="recurringForm.DeductionTypeID" required><option disabled value="">Select catalog entry</option><option v-for="item in deductionCatalog" :key="item.CatalogItemID" :value="String(item.CatalogItemID)">{{ item.ClassificationName }} · {{ item.ItemName }}</option></select></label><label>Amount per cutoff<input v-model="recurringForm.AmountPerCutoff" type="number" min="0.01" step="0.01" required></label><label>Deduct on<select v-model="recurringForm.DeductOn"><option value="First">1st cutoff</option><option value="Second">2nd cutoff</option><option value="Both">Both cutoffs</option></select></label><ModernDateField v-model="recurringForm.EffectiveStartDate" label="Effective start" required /><ModernDateField v-model="recurringForm.EffectiveEndDate" label="Effective end (optional)" /><label>Status<select v-model="recurringForm.Status"><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label></div><p class="form-note">Choose a Deduction or Contribution entry from the catalog. Payroll Processing can skip one cutoff with a recorded reason.</p><p v-if="profileError" class="error">{{ profileError }}</p><footer><button type="button" @click="recurringOpen=false">Cancel</button><button class="primary" :disabled="recurringSaving">{{ recurringSaving ? 'Saving…' : 'Save plan' }}</button></footer></form></div>
+
     <div v-if="issuanceOpen" class="modal-backdrop issuance-layer" @click.self="issuanceOpen=false">
       <form class="issuance-modal" @submit.prevent="saveIssuance">
         <button class="close" type="button" aria-label="Close" @click="issuanceOpen=false">×</button>
@@ -546,7 +589,7 @@ onMounted(load)
             </tbody>
           </table>
         </div>
-        <p class="schedule-help">{{ planRecord ? 'Recorded paid is based on the balance already posted to this issuance.' : 'This is a review only. The issuance has not been saved yet.' }} Projected balance shows the expected balance after each scheduled installment.</p>
+        <p class="schedule-help">{{ planRecord ? 'Recorded paid is based on the balance already posted to this issuance.' : 'This is a review only. The issuance has not been saved yet.' }} Projected balance assumes every scheduled installment is collected. Paused or skipped cutoffs can move actual completion later; the unpaid balance remains due on later eligible cutoffs.</p>
         <footer><button type="button" @click="planOpen=false">Close</button></footer>
       </section>
     </div>
@@ -587,4 +630,5 @@ onMounted(load)
 @media(max-width:800px){.history-controls{align-items:stretch;flex-direction:column;gap:10px}.filter-group,.filter-group-type{display:grid;grid-template-columns:54px 1fr;align-items:center;margin-left:0}.scope-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.type-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.profile-modal .scope-filter,.profile-modal .history-filter{width:100%;padding-inline:7px}}
 @media(max-width:480px){.history-controls{padding:10px}.filter-group,.filter-group-type{grid-template-columns:1fr;gap:6px}.filter-label{padding-left:2px}.profile-modal .scope-filter,.profile-modal .history-filter{font-size:.68rem}.profile-modal .filter-icon{display:none}}
 @media(max-width:650px){.issuance-transactions li{grid-template-columns:1fr 1fr}.issuance-transactions code,.issuance-transactions small{grid-column:1/-1}}
+.recurring-section{margin:0 0 22px;padding:17px;border:1px solid #d7e3f4;border-radius:12px;background:#f8faff}.recurring-heading{display:flex;justify-content:space-between;align-items:center;gap:15px}.recurring-heading h3{margin:0 0 5px;font-size:1rem}.recurring-heading p,.recurring-empty{margin:0;color:#64748b;font-size:.73rem}.recurring-heading button,.recurring-actions button{min-height:35px;border:1px solid #b9cef5;border-radius:8px;background:#fff;padding:6px 10px;color:#2456b7;font:inherit;font-size:.72rem;font-weight:800}.recurring-list{display:grid;gap:8px;margin-top:14px}.recurring-card{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:13px;padding:11px 13px;border:1px solid #dce5f1;border-radius:9px;background:#fff;font-size:.77rem}.recurring-card>div:first-child{display:grid;gap:4px}.recurring-card small{color:#64748b}.recurring-actions{display:flex;gap:6px}.recurring-empty{margin-top:14px}.recurring-layer{z-index:560}.recurring-modal{width:min(760px,calc(100vw - 50px))}.recurring-modal .form-note{margin:15px 0 0}@media(max-width:700px){.recurring-heading{align-items:flex-start;flex-direction:column}.recurring-card{grid-template-columns:1fr auto}.recurring-actions{grid-column:1/-1}.recurring-modal{width:100%}}
 </style>

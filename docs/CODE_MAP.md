@@ -216,6 +216,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.post.ts`
   - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
   - `GET /api/deductions-loans/loan-type` → `server/api/deductions-loans/[resource].get.ts`
+  - `GET /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.get.ts`
+  - `POST /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.post.ts`
+  - `PUT /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.put.ts`
   - `GET /api/deductions-loans/transactions` → `server/api/deductions-loans/transactions/index.get.ts`
   - `GET /api/employees` → `server/api/employees/index.get.ts`
   - `POST /api/employees` → `server/api/employees/index.post.ts`
@@ -252,6 +255,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `PUT /api/payroll/adjustments` → `server/api/payroll/adjustments/index.put.ts`
   - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
+  - `POST /api/payroll/processing/[param]/deductions` → `server/api/payroll/processing/[id]/deductions.post.ts`
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
@@ -277,11 +281,13 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
+  - `server/utils/payrollDeductionOverrideCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersionCrud.ts`
   - `server/utils/rateVersions.ts`
+  - `server/utils/recurringDeductionCrud.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/payrollPreview.ts`
@@ -324,11 +330,15 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.get.ts`
   - `POST /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.post.ts`
   - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
+  - `GET /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.get.ts`
+  - `POST /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.post.ts`
+  - `PUT /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.put.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/recurringDeductionCrud.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
@@ -636,16 +646,22 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/PayrollProcessingDetailModal.vue`
   - `shared/utils/payrollPreview.ts`
 - API calls and handlers:
+  - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
+  - `PUT /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.put.ts`
   - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
+  - `POST /api/payroll/processing/[param]/deductions` → `server/api/payroll/processing/[id]/deductions.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/dtrWorkflowAudit.ts`
   - `server/utils/employeeAccountTransactionCrud.ts`
+  - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/payrollDeductionOverrideCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/rateVersions.ts`
+  - `server/utils/recurringDeductionCrud.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:

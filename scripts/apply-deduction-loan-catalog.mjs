@@ -100,7 +100,15 @@ try {
       )
     }
   }
-  await connection.query("ALTER TABLE deduction_loan_classification MODIFY AppliesTo ENUM('Loan', 'Deduction') NOT NULL DEFAULT 'Loan'")
+  const [scopeColumns] = await connection.execute(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'deduction_loan_classification' AND COLUMN_NAME = 'AppliesTo'`,
+    [database],
+  )
+  const scopes = String(scopeColumns[0]?.COLUMN_TYPE).includes("'Contribution'")
+    ? "ENUM('Loan', 'Deduction', 'Contribution')"
+    : "ENUM('Loan', 'Deduction')"
+  await connection.query(`ALTER TABLE deduction_loan_classification MODIFY AppliesTo ${scopes} NOT NULL DEFAULT 'Loan'`)
 
   const obsoleteIndexes = [
     ['loan_type', 'uq_loan_type_name'],

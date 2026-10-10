@@ -8,11 +8,17 @@ const emit = defineEmits<{
   (event: 'approve'): void
   (event: 'reject', reason: string): void
   (event: 'cancel', reason: string): void
+  (event: 'deduction', change: { action: 'skip' | 'restore'; employeeId: number; entryType: string; recordId: number; reason: string }): void
+  (event: 'pause-plan', change: { entryType: string; recordId: number; startDate: string; resumeDate: string; reason: string }): void
 }>()
 const activeTab = ref<'amounts' | 'employees' | 'history'>('amounts')
 const selectedEmployeeId = ref<number | null>(null)
 const requestedAction = ref<'approve' | 'reject' | 'cancel' | null>(null)
 const rejectionReason = ref('')
+const skipKey = ref('')
+const skipReason = ref('')
+const pauseReason = ref('')
+const pauseResumeDate = ref('')
 const previouslyOverflow = ref('')
 const money = (value: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value || 0)
 const moment = (value: string) => value ? new Date(value.replace(' ', 'T')).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : ''
@@ -54,6 +60,16 @@ function submitAction() {
   if (requestedAction.value === 'approve') emit('approve')
   if (requestedAction.value === 'reject' && rejectionReason.value.trim().length >= 5) emit('reject', rejectionReason.value.trim())
   if (requestedAction.value === 'cancel' && rejectionReason.value.trim().length >= 5) emit('cancel', rejectionReason.value.trim())
+}
+function changeDeduction(item: any, action: 'skip' | 'restore') {
+  if (!selectedEmployee.value) return
+  emit('deduction', { action, employeeId: Number(selectedEmployee.value.EmployeeID), entryType: item.entryType, recordId: Number(item.recordId), reason: action === 'skip' ? skipReason.value.trim() : '' })
+  skipKey.value = ''; skipReason.value = ''
+}
+function pausePlan(item: any) {
+  emit('pause-plan', { entryType: item.entryType, recordId: Number(item.recordId), startDate: props.site.PeriodStart,
+    resumeDate: pauseResumeDate.value, reason: pauseReason.value.trim() })
+  skipKey.value = ''; pauseReason.value = ''; pauseResumeDate.value = ''
 }
 </script>
 
@@ -103,16 +119,32 @@ function submitAction() {
                 <div class="payslip-person"><div><span>Employee</span><strong>{{ selectedEmployee.EmployeeName }}</strong></div><div><span>Employee no.</span><strong>{{ selectedEmployee.EmployeeNumber || `#${selectedEmployee.EmployeeID}` }}</strong></div><div><span>Position</span><strong>{{ selectedEmployee.PositionName || 'Unavailable' }}</strong></div><div><span>DTR</span><strong>DTR-{{ String(site.BatchID).padStart(4, '0') }}</strong></div></div>
                 <p class="info">{{ Number(selectedEmployee.IsPermanentSite) && selectedEmployee.AttendanceType !== 'Reliever' ? 'Fixed at this site: eligible active installments are included.' : 'Reliever at this site: loan and deduction installments are charged only at the fixed site.' }}</p><div class="payslip-columns">
                   <section class="payslip-section"><h4>Gross income</h4><div class="payslip-table-head"><span>Pay item</span><span>Hours</span><span>Amount</span></div><div v-for="line in earningLines" :key="line.code" class="payslip-line"><span>{{ line.label }}</span><span>{{ Number(line.hours).toFixed(2) }}</span><strong>{{ money(line.amount) }}</strong></div><div v-for="line in employeeAdjustments.filter((item: any) => item.direction === 'Earning')" :key="line.lineId" class="payslip-line"><span>Adjustment #{{ line.adjustmentId }} · {{ line.description }}</span><span>{{ Number(line.hours).toFixed(2) }}</span><strong>{{ money(line.amount) }}</strong></div><p v-if="!earningLines.length && !employeeAdjustments.some((item: any) => item.direction === 'Earning')" class="payslip-empty">No earnings recorded.</p><div class="payslip-subtotal"><span>Total earnings</span><strong>{{ money(selectedEmployee.gross) }}</strong></div></section>
-                  <section class="payslip-section"><h4>Deductions</h4><div class="payslip-table-head payslip-deduction-head"><span>Deduction item</span><span>Amount</span></div><div v-for="line in timeDeductionLines" :key="line.code" class="payslip-line payslip-deduction-line"><span>{{ line.label }} <small>{{ Number(line.hours).toFixed(2) }} h</small></span><strong>{{ money(line.amount) }}</strong></div><div v-for="item in selectedEmployee.deductions" :key="`${item.entryType}-${item.recordId}`" class="payslip-line payslip-deduction-line"><span>{{ item.name }} <small>{{ item.entryType }} · balance {{ money(item.remainingBalance) }}</small></span><strong>{{ money(item.amount) }}</strong></div><div v-for="line in employeeAdjustments.filter((item: any) => item.direction === 'Deduction')" :key="line.lineId" class="payslip-line payslip-deduction-line"><span>Adjustment #{{ line.adjustmentId }} · {{ line.description }}</span><strong>{{ money(line.amount) }}</strong></div><p v-if="!timeDeductionLines.length && !selectedEmployee.deductions.length && !employeeAdjustments.some((item: any) => item.direction === 'Deduction')" class="payslip-empty">No linked deductions due.</p><div class="payslip-subtotal"><span>Total deductions</span><strong>{{ money(Number(selectedEmployee.timeDeductions || 0) + Number(selectedEmployee.accountDeductions || 0)) }}</strong></div></section>
+                  <section class="payslip-section"><h4>Deductions</h4><div class="payslip-table-head payslip-deduction-head"><span>Deduction item</span><span>Amount</span></div><div v-for="line in timeDeductionLines" :key="line.code" class="payslip-line payslip-deduction-line"><span>{{ line.label }} <small>{{ Number(line.hours).toFixed(2) }} h</small></span><strong>{{ money(line.amount) }}</strong></div><div v-for="item in selectedEmployee.deductions" :key="`${item.entryType}-${item.recordId}`" class="payslip-line payslip-deduction-line"><span>{{ item.name }} <small>{{ item.entryType === 'Recurring' ? item.catalogKind === 'Contribution' ? 'Contribution · recurring' : 'Recurring deduction' : `${item.entryType} · balance ${money(item.remainingBalance)}` }}</small></span><strong>{{ money(item.amount) }}</strong></div><div v-for="line in employeeAdjustments.filter((item: any) => item.direction === 'Deduction')" :key="line.lineId" class="payslip-line payslip-deduction-line"><span>Adjustment #{{ line.adjustmentId }} · {{ line.description }}</span><strong>{{ money(line.amount) }}</strong></div><p v-if="!timeDeductionLines.length && !selectedEmployee.deductions.length && !employeeAdjustments.some((item: any) => item.direction === 'Deduction')" class="payslip-empty">No linked deductions due.</p><div class="payslip-subtotal"><span>Total deductions</span><strong>{{ money(Number(selectedEmployee.timeDeductions || 0) + Number(selectedEmployee.accountDeductions || 0)) }}</strong></div></section>
                 </div>
+                <section v-if="(selectedEmployee.dueDeductions || []).length" class="cutoff-controls">
+                  <h4>Deduction controls</h4>
+                  <p>Skip affects this cutoff only. Pause affects the plan from this cutoff onward until its resume date or manual resume.</p>
+                  <div v-for="item in selectedEmployee.dueDeductions" :key="`${item.entryType}-${item.recordId}`" class="cutoff-control">
+                    <div><strong>{{ item.name }}</strong><small>{{ item.entryType === 'Recurring' ? item.catalogKind === 'Contribution' ? 'Contribution' : 'Recurring deduction' : item.entryType }} · {{ money(item.amount) }}</small><small v-if="item.override" class="skip-note">Skipped by {{ item.override.CreatedByName }}: {{ item.override.Reason }}</small></div>
+                    <span v-if="!canReview || site.ReviewStatus !== 'Pending'" class="skip-state">{{ item.override ? 'Skipped' : 'Included' }}</span>
+                    <div v-else class="cutoff-buttons">
+                      <button v-if="item.override" type="button" :disabled="busy" @click="changeDeduction(item,'restore')">Restore</button>
+                      <button v-else type="button" :disabled="busy" @click="skipKey=`${item.entryType}-${item.recordId}`;skipReason=''">Skip cutoff</button>
+                      <button type="button" :disabled="busy" @click="skipKey=`pause-${item.entryType}-${item.recordId}`;pauseReason='';pauseResumeDate=''">Pause plan</button>
+                    </div>
+                    <div v-if="skipKey === `${item.entryType}-${item.recordId}`" class="skip-editor"><label>Reason<input v-model="skipReason" maxlength="500" placeholder="Why skip this deduction?" /></label><button type="button" :disabled="busy || skipReason.trim().length < 5" @click="changeDeduction(item,'skip')">Confirm skip</button><button type="button" @click="skipKey=''">Back</button></div>
+                    <div v-if="skipKey === `pause-${item.entryType}-${item.recordId}`" class="skip-editor"><label>Reason<input v-model="pauseReason" maxlength="255" placeholder="Why pause this plan?" /></label><label>Resume date (optional)<input v-model="pauseResumeDate" type="date" :min="site.PeriodStart" /></label><button type="button" :disabled="busy || pauseReason.trim().length < 5" @click="pausePlan(item)">Confirm pause</button><button type="button" @click="skipKey=''">Back</button></div>
+                  </div>
+                </section>
                 <div class="payslip-total"><span>Net preview <small>Gross income less included deductions</small></span><strong>{{ money(selectedEmployee.netPreview) }}</strong></div>
-                <p class="payslip-caveat">Review before finalizing. Approved adjustments are included. Statutory contributions and allowances are not configured here; payslip release is separate.</p>
+                <p class="payslip-caveat">Review before finalizing. Configured recurring contributions and approved adjustments are included. Payslip release is separate.</p>
                 <div v-for="warning in selectedEmployee.warnings" :key="warning" class="warning payslip-warning">{{ warning }}</div>
               </article>
             </div>
           </div>
           <div v-else class="tab-panel history-panel">
             <div class="section-heading"><h3>Workflow history</h3><p>Newest revision first. Open an earlier revision to see its actions.</p></div>
+            <section v-if="site.deductionHistory?.length" class="deduction-history"><h4>Cutoff deduction changes</h4><article v-for="item in site.deductionHistory" :key="item.OverrideID"><strong>{{ item.RemovedAt ? 'Restored' : 'Skipped' }} · {{ item.ItemName || `${item.EntryType} #${item.SourceRecordID}` }}</strong><span>{{ item.EmployeeName }} · {{ item.CreatedByName }} skipped on {{ moment(item.CreatedAt) }}</span><small>Reason: {{ item.Reason }}</small><small v-if="item.RemovedAt">Restored by {{ item.RemovedByName }} on {{ moment(item.RemovedAt) }}</small></article></section>
             <div v-if="historyCycles.length" class="history-overview" aria-label="Workflow totals"><span><strong>{{ historyCycles.length }}</strong> revision{{ historyCycles.length===1?'':'s' }}</span><span><strong>{{ returnedCount }}</strong> returned</span><span><strong>{{ approvedCount }}</strong> finalized</span><span><strong>{{ (site.history || []).filter((event: any) => event.Action === 'Cancel Payroll').length }}</strong> cancelled</span></div>
             <div v-if="historyCycles.length" class="history-scroll" tabindex="0" aria-label="Scrollable workflow revisions">
               <details v-for="(cycle, index) in historyCycles" :key="cycle.revision" class="history-cycle" :open="index===0">

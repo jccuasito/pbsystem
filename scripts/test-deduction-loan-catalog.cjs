@@ -42,7 +42,8 @@ test('catalog page compiles as a reusable-name lookup form', () => {
   assert.match(descriptor.scriptSetup.content, /openTypeForClassification/)
   assert.match(descriptor.scriptSetup.content, /collapsedStateInitialized/)
   assert.match(descriptor.scriptSetup.content, /new Set\(classifications\.value\.map/)
-  assert.doesNotMatch(descriptor.scriptSetup.content, /DeductionCategory|DeductionPeriod|GovernmentAgency/)
+  assert.match(descriptor.template.content, /<option value="Contribution">Contribution<\/option>/)
+  assert.match(descriptor.scriptSetup.content, /body\.DeductionCategory = typeForm\.value\.Kind === 'Contribution'/)
 })
 
 test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classification deactivation', { skip: process.env.CATALOG_TEST_DATABASE !== '1' }, async () => {
@@ -82,6 +83,10 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
       resource: 'classification',
       body: { ClassificationName: `TEST LOAN CLASS ${suffix}`, AppliesTo: 'Loan', Status: 'Active' },
     })
+    const contributionClassification = await api.createDeductionLoanCatalog({
+      resource: 'classification',
+      body: { ClassificationName: `TEST LOAN CLASS ${suffix}`, AppliesTo: 'Contribution', Status: 'Active' },
+    })
     const deductionClassification = await api.createDeductionLoanCatalog({
       resource: 'classification',
       body: { ClassificationName: `TEST DEDUCTION CLASS ${suffix}`, AppliesTo: 'Deduction', Status: 'Active' },
@@ -116,13 +121,20 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
       resource: 'deduction-type',
       body: { DeductionName: `TEST DEDUCTION ${suffix}`, ClassificationID: deductionClassification.id, Status: 'Active' },
     })
+    const contribution = await api.createDeductionLoanCatalog({
+      resource: 'deduction-type',
+      body: { DeductionName: `TEST CONTRIBUTION ${suffix}`, ClassificationID: contributionClassification.id, DeductionCategory: 'Company', Status: 'Active' },
+    })
 
     const loans = await api.listDeductionLoanCatalog({ resource: 'loan-type' })
     const deductions = await api.listDeductionLoanCatalog({ resource: 'deduction-type' })
     const savedLoan = loans.items.find(item => Number(item.LoanTypeID) === Number(loan.id))
     const savedDeduction = deductions.items.find(item => Number(item.DeductionTypeID) === Number(deduction.id))
+    const savedContribution = deductions.items.find(item => Number(item.DeductionTypeID) === Number(contribution.id))
     assert.equal(savedLoan.ClassificationID, classification.id)
     assert.equal(savedDeduction.ClassificationID, deductionClassification.id)
+    assert.equal(savedContribution.AppliesTo, 'Contribution')
+    assert.equal(savedContribution.DeductionCategory, 'Government')
     assert.equal('LoanAmount' in savedLoan, false)
     assert.equal('Amount' in savedDeduction, false)
 
@@ -140,9 +152,11 @@ test('MySQL catalog CRUD preserves existing type IDs and blocks unsafe classific
     await api.deleteDeductionLoanCatalog({ resource: 'loan-type', body: { id: loan.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'loan-type', body: { id: sameNameUnderAnotherParent.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'deduction-type', body: { id: deduction.id } })
+    await api.deleteDeductionLoanCatalog({ resource: 'deduction-type', body: { id: contribution.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: classification.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: secondLoanClassification.id } })
     await api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: deductionClassification.id } })
+    await api.deleteDeductionLoanCatalog({ resource: 'classification', body: { id: contributionClassification.id } })
     const inactive = (await api.listDeductionLoanCatalog({ resource: 'classification' })).items.find(item => Number(item.ClassificationID) === Number(classification.id))
     assert.equal(inactive.Status, 'Inactive')
   } finally {

@@ -2,7 +2,7 @@ import { getQuery, getRouterParam, readBody, createError } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
-import { componentAmountCents, fixedDeductionBatchByEmployee, payrollHourComponents, payrollTimeDeductions, previewInstallment } from '../../shared/utils/payrollPreview'
+import { componentAmountCents, fixedDeductionBatchByEmployee, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction } from '../../shared/utils/payrollPreview'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { postEmployeeAccountTransaction } from './employeeAccountTransactionCrud'
 
@@ -91,6 +91,30 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       DATE_FORMAT(ed.ResumeDate, '%Y-%m-%d'), ed.Status
     FROM employee_deduction ed INNER JOIN deduction_type dt ON dt.DeductionTypeID = ed.DeductionTypeID
     WHERE ed.EmployeeID IN (${employeeIds.map(() => '?').join(', ')})`, [...employeeIds, ...employeeIds]) : [[]]
+  const [recurring] = employeeIds.length ? await connection.execute<any[]>(`SELECT r.RecurringDeductionID AS RecordID,
+    r.EmployeeID, r.DeductionTypeID AS AccountTypeID, dt.DeductionName AS ItemName,
+    dt.DeductionCategory, c.AppliesTo AS CatalogKind, r.AmountPerCutoff, r.DeductOn,
+    DATE_FORMAT(r.EffectiveStartDate, '%Y-%m-%d') AS EffectiveStartDate,
+    DATE_FORMAT(r.EffectiveEndDate, '%Y-%m-%d') AS EffectiveEndDate,
+    r.IsPaused, DATE_FORMAT(r.PauseStartDate, '%Y-%m-%d') AS PauseStartDate,
+    DATE_FORMAT(r.ResumeDate, '%Y-%m-%d') AS ResumeDate, r.Status
+    FROM employee_recurring_deduction r INNER JOIN deduction_type dt ON dt.DeductionTypeID = r.DeductionTypeID
+    INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
+    WHERE r.EmployeeID IN (${employeeIds.map(() => '?').join(', ')})`, employeeIds) : [[]]
+  const [overrides] = await connection.execute<any[]>(`SELECT o.OverrideID, o.BatchID, o.EmployeeID, o.EntryType,
+    o.SourceRecordID, o.Reason, DATE_FORMAT(o.CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
+    DATE_FORMAT(o.RemovedAt, '%Y-%m-%d %H:%i:%s') AS RemovedAt,
+    CONCAT_WS(' ', u.FirstName, u.LastName) AS CreatedByName,
+    CONCAT_WS(' ', remover.FirstName, remover.LastName) AS RemovedByName
+    FROM payroll_deduction_override o INNER JOIN user u ON u.UserID = o.CreatedBy
+    LEFT JOIN user remover ON remover.UserID = o.RemovedBy
+    WHERE o.BatchID IN (${ids.map(() => '?').join(', ')}) ORDER BY o.OverrideID DESC`, ids)
+  const overridesBySource = new Map(overrides.filter(item => !item.RemovedAt).map(item => [`${item.BatchID}:${item.EmployeeID}:${item.EntryType}:${item.SourceRecordID}`, item]))
+  const recurringByEmployee = new Map<number, any[]>()
+  for (const plan of recurring) {
+    const id = Number(plan.EmployeeID)
+    recurringByEmployee.set(id, [...(recurringByEmployee.get(id) || []), plan])
+  }
 
   const rowsByEmployee = new Map<string, any[]>()
   for (const row of attendance) {
@@ -190,16 +214,28 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         if (item.direction === 'Earning') grossCents += Math.round(item.amount * 100)
         else timeDeductionCents += Math.round(item.amount * 100)
       }
-      const deductions = (deductionBatchByEmployee.get(Number(person.EmployeeID)) === Number(batch.BatchID) ? accountsByEmployee.get(Number(person.EmployeeID)) || [] : []).map(account => ({
+      const fixedSite = deductionBatchByEmployee.get(Number(person.EmployeeID)) === Number(batch.BatchID)
+      const accountPlans = fixedSite ? accountsByEmployee.get(Number(person.EmployeeID)) || [] : []
+      const recurringPlans = fixedSite ? recurringByEmployee.get(Number(person.EmployeeID)) || [] : []
+      const dueAccounts = accountPlans.map(account => ({
         entryType: account.EntryType, recordId: account.RecordID, name: account.ItemName,
         accountTypeId: account.AccountTypeID,
         remainingBalance: Number(account.RemainingBalance || 0),
         amount: pesos(previewInstallment(account, batch.PeriodStart, batch.PeriodEnd)),
       })).filter(account => account.amount > 0)
+      const dueRecurring = recurringPlans.map(plan => ({
+        entryType: 'Recurring', recordId: plan.RecordID, name: plan.ItemName,
+        accountTypeId: plan.AccountTypeID, category: plan.DeductionCategory, catalogKind: plan.CatalogKind,
+        remainingBalance: null,
+        amount: pesos(previewRecurringDeduction(plan, batch.PeriodStart, batch.PeriodEnd)),
+      })).filter(plan => plan.amount > 0)
+      const dueDeductions = [...dueAccounts, ...dueRecurring].map(item => ({ ...item,
+        override: overridesBySource.get(`${batch.BatchID}:${person.EmployeeID}:${item.entryType}:${item.recordId}`) || null }))
+      const deductions = dueDeductions.filter(item => !item.override)
       const accountDeductionCents = deductions.reduce((sum, item) => sum + Math.round(item.amount * 100), 0)
       if (grossCents - timeDeductionCents - accountDeductionCents < 0) warnings.push('Deductions exceed computed earnings for this cutoff.')
       return { ...person, components: [...components.values()].map(item => ({ ...item, amount: pesos(item.amountCents), amountCents: undefined })),
-        adjustments, deductions, warnings: [...new Set(warnings)], gross: pesos(grossCents),
+        adjustments, deductions, dueDeductions, warnings: [...new Set(warnings)], gross: pesos(grossCents),
         timeDeductions: pesos(timeDeductionCents), accountDeductions: pesos(accountDeductionCents),
         netPreview: pesos(grossCents - timeDeductionCents - accountDeductionCents) }
     })
@@ -210,7 +246,14 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       ...(btrRows.some(row => Number(row.BatchID) === Number(batch.BatchID) && !rosterIds.has(Number(row.EmployeeID)))
         ? ['A BTR reliever is not enrolled in this DTR. Add the reliever before finalizing payroll.'] : []),
     ]
-    return { ...batch, employees, siteWarnings, peopleCount: employees.length,
+    const deductionHistory = overrides.filter(item => Number(item.BatchID) === Number(batch.BatchID)).map(item => ({
+      ...item,
+      EmployeeName: employees.find(person => Number(person.EmployeeID) === Number(item.EmployeeID))?.EmployeeName || `Employee #${item.EmployeeID}`,
+      ItemName: item.EntryType === 'Recurring'
+        ? recurringByEmployee.get(Number(item.EmployeeID))?.find(plan => Number(plan.RecordID) === Number(item.SourceRecordID))?.ItemName
+        : accountsByEmployee.get(Number(item.EmployeeID))?.find(plan => plan.EntryType === item.EntryType && Number(plan.RecordID) === Number(item.SourceRecordID))?.ItemName,
+    }))
+    return { ...batch, employees, siteWarnings, deductionHistory, peopleCount: employees.length,
       btrEntryCount: Number(btrByBatch.get(Number(batch.BatchID))?.EntryCount || 0),
       btrCoverageHours: Number(btrByBatch.get(Number(batch.BatchID))?.CoverageHours || 0),
       gross: pesos(employees.reduce((sum, person) => sum + Math.round(person.gross * 100), 0)),
@@ -377,19 +420,22 @@ export async function reviewPayrollProcessing(event: any) {
             line.direction === 'Deduction' ? -Number(line.amount) : Number(line.amount)])
         }
         for (const deduction of person.deductions) {
-          if (deduction.entryType === 'Deduction') {
+          if (deduction.entryType === 'Deduction' || deduction.entryType === 'Recurring') {
             await connection.execute(`INSERT INTO payroll_deduction
-              (PayrollID, DeductionTypeID, ReferenceID, ReferenceType, Amount) VALUES (?, ?, ?, 'Employee Deduction', ?)`,
-            [payrollId, deduction.accountTypeId, deduction.recordId, deduction.amount])
+              (PayrollID, DeductionTypeID, ReferenceID, ReferenceType, Amount) VALUES (?, ?, ?, ?, ?)`,
+            [payrollId, deduction.accountTypeId, deduction.recordId,
+              deduction.entryType === 'Recurring' ? 'Recurring Deduction' : 'Employee Deduction', deduction.amount])
           } else {
             await connection.execute(`INSERT INTO payroll_detail (PayrollID, Description, Quantity, Rate, Amount)
               VALUES (?, ?, 1, ?, ?)`, [payrollId, `Loan: ${deduction.name}`.slice(0, 150),
               deduction.amount, -Number(deduction.amount)])
           }
-          await postEmployeeAccountTransaction(connection, { employeeId: Number(person.EmployeeID),
-            entryType: deduction.entryType, sourceRecordId: Number(deduction.recordId), payrollId,
-            transactionDate: batch.PeriodEnd, cutoffStartDate: batch.PeriodStart,
-            cutoffEndDate: batch.PeriodEnd, amount: Number(deduction.amount) })
+          if (deduction.entryType !== 'Recurring') {
+            await postEmployeeAccountTransaction(connection, { employeeId: Number(person.EmployeeID),
+              entryType: deduction.entryType, sourceRecordId: Number(deduction.recordId), payrollId,
+              transactionDate: batch.PeriodEnd, cutoffStartDate: batch.PeriodStart,
+              cutoffEndDate: batch.PeriodEnd, amount: Number(deduction.amount) })
+          }
         }
         const adjustmentIds = [...new Set(person.adjustments.map((line: any) => Number(line.adjustmentId)))]
         for (const adjustmentId of adjustmentIds) {

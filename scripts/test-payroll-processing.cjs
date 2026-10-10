@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment } = require('../shared/utils/payrollPreview.ts')
+const { componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction } = require('../shared/utils/payrollPreview.ts')
 
 test('daily components use their configured amount and keep cent precision', () => {
   const days = [
@@ -37,4 +37,15 @@ test('installment is due only for its cutoff, effective dates, and remaining bal
   assert.equal(previewInstallment({ ...account, IsPaused: 1, PauseStartDate: '2026-09-16', ResumeDate: '2026-10-01' }, '2026-09-16', '2026-09-30'), 0)
   assert.equal(previewInstallment({ ...account, IsPaused: 1, PauseStartDate: '2026-09-16', ResumeDate: '2026-09-16' }, '2026-09-16', '2026-09-30'), 30000)
   assert.equal(previewInstallment({ ...account, Status: 'Paid' }, '2026-09-16', '2026-09-30'), 0)
+  assert.equal(previewInstallment({ ...account, EndDate: '2026-09-30' }, '2026-10-16', '2026-10-31'), 30000)
+})
+
+test('monthly distribution runs every second cutoff and honors pause/resume dates', () => {
+  const plan = { Status: 'Active', EffectiveStartDate: '2026-09-01', EffectiveEndDate: null,
+    DeductOn: 'Second', AmountPerCutoff: 125.5, IsPaused: 0, PauseStartDate: null, ResumeDate: null }
+  assert.equal(previewRecurringDeduction(plan, '2026-09-01', '2026-09-15'), 0)
+  assert.equal(previewRecurringDeduction(plan, '2026-09-16', '2026-09-30'), 12550)
+  assert.equal(previewRecurringDeduction(plan, '2026-10-16', '2026-10-31'), 12550)
+  assert.equal(previewRecurringDeduction({ ...plan, IsPaused: 1, PauseStartDate: '2026-10-16' }, '2026-10-16', '2026-10-31'), 0)
+  assert.equal(previewRecurringDeduction({ ...plan, IsPaused: 1, PauseStartDate: '2026-10-16', ResumeDate: '2026-11-16' }, '2026-11-16', '2026-11-30'), 12550)
 })

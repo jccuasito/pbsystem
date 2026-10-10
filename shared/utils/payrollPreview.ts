@@ -54,11 +54,22 @@ export function previewInstallment(account: any, periodStart: string, periodEnd:
   const date = String(account.RepaymentStartDate || '')
   if (account.Status !== 'Active' || !date || date > periodEnd ||
       (account.RepaymentCutoff !== cutoff && account.RepaymentCutoff !== 'Both') ||
-      (account.EndDate && String(account.EndDate) < periodStart) ||
+      // EndDate is the original projected completion date. A skipped or paused
+      // installment must remain collectible on a later eligible cutoff.
       // A scheduled pause applies only once its start date has arrived. A
       // resume on or before the cutoff start makes the whole cutoff payable.
       (Number(account.IsPaused) && String(account.PauseStartDate || '') <= periodEnd &&
         (!account.ResumeDate || String(account.ResumeDate) > periodStart))) return 0
   const balance = moneyCents(account.RemainingBalance)
   return Math.max(0, Math.min(balance, moneyCents(account.InstallmentAmount)))
+}
+
+export function previewRecurringDeduction(plan: any, periodStart: string, periodEnd: string) {
+  const cutoff = Number(periodStart.slice(8, 10)) <= 15 ? 'First' : 'Second'
+  if (plan.Status !== 'Active' || String(plan.EffectiveStartDate || '') > periodEnd ||
+      (plan.EffectiveEndDate && String(plan.EffectiveEndDate) < periodStart) ||
+      (plan.DeductOn !== cutoff && plan.DeductOn !== 'Both') ||
+      (Number(plan.IsPaused) && String(plan.PauseStartDate || '') <= periodEnd &&
+        (!plan.ResumeDate || String(plan.ResumeDate) > periodStart))) return 0
+  return moneyCents(plan.AmountPerCutoff)
 }

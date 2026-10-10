@@ -6,7 +6,7 @@ type Resource = 'classification' | 'loan-type' | 'deduction-type'
 
 const validResources = new Set<Resource>(['classification', 'loan-type', 'deduction-type'])
 const validStatuses = new Set(['Active', 'Inactive'])
-const validAppliesTo = new Set(['Loan', 'Deduction'])
+const validAppliesTo = new Set(['Loan', 'Deduction', 'Contribution'])
 const validDeductionCategories = new Set(['Government', 'Loan', 'Company', 'Other'])
 const validDeductionPeriods = new Set(['Monthly', 'Semi-Monthly', 'Weekly', 'One-Time'])
 
@@ -63,9 +63,10 @@ async function ensureClassification(classificationId: number, kind: 'Loan' | 'De
   if (requireActive && classification.Status !== 'Active') {
     throw createError({ statusCode: 409, statusMessage: 'Select an active parent classification for an active sub-classification.' })
   }
-  if (classification.AppliesTo !== kind) {
+  if (kind === 'Loan' ? classification.AppliesTo !== 'Loan' : !['Deduction', 'Contribution'].includes(classification.AppliesTo)) {
     throw createError({ statusCode: 400, statusMessage: `The selected classification cannot be used for a ${kind.toLowerCase()}.` })
   }
+  return classification
 }
 
 async function ensureUnique(
@@ -73,14 +74,16 @@ async function ensureUnique(
   nameColumn: string,
   name: string,
   idColumn: string,
-  options: { id?: number; classificationId?: number } = {},
+  options: { id?: number; classificationId?: number; appliesTo?: string } = {},
 ) {
   const hasClassificationScope = options.classificationId !== undefined
+  const hasTypeScope = options.appliesTo !== undefined
   const hasExcludedId = options.id !== undefined
-  const scopeSql = hasClassificationScope ? ' AND ClassificationID = ?' : ''
+  const scopeSql = `${hasClassificationScope ? ' AND ClassificationID = ?' : ''}${hasTypeScope ? ' AND AppliesTo = ?' : ''}`
   const excludeSql = hasExcludedId ? ` AND \`${idColumn}\` <> ?` : ''
   const params: Array<string | number> = [name]
   if (hasClassificationScope) params.push(options.classificationId as number)
+  if (hasTypeScope) params.push(options.appliesTo as string)
   if (hasExcludedId) params.push(options.id as number)
   const [rows] = await pool.execute<any[]>(
     `SELECT \`${idColumn}\` AS id FROM \`${table}\` WHERE LOWER(\`${nameColumn}\`) = LOWER(?)${scopeSql}${excludeSql} LIMIT 1`,
@@ -89,26 +92,36 @@ async function ensureUnique(
   if (rows[0]) {
     const statusMessage = hasClassificationScope
       ? 'A sub-classification with this name already exists under the selected classification.'
-      : 'A classification with this name already exists.'
+      : 'A classification with this name already exists for the selected type.'
     throw createError({ statusCode: 409, statusMessage })
   }
 }
 
-async function ensureClassificationCanChange(id: number, appliesTo: string, status: string) {
+async function ensureClassificationCanChange(id: number, appliesTo: string | null, status: string) {
+  const [currentRows] = await pool.execute<any[]>(
+    'SELECT AppliesTo FROM deduction_loan_classification WHERE ClassificationID = ? LIMIT 1', [id],
+  )
+  if (!currentRows[0]) throw createError({ statusCode: 404, statusMessage: 'Classification not found.' })
+  const targetType = appliesTo ?? currentRows[0].AppliesTo
   const [usageRows] = await pool.execute<any[]>(
     `SELECT
        (SELECT COUNT(*) FROM loan_type WHERE ClassificationID = ? AND Status = 'Active') AS ActiveLoans,
-       (SELECT COUNT(*) FROM deduction_type WHERE ClassificationID = ? AND Status = 'Active') AS ActiveDeductions`,
-    [id, id],
+       (SELECT COUNT(*) FROM deduction_type WHERE ClassificationID = ? AND Status = 'Active') AS ActiveDeductions,
+       (SELECT COUNT(*) FROM loan_type WHERE ClassificationID = ?) AS AllLoans,
+       (SELECT COUNT(*) FROM deduction_type WHERE ClassificationID = ?) AS AllDeductions`,
+    [id, id, id, id],
   )
   const usage = usageRows[0]
+  if (currentRows[0].AppliesTo !== targetType && (Number(usage.AllLoans) || Number(usage.AllDeductions))) {
+    throw createError({ statusCode: 409, statusMessage: 'This classification has linked sub-classifications and cannot change type. Create a new classification for the other type.' })
+  }
   if (status === 'Inactive' && (Number(usage.ActiveLoans) || Number(usage.ActiveDeductions))) {
     throw createError({ statusCode: 409, statusMessage: 'Deactivate the sub-classifications under this classification first.' })
   }
-  if (appliesTo === 'Loan' && Number(usage.ActiveDeductions)) {
+  if (targetType === 'Loan' && Number(usage.ActiveDeductions)) {
     throw createError({ statusCode: 409, statusMessage: 'This classification still has active deduction sub-classifications.' })
   }
-  if (appliesTo === 'Deduction' && Number(usage.ActiveLoans)) {
+  if (targetType !== 'Loan' && Number(usage.ActiveLoans)) {
     throw createError({ statusCode: 409, statusMessage: 'This classification still has active loan sub-classifications.' })
   }
 }
@@ -145,7 +158,7 @@ export async function listDeductionLoanCatalog(event: any) {
   }
 
   const [items] = await pool.execute<any[]>(
-    `SELECT dt.DeductionTypeID, dt.DeductionName, dt.ClassificationID, c.ClassificationName,
+      `SELECT dt.DeductionTypeID, dt.DeductionName, dt.ClassificationID, c.ClassificationName, c.AppliesTo,
             dt.DeductionCategory, dt.DeductionPeriod, dt.Description, dt.Status
        FROM deduction_type dt
        LEFT JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
@@ -165,7 +178,7 @@ export async function createDeductionLoanCatalog(event: any) {
     const name = requiredText(body?.ClassificationName, 'Classification name')
     const appliesTo = enumValue(body?.AppliesTo, validAppliesTo, 'classification scope', 'Loan')
     const description = optionalText(body?.Description, 'Description')
-    await ensureUnique('deduction_loan_classification', 'ClassificationName', name, 'ClassificationID')
+    await ensureUnique('deduction_loan_classification', 'ClassificationName', name, 'ClassificationID', { appliesTo })
     const [result] = await pool.execute<any>(
       'INSERT INTO deduction_loan_classification (ClassificationName, AppliesTo, Description, Status) VALUES (?, ?, ?, ?)',
       [name, appliesTo, description, status],
@@ -188,9 +201,11 @@ export async function createDeductionLoanCatalog(event: any) {
   }
 
   const name = requiredText(body?.DeductionName, 'Deduction name')
-  const category = enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
+  const classification = await ensureClassification(classificationId, 'Deduction')
+  const category = classification.AppliesTo === 'Contribution'
+    ? 'Government'
+    : enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
   const period = enumValue(body?.DeductionPeriod, validDeductionPeriods, 'deduction frequency', 'Monthly')
-  await ensureClassification(classificationId, 'Deduction')
   await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID', { classificationId })
   const [result] = await pool.execute<any>(
     'INSERT INTO deduction_type (DeductionName, ClassificationID, DeductionCategory, DeductionPeriod, Description, Status) VALUES (?, ?, ?, ?, ?, ?)',
@@ -211,7 +226,7 @@ export async function updateDeductionLoanCatalog(event: any) {
     const name = requiredText(body?.ClassificationName, 'Classification name')
     const appliesTo = enumValue(body?.AppliesTo, validAppliesTo, 'classification scope', 'Loan')
     const description = optionalText(body?.Description, 'Description')
-    await ensureUnique('deduction_loan_classification', 'ClassificationName', name, 'ClassificationID', { id })
+    await ensureUnique('deduction_loan_classification', 'ClassificationName', name, 'ClassificationID', { id, appliesTo })
     await ensureClassificationCanChange(id, appliesTo, status)
     const [result] = await pool.execute<any>(
       'UPDATE deduction_loan_classification SET ClassificationName = ?, AppliesTo = ?, Description = ?, Status = ? WHERE ClassificationID = ?',
@@ -237,9 +252,11 @@ export async function updateDeductionLoanCatalog(event: any) {
   }
 
   const name = requiredText(body?.DeductionName, 'Deduction name')
-  const category = enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
+  const classification = await ensureClassification(classificationId, 'Deduction', status === 'Active')
+  const category = classification.AppliesTo === 'Contribution'
+    ? 'Government'
+    : enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
   const period = enumValue(body?.DeductionPeriod, validDeductionPeriods, 'deduction frequency', 'Monthly')
-  await ensureClassification(classificationId, 'Deduction', status === 'Active')
   await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID', { id, classificationId })
   const [result] = await pool.execute<any>(
     'UPDATE deduction_type SET DeductionName = ?, ClassificationID = ?, DeductionCategory = ?, DeductionPeriod = ?, Description = ?, Status = ? WHERE DeductionTypeID = ?',
@@ -257,7 +274,7 @@ export async function deleteDeductionLoanCatalog(event: any) {
   const id = positiveId(body?.id, 'Record ID')
 
   if (resourceName === 'classification') {
-    await ensureClassificationCanChange(id, 'Loan', 'Inactive')
+    await ensureClassificationCanChange(id, null, 'Inactive')
     const [result] = await pool.execute<any>(
       "UPDATE deduction_loan_classification SET Status = 'Inactive' WHERE ClassificationID = ?",
       [id],
