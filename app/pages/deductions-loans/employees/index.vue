@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ModernDateField from '~~/components/ModernDateField.vue'
+import { generatedIssuanceCode, issuanceCodePrefix } from '~~/shared/utils/issuanceCode'
 
 type RepaymentCutoff = 'First' | 'Second' | 'Both'
 type EmployeeRow = {
@@ -19,7 +20,7 @@ type EmployeeRow = {
 type CatalogItem = { EntryType: 'Loan' | 'Deduction'; CatalogKind: 'Loan' | 'Deduction' | 'Contribution'; CatalogItemID: number; ItemName: string; ClassificationID: number; ClassificationName: string }
 type ContributionReceipt = { PayrollDeductionID: number; Amount: number; PayrollID: number; PeriodStart: string; PeriodEnd: string; PayrollStatus: string; DeductionName: string; ClassificationName: string; AgencyName: string }
 type SchedulePeriod = {
-  Period: number
+  Period: number | null
   CutoffStartDate: string
   CutoffEndDate: string
   ScheduledAmount: number
@@ -27,6 +28,7 @@ type SchedulePeriod = {
   ProjectedBalance: number
   RemainingPeriods: number
   Status: string
+  SkipReason?: string
 }
 type RecordItem = {
   EntryType: 'Loan' | 'Deduction'
@@ -42,6 +44,7 @@ type RecordItem = {
   ClassificationName: string | null
   RepaymentStartDate: string | null
   RepaymentEndDate: string | null
+  ProjectedRepaymentEndDate: string | null
   RepaymentMonths: number
   RepaymentPeriods: number
   RepaymentCutoff: RepaymentCutoff
@@ -90,20 +93,28 @@ const pauseRecord = ref<RecordItem | null>(null)
 const planOpen = ref(false)
 const planRecord = ref<RecordItem | null>(null)
 const historyScope = ref<'Active' | 'Archive'>('Active')
-const historyType = ref<'All' | 'Loan' | 'Deduction'>('All')
+const historyType = ref<'All' | 'Loan' | 'Deduction' | 'Contribution'>('All')
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-const form = reactive({ EntryType: 'Loan' as 'Loan' | 'Deduction', CatalogItemID: '', IssuanceCode: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: 'Second' as RepaymentCutoff, Remarks: '' })
+const form = reactive({ EntryType: 'Loan' as 'Loan' | 'Deduction', CatalogItemID: '', IssuanceNumber: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: 'Second' as RepaymentCutoff, Remarks: '' })
 const pauseForm = reactive({ PauseStartDate: today(), ResumeDate: '', PauseReason: '' })
 
 const scopedHistory = computed(() => profileRecords.value.filter(item => historyScope.value === 'Active' ? item.Status === 'Active' : item.Status !== 'Active'))
 const filteredHistory = computed(() => historyType.value === 'All' ? scopedHistory.value : scopedHistory.value.filter(item => item.EntryType === historyType.value))
-function historyCount(kind: 'All' | 'Loan' | 'Deduction') {
+function historyCount(kind: 'All' | 'Loan' | 'Deduction' | 'Contribution') {
+  if (kind === 'Contribution') return contributionReceipts.value.length
   return kind === 'All' ? scopedHistory.value.length : scopedHistory.value.filter(item => item.EntryType === kind).length
 }
 function historyScopeCount(scope: 'Active' | 'Archive') {
   return profileRecords.value.filter(item => scope === 'Active' ? item.Status === 'Active' : item.Status !== 'Active').length
 }
 const availableCatalog = computed(() => catalogItems.value.filter(item => item.EntryType === form.EntryType && item.CatalogKind === form.EntryType))
+const selectedCatalog = computed(() => availableCatalog.value.find(item => String(item.CatalogItemID) === form.CatalogItemID))
+const issuancePrefix = computed(() => selectedCatalog.value ? issuanceCodePrefix(selectedCatalog.value.ClassificationName, selectedCatalog.value.ItemName) : '')
+const fullIssuanceCode = computed(() => selectedCatalog.value && form.IssuanceNumber
+  ? generatedIssuanceCode(selectedCatalog.value.ClassificationName, selectedCatalog.value.ItemName, form.IssuanceNumber) : '')
+function digitsOnly(event: Event) {
+  form.IssuanceNumber = (event.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 40)
+}
 const catalogGroups = computed(() => {
   const groups = new Map<string, CatalogItem[]>()
   for (const item of availableCatalog.value) {
@@ -185,9 +196,11 @@ const repaymentPlanView = computed(() => {
   return {
     ItemName: catalog?.ItemName || 'Repayment plan preview',
     AccountReference: null,
-    IssuanceCode: form.IssuanceCode || 'Review before saving',
+    IssuanceCode: fullIssuanceCode.value || 'Review before saving',
     EntryType: form.EntryType,
     RepaymentCutoff: form.RepaymentCutoff,
+    RepaymentEndDate: planPreview.value.endDate,
+    ProjectedRepaymentEndDate: planPreview.value.endDate,
     OriginalAmount: Number(form.OriginalAmount || 0),
     RepaymentPeriods: planPreview.value.periods,
     InstallmentAmount: planPreview.value.installment,
@@ -273,7 +286,7 @@ async function openProfile(employee: EmployeeRow) {
 
 function openIssuance(employee: EmployeeRow | any, type: 'Loan' | 'Deduction' = 'Loan') {
   selectedEmployee.value = employee
-  Object.assign(form, { EntryType: type, CatalogItemID: '', IssuanceCode: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: type === 'Deduction' ? 'First' : 'Second', Remarks: '' })
+  Object.assign(form, { EntryType: type, CatalogItemID: '', IssuanceNumber: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: type === 'Deduction' ? 'First' : 'Second', Remarks: '' })
   profileError.value = ''
   issuanceOpen.value = true
 }
@@ -289,7 +302,7 @@ async function saveIssuance() {
         EmployeeID: selectedEmployee.value.EmployeeID,
         EntryType: form.EntryType,
         CatalogItemID: Number(form.CatalogItemID),
-        IssuanceCode: form.IssuanceCode,
+        IssuanceNumber: form.IssuanceNumber,
         IssuanceDate: form.IssuanceDate,
         OriginalAmount: Number(form.OriginalAmount),
         RepaymentStartDate: form.RepaymentStartDate,
@@ -472,10 +485,10 @@ onMounted(load)
           <div v-else class="contribution-list"><article v-for="receipt in contributionReceipts" :key="receipt.PayrollDeductionID" class="contribution-card"><div><strong>{{ receipt.DeductionName }}</strong><small>{{ receipt.ClassificationName }} · {{ receipt.AgencyName }}</small><small>{{ date(receipt.PeriodStart) }} – {{ date(receipt.PeriodEnd) }} · Payroll #{{ receipt.PayrollID }}</small></div><strong>{{ money(receipt.Amount) }}</strong></article></div>
         </section>
         <div class="history-heading">
-          <div><h3>Issuance history</h3><p>Active records are separated from completed or voided records.</p></div>
+          <div><h3>Account history</h3><p>Review issuances and contributions posted in finalized payroll.</p></div>
         </div>
         <div class="history-controls">
-          <div class="filter-group">
+          <div v-if="historyType !== 'Contribution'" class="filter-group">
             <span class="filter-label">Status</span>
             <div class="scope-tabs" role="tablist" aria-label="Choose issuance status">
               <button v-for="scope in (['Active','Archive'] as const)" :key="scope" type="button" role="tab" class="scope-filter" :class="[`scope-${scope.toLowerCase()}`,{active:historyScope===scope}]" :aria-selected="historyScope===scope" @click="historyScope=scope; historyType='All'"><span class="filter-icon">{{ scope === 'Active' ? '●' : '▣' }}</span><span>{{ scope }}</span><small>{{ historyScopeCount(scope) }}</small></button>
@@ -484,23 +497,30 @@ onMounted(load)
           <div class="filter-group filter-group-type">
             <span class="filter-label">Type</span>
             <div class="type-tabs" role="tablist" aria-label="Filter issuance type">
-              <button v-for="kind in (['All','Loan','Deduction'] as const)" :key="kind" type="button" role="tab" class="history-filter" :class="[`filter-${kind.toLowerCase()}`,{active:historyType===kind}]" :aria-selected="historyType===kind" @click="historyType=kind"><span class="filter-icon">{{ kind === 'All' ? '▦' : kind === 'Loan' ? '₱' : '−' }}</span><span>{{ kind }}</span><small>{{ historyCount(kind) }}</small></button>
+              <button v-for="kind in (['All','Loan','Deduction','Contribution'] as const)" :key="kind" type="button" role="tab" class="history-filter" :class="[`filter-${kind.toLowerCase()}`,{active:historyType===kind}]" :aria-selected="historyType===kind" @click="historyType=kind"><span class="filter-icon">{{ kind === 'All' ? '▦' : kind === 'Loan' ? '₱' : kind === 'Deduction' ? '−' : '⊕' }}</span><span>{{ kind }}</span><small>{{ historyCount(kind) }}</small></button>
             </div>
           </div>
         </div>
-        <p class="history-result">Showing {{ historyCount(historyType) }} {{ historyScope.toLowerCase() }} {{ historyType === 'All' ? 'records' : `${historyType.toLowerCase()} record${historyCount(historyType) === 1 ? '' : 's'}` }}</p>
+        <p class="history-result">{{ historyType === 'Contribution' ? `Showing ${contributionReceipts.length} posted contribution${contributionReceipts.length === 1 ? '' : 's'}` : `Showing ${historyCount(historyType)} ${historyScope.toLowerCase()} ${historyType === 'All' ? 'issuances' : `${historyType.toLowerCase()} record${historyCount(historyType) === 1 ? '' : 's'}`}` }}</p>
         <p v-if="profileError" class="error">{{ profileError }}</p>
         <div class="record-list">
           <p v-if="profileLoading" class="empty">Loading history…</p>
+          <template v-else-if="historyType === 'Contribution'">
+            <p v-if="!contributionReceipts.length" class="empty">No posted contributions yet.</p>
+            <article v-for="receipt in contributionReceipts" :key="receipt.PayrollDeductionID" class="record-card contribution-record">
+              <header><div class="record-heading"><span class="kind contribution">Contribution</span><div><strong>{{ receipt.DeductionName }}</strong><small>{{ receipt.ClassificationName }} · {{ receipt.AgencyName }}</small><small>{{ date(receipt.PeriodStart) }} – {{ date(receipt.PeriodEnd) }} · Payroll #{{ receipt.PayrollID }}</small></div></div><span class="status status-active">Posted</span></header>
+              <div class="record-details"><div><span>Amount contributed</span><strong>{{ money(receipt.Amount) }}</strong><small>Deducted from finalized payroll</small></div></div>
+            </article>
+          </template>
           <p v-else-if="!filteredHistory.length" class="empty">{{ historyScope === 'Active' ? 'No active loans or deductions.' : 'No archived issuance records.' }}</p>
-          <article v-for="record in filteredHistory" v-else :key="`${record.EntryType}-${record.RecordID}`" class="record-card">
+          <article v-for="record in historyType === 'Contribution' ? [] : filteredHistory" v-else :key="`${record.EntryType}-${record.RecordID}`" class="record-card">
             <header>
               <div class="record-heading"><span class="kind" :class="record.EntryType.toLowerCase()">{{ record.EntryType }}</span><div><strong>{{ record.ItemName }}</strong><small>{{ record.ClassificationName || 'Unclassified' }} · Account {{ record.AccountReference || 'Legacy' }} · Issuance {{ record.IssuanceCode || 'Legacy record' }}</small><small v-if="record.Transactions.length" class="posted-transaction">Latest transaction {{ record.Transactions[0]?.TransactionID }} · {{ record.Transactions.length }} receipt{{ record.Transactions.length === 1 ? '' : 's' }}</small><small v-else>No approved payroll deduction receipts yet</small></div></div>
               <span class="status" :class="{ 'status-active': record.Status === 'Active' && statusLabel(record) !== 'Paused', 'status-paused': statusLabel(record) === 'Paused', 'status-paid': record.Status === 'Paid', 'status-completed': record.Status === 'Completed', 'status-cancelled': record.Status === 'Cancelled', 'status-inactive': record.Status === 'Inactive' }">{{ statusLabel(record) }}</span>
             </header>
             <div class="record-details">
               <div><span>Issued</span><strong>{{ date(record.IssuanceDate) }}</strong><small>Original amount {{ money(record.OriginalAmount) }}</small></div>
-              <div><span>Schedule</span><strong>{{ cutoffLabel(record.RepaymentCutoff) }} · {{ record.RepaymentPeriods }} period{{ Number(record.RepaymentPeriods) === 1 ? '' : 's' }}</strong><small>{{ date(record.RepaymentStartDate) }} – {{ date(record.RepaymentEndDate) }} · {{ fifoLabel(record) }}</small></div>
+              <div><span>Schedule</span><strong>{{ cutoffLabel(record.RepaymentCutoff) }} · {{ record.RepaymentPeriods }} period{{ Number(record.RepaymentPeriods) === 1 ? '' : 's' }}</strong><small>{{ date(record.RepaymentStartDate) }} – {{ date(record.ProjectedRepaymentEndDate || record.RepaymentEndDate) }} projected · {{ fifoLabel(record) }}</small></div>
               <div><span>Installment</span><strong>{{ money(record.InstallmentAmount) }}</strong><small>Per selected cutoff<span v-if="Number(record.FinalInstallmentAmount) !== Number(record.InstallmentAmount)"> · final {{ money(record.FinalInstallmentAmount) }}</span></small></div>
               <div><span>Outstanding balance</span><strong>{{ record.Status === 'Active' ? money(record.OutstandingAmount) : money(0) }}</strong><small v-if="Number(record.IsPaused)">{{ statusLabel(record) === 'Pause scheduled' ? 'Pauses ' + date(record.PauseStartDate) : statusLabel(record) === 'Resumed' ? 'Pause period complete' : record.ResumeDate ? 'Resumes ' + date(record.ResumeDate) : 'Manual resume required' }}</small><small v-else>{{ record.PlanStatus }}</small></div>
             </div>
@@ -522,10 +542,10 @@ onMounted(load)
         <button class="close" type="button" aria-label="Close" @click="issuanceOpen=false">×</button>
         <header><span class="eyebrow">MANUAL ISSUANCE</span><h2>Add loan or deduction</h2><p>For {{ selectedEmployee?.EmployeeName }} · {{ selectedEmployee ? employeeNumber(selectedEmployee) : '' }}</p></header>
         <div class="form-grid issuance-form-grid">
-          <label class="form-field">Type<select v-model="form.EntryType" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option></select></label>
+          <label class="form-field">Type<select v-model="form.EntryType" required @change="form.CatalogItemID = ''; form.IssuanceNumber = ''"><option value="Loan">Loan</option><option value="Deduction">Deduction</option></select></label>
           <label class="form-field">Catalog entry<select v-model="form.CatalogItemID" required><option disabled value="">Select {{ form.EntryType.toLowerCase() }}</option><optgroup v-for="group in catalogGroups" :key="group.name" :label="group.name"><option v-for="item in group.entries" :key="item.CatalogItemID" :value="String(item.CatalogItemID)">{{ item.ItemName }}</option></optgroup></select></label>
           <ModernDateField v-model="form.IssuanceDate" label="Issuance date" placeholder="Select issuance date" align="start" required />
-          <label>Issuance code<input v-model.trim="form.IssuanceCode" maxlength="100" placeholder="e.g. PB-120826" required><small class="field-help">Enter the reference shown on the loan or deduction document.</small></label>
+          <label>Issuance number<div class="issuance-code-field"><span>{{ issuancePrefix || 'Select catalog' }}-</span><input v-model="form.IssuanceNumber" type="text" inputmode="numeric" pattern="[0-9]{1,40}" maxlength="40" placeholder="Numbers only" :disabled="!selectedCatalog" required @input="digitsOnly"></div><small class="field-help">Code generated from the classification and item initials: {{ fullIssuanceCode || `${issuancePrefix || 'PREFIX'}-12345` }}</small></label>
           <label class="wide form-field">Original value / amount received<input v-model="form.OriginalAmount" type="number" min="0.01" max="99999999.99" step="0.01" placeholder="0.00" required></label>
           <div class="section-label wide"><strong>Repayment plan</strong><span>Deduction defaults to 1st cutoff; loan defaults to 2nd cutoff. You can change either.</span></div>
           <ModernDateField v-model="form.RepaymentStartDate" label="Repayment starts" placeholder="Select repayment start" :min="form.IssuanceDate || undefined" align="start" required />
@@ -551,18 +571,18 @@ onMounted(load)
           <div><span>Per cutoff</span><strong>{{ money(repaymentPlanView.InstallmentAmount) }}</strong></div>
           <div><span>{{ planRecord ? 'Current balance' : 'Starting balance' }}</span><strong>{{ money(repaymentPlanView.OutstandingAmount) }}</strong></div>
         </div>
-        <p class="schedule-note">This plan is deducted during {{ cutoffDescription(repaymentPlanView.RepaymentCutoff) }}.</p>
+        <p class="schedule-note">This plan is deducted during {{ cutoffDescription(repaymentPlanView.RepaymentCutoff) }}. Projected completion: {{ date(repaymentPlanView.ProjectedRepaymentEndDate || repaymentPlanView.RepaymentEndDate || null) }}. Skipped cutoffs move unpaid installments to the next eligible cutoff.</p>
         <div class="schedule-wrap">
           <table>
             <thead><tr><th>Period</th><th>Cutoff start</th><th>Cutoff end</th><th>Scheduled installment</th><th>Recorded paid</th><th>Projected balance</th><th>Remaining periods</th><th>Status</th></tr></thead>
             <tbody>
-              <tr v-for="period in repaymentPlanView.RepaymentSchedule" :key="period.Period">
-                <td>{{ period.Period }}</td><td>{{ date(period.CutoffStartDate) }}</td><td>{{ date(period.CutoffEndDate) }}</td><td>{{ money(period.ScheduledAmount) }}</td><td>{{ money(period.RecordedPaidAmount) }}</td><td>{{ money(period.ProjectedBalance) }}</td><td>{{ period.RemainingPeriods }}</td><td><span class="period-status">{{ period.Status }}</span></td>
+              <tr v-for="period in repaymentPlanView.RepaymentSchedule" :key="period.CutoffEndDate">
+                <td>{{ period.Period ?? '—' }}</td><td>{{ date(period.CutoffStartDate) }}</td><td>{{ date(period.CutoffEndDate) }}</td><td>{{ money(period.ScheduledAmount) }}</td><td>{{ money(period.RecordedPaidAmount) }}</td><td>{{ money(period.ProjectedBalance) }}</td><td>{{ period.RemainingPeriods }}</td><td><span class="period-status" :class="{ skipped: period.Status === 'Skipped' }" :title="period.SkipReason || undefined">{{ period.Status }}</span></td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p class="schedule-help">{{ planRecord ? 'Recorded paid is based on the balance already posted to this issuance.' : 'This is a review only. The issuance has not been saved yet.' }} Projected balance assumes every scheduled installment is collected. Paused or skipped cutoffs can move actual completion later; the unpaid balance remains due on later eligible cutoffs.</p>
+        <p class="schedule-help">{{ planRecord ? 'Recorded paid comes from finalized payroll receipts for this issuance.' : 'This is a review only. The issuance has not been saved yet.' }} Projected balance assumes every scheduled installment is collected. Paused cutoffs and other missed payrolls can still move actual completion later.</p>
         <footer><button type="button" @click="planOpen=false">Close</button></footer>
       </section>
     </div>
@@ -604,4 +624,8 @@ onMounted(load)
 @media(max-width:480px){.history-controls{padding:10px}.filter-group,.filter-group-type{grid-template-columns:1fr;gap:6px}.filter-label{padding-left:2px}.profile-modal .scope-filter,.profile-modal .history-filter{font-size:.68rem}.profile-modal .filter-icon{display:none}}
 @media(max-width:650px){.issuance-transactions li{grid-template-columns:1fr 1fr}.issuance-transactions code,.issuance-transactions small{grid-column:1/-1}}
 .contribution-section{margin:0 0 22px;padding:17px;border:1px solid #d7e3f4;border-radius:12px;background:#f8faff}.contribution-heading{display:flex;justify-content:space-between;align-items:center;gap:15px}.contribution-heading h3{margin:0 0 5px;font-size:1rem}.contribution-heading p,.contribution-empty{margin:0;color:#64748b;font-size:.73rem}.contribution-total{display:grid;gap:3px;text-align:right}.contribution-total span{color:#64748b;font-size:.7rem}.contribution-total strong{font-size:1rem}.contribution-list{display:grid;gap:8px;margin-top:14px;max-height:275px;overflow:auto}.contribution-card{display:flex;justify-content:space-between;gap:15px;padding:11px 13px;border:1px solid #dce5f1;border-radius:9px;background:#fff;font-size:.77rem}.contribution-card>div{display:grid;gap:4px}.contribution-card small{color:#64748b}.contribution-empty{margin-top:14px}@media(max-width:700px){.contribution-heading{align-items:flex-start;flex-direction:column}.contribution-total{text-align:left}.contribution-card{flex-direction:column}}
+.issuance-code-field{display:flex;align-items:center;min-height:48px;border:1px solid #cbd8ea;border-radius:9px;background:#fff;overflow:hidden}.issuance-code-field:focus-within{border-color:#2867e8;box-shadow:0 0 0 3px rgba(40,103,232,.12)}.issuance-code-field span{padding:0 12px;color:#28548c;font-size:.82rem;font-weight:800;white-space:nowrap}.form-grid .issuance-code-field input{flex:1;min-width:0;min-height:46px;border:0;border-left:1px solid #e2e8f0;border-radius:0;padding:0 12px;outline:0}.form-grid .issuance-code-field input:disabled{background:#f8faff}.kind.contribution{background:#e5f8ee;color:#087146}.profile-modal button.filter-contribution.active{border-color:#087146;background:#087146;color:#fff}.contribution-record .record-details{display:block}.contribution-record .record-details>div{border-right:0}
+@media(max-width:800px){.type-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:480px){.type-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.period-status.skipped{background:#fff3e5;color:#a6530b}
 </style>

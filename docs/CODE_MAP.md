@@ -177,6 +177,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
+  - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - API calls and handlers:
@@ -296,6 +297,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/recurringDeductionCrud.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
+  - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
@@ -355,6 +357,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `components/ModernDateField.vue`
+  - `shared/utils/issuanceCode.ts`
 - API calls and handlers:
   - `GET /api/deductions-loans/agency-contributions/history` → `server/api/deductions-loans/agency-contributions/history.get.ts`
   - `GET /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.get.ts`
@@ -367,6 +370,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateVersions.ts`
+  - `shared/utils/issuanceCode.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
@@ -691,6 +695,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`
+  - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:

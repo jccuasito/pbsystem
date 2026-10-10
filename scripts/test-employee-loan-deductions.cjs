@@ -31,7 +31,9 @@ test('employee loan and deduction page compiles with one employee-centered issua
   }
   assert.match(descriptor.template.content, /Employee Loans &amp; Deductions/)
   assert.match(descriptor.template.content, /Issuance date/)
-  assert.match(descriptor.template.content, /Issuance code/)
+  assert.match(descriptor.template.content, /Issuance number/)
+  assert.match(descriptor.template.content, /historyType === 'Contribution'/)
+  assert.match(descriptor.template.content, /filter-icon/)
   assert.match(descriptor.template.content, /No approved payroll deduction receipts yet/)
   assert.match(descriptor.template.content, /Account/)
   assert.match(descriptor.template.content, /Original value \/ amount received/)
@@ -52,6 +54,27 @@ test('employee loan and deduction page compiles with one employee-centered issua
   assert.match(descriptor.template.content, /Total contributed/)
   assert.match(descriptor.template.content, /contributionReceipts/)
   assert.doesNotMatch(descriptor.template.content, /Add recurring/)
+})
+
+test('skipping an installment moves its projected cutoff without reducing the balance', () => {
+  const api = evaluate(fs.readFileSync('server/utils/employeeLoanDeductionCrud.ts', 'utf8'))
+  const plan = {
+    RepaymentMonths: 4, RepaymentStartDate: '2026-09-01', RepaymentCutoff: 'First',
+    OriginalAmount: 5000, OutstandingAmount: 5000,
+    InstallmentAmount: 1250, FinalInstallmentAmount: 1250,
+  }
+  const skipped = api.repaymentSchedule(plan, [{ CutoffEndDate: '2026-09-15', Reason: 'Gross income is low' }])
+  assert.equal(skipped.length, 5)
+  assert.deepEqual({ date: skipped[0].CutoffEndDate, status: skipped[0].Status, amount: skipped[0].ScheduledAmount,
+    balance: skipped[0].ProjectedBalance, remaining: skipped[0].RemainingPeriods },
+  { date: '2026-09-15', status: 'Skipped', amount: 0, balance: 5000, remaining: 4 })
+  assert.equal(skipped[1].CutoffStartDate, '2026-10-01')
+  assert.equal(skipped[1].Period, 1)
+  assert.equal(skipped.at(-1).CutoffEndDate, '2027-01-15')
+  assert.equal(skipped.at(-1).ProjectedBalance, 0)
+  const restored = api.repaymentSchedule(plan)
+  assert.equal(restored[0].CutoffEndDate, '2026-09-15')
+  assert.equal(restored.at(-1).CutoffEndDate, '2026-12-15')
 })
 
 test('MySQL issuance CRUD and posted-deduction receipts keep separate audit records', { skip: process.env.EMPLOYEE_FINANCIAL_TEST_DATABASE !== '1' }, async () => {
@@ -76,8 +99,11 @@ test('MySQL issuance CRUD and posted-deduction receipts keep separate audit reco
         release: () => {},
       }),
     }
+    const codeHelper = evaluate(fs.readFileSync('shared/utils/issuanceCode.ts', 'utf8'))
+    assert.equal(codeHelper.generatedIssuanceCode('Pag-ibig', 'Calamity Loan', '0012'), 'PI-CL-0012')
     const api = evaluate(fs.readFileSync('server/utils/employeeLoanDeductionCrud.ts', 'utf8'), {
       '../connection/dbconnect': pool,
+      '../../shared/utils/issuanceCode': codeHelper,
       './auth': { requireSession: () => ({ sub: 1 }) },
       h3: {
         createError: options => Object.assign(new Error(options.statusMessage), options),
@@ -249,6 +275,19 @@ test('MySQL issuance CRUD and posted-deduction receipts keep separate audit reco
     assert.equal(Number(employeeSummary.TotalIssued), Number(baseline.TotalIssued) + 6500)
     assert.equal(Number(employeeSummary.ActiveLoanCount), Number(baseline.ActiveLoanCount) + 1)
     assert.equal(Number(employeeSummary.ActiveDeductionCount), Number(baseline.ActiveDeductionCount) + 1)
+    const generatedNumber = `${Date.now()}42`
+    const generated = await api.createEmployeeLoanDeduction({ body: {
+      EmployeeID: employee.EmployeeID, EntryType: 'Loan', CatalogItemID: loanType.insertId,
+      IssuanceNumber: generatedNumber, IssuanceDate: '2026-10-01', OriginalAmount: 100,
+      RepaymentStartDate: '2026-10-01', RepaymentPeriods: 1, RepaymentCutoff: 'Second',
+    } })
+    const [[generatedRow]] = await connection.execute('SELECT IssuanceCode FROM employee_loan WHERE LoanID = ?', [generated.id])
+    assert.equal(generatedRow.IssuanceCode, codeHelper.generatedIssuanceCode(`TEST LOAN ${suffix}`, `TEST LOAN ITEM ${suffix}`, generatedNumber))
+    await assert.rejects(api.createEmployeeLoanDeduction({ body: {
+      EmployeeID: employee.EmployeeID, EntryType: 'Loan', CatalogItemID: loanType.insertId,
+      IssuanceNumber: '12AB', IssuanceDate: '2026-10-01', OriginalAmount: 100,
+      RepaymentStartDate: '2026-10-01', RepaymentPeriods: 1, RepaymentCutoff: 'Second',
+    } }), error => error.statusCode === 400)
     const [payrollRows] = await connection.execute('SELECT COUNT(*) AS count FROM payroll_deduction WHERE ReferenceType = ? AND ReferenceID IN (?, ?, ?, ?)', ['Employee issuance test', loan.id, deduction.id, both.id, otherDeduction.id])
     assert.equal(Number(payrollRows[0].count), 0)
   } finally {

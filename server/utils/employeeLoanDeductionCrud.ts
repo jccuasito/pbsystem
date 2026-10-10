@@ -1,6 +1,7 @@
 import { createError, getQuery, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { generatedIssuanceCode } from '../../shared/utils/issuanceCode'
 
 type EntryType = 'Loan' | 'Deduction'
 type RepaymentCutoff = 'First' | 'Second' | 'Both'
@@ -21,6 +22,15 @@ function requiredText(value: unknown, label: string, max = 100) {
   if (!text) throw createError({ statusCode: 400, statusMessage: `${label} is required.` })
   if (text.length > max) throw createError({ statusCode: 400, statusMessage: `${label} must be ${max} characters or fewer.` })
   return text
+}
+
+function issuanceCode(body: Record<string, unknown>, classificationName: string, itemName: string) {
+  if (body.IssuanceNumber === undefined) return requiredText(body.IssuanceCode, 'Issuance code', 100)
+  const number = String(body.IssuanceNumber ?? '').trim()
+  if (!/^[0-9]{1,40}$/.test(number)) {
+    throw createError({ statusCode: 400, statusMessage: 'Enter 1 to 40 digits for the issuance number.' })
+  }
+  return generatedIssuanceCode(classificationName, itemName, number)
 }
 
 function optionalText(value: unknown, label: string, max = 255) {
@@ -112,7 +122,7 @@ function cutoffWindow(startDate: string, cutoff: RepaymentCutoff, periodIndex: n
   }
 }
 
-function repaymentSchedule(row: any) {
+export function repaymentSchedule(row: any, skippedCutoffs: any[] = [], transactions: any[] = []) {
   const periodCount = Math.max(1, Number(row.RepaymentMonths || 1))
   const start = String(row.RepaymentStartDate || row.IssuanceDate || '')
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start)
@@ -121,26 +131,52 @@ function repaymentSchedule(row: any) {
   const cutoff: RepaymentCutoff = validRepaymentCutoffs.has(row.RepaymentCutoff) ? row.RepaymentCutoff : 'Second'
   const originalCents = Math.round(Number(row.OriginalAmount || 0) * 100)
   const outstandingCents = Math.max(0, Math.min(originalCents, Math.round(Number(row.OutstandingAmount || 0) * 100)))
-  let unappliedPaidCents = Math.max(0, originalCents - outstandingCents)
+  const paidByCutoff = new Map<string, number>()
+  for (const transaction of transactions) {
+    const endDate = String(transaction.CutoffEndDate || '')
+    if (!endDate) continue
+    paidByCutoff.set(endDate, (paidByCutoff.get(endDate) || 0) + Math.round(Number(transaction.Amount || 0) * 100))
+  }
+  let unappliedPaidCents = Math.max(0, originalCents - outstandingCents - [...paidByCutoff.values()].reduce((sum, cents) => sum + cents, 0))
+  const skippedByCutoff = new Map(skippedCutoffs.map(skip => [String(skip.CutoffEndDate), skip]))
   let projectedBalanceCents = originalCents
 
-  return Array.from({ length: periodCount }, (_, index) => {
-    const window = cutoffWindow(start, cutoff, index)
-    const scheduledCents = Math.round(Number(index === periodCount - 1 ? row.FinalInstallmentAmount : row.InstallmentAmount) * 100)
-    const recordedPaidCents = Math.min(scheduledCents, unappliedPaidCents)
-    unappliedPaidCents -= recordedPaidCents
+  const schedule = []
+  for (let cutoffIndex = 0, installmentIndex = 0; installmentIndex < periodCount; cutoffIndex++) {
+    const window = cutoffWindow(start, cutoff, cutoffIndex)
+    const skip = skippedByCutoff.get(window.end)
+    if (skip && !paidByCutoff.has(window.end)) {
+      schedule.push({
+        Period: null,
+        CutoffStartDate: window.start,
+        CutoffEndDate: window.end,
+        ScheduledAmount: 0,
+        RecordedPaidAmount: 0,
+        ProjectedBalance: projectedBalanceCents / 100,
+        RemainingPeriods: periodCount - installmentIndex,
+        Status: 'Skipped',
+        SkipReason: skip.Reason,
+      })
+      continue
+    }
+    const scheduledCents = Math.round(Number(installmentIndex === periodCount - 1 ? row.FinalInstallmentAmount : row.InstallmentAmount) * 100)
+    const paidOnCutoff = paidByCutoff.get(window.end) || 0
+    const recordedPaidCents = Math.min(scheduledCents, paidOnCutoff + unappliedPaidCents)
+    unappliedPaidCents = Math.max(0, unappliedPaidCents - Math.max(0, scheduledCents - paidOnCutoff))
     projectedBalanceCents = Math.max(0, projectedBalanceCents - scheduledCents)
-    return {
-      Period: index + 1,
+    schedule.push({
+      Period: installmentIndex + 1,
       CutoffStartDate: window.start,
       CutoffEndDate: window.end,
       ScheduledAmount: scheduledCents / 100,
       RecordedPaidAmount: recordedPaidCents / 100,
       ProjectedBalance: projectedBalanceCents / 100,
-      RemainingPeriods: periodCount - index - 1,
+      RemainingPeriods: periodCount - installmentIndex - 1,
       Status: recordedPaidCents >= scheduledCents ? 'Paid' : recordedPaidCents > 0 ? 'Partially paid' : 'Scheduled',
-    }
-  })
+    })
+    installmentIndex++
+  }
+  return schedule
 }
 
 function money(value: unknown) {
@@ -228,10 +264,12 @@ async function employeeRecords(employeeId: number) {
   const [transactionRows] = await pool.execute<any[]>(
     `SELECT t.TransactionRecordID, t.TransactionID, t.EntryType, t.SourceRecordID,
             DATE_FORMAT(TransactionDate, '%Y-%m-%d') AS TransactionDate,
+            DATE_FORMAT(t.CutoffStartDate, '%Y-%m-%d') AS CutoffStartDate,
+            DATE_FORMAT(t.CutoffEndDate, '%Y-%m-%d') AS CutoffEndDate,
             t.Amount, t.BalanceAfter, t.Status
        FROM employee_account_transaction t
        INNER JOIN payroll py ON py.PayrollID = t.PayrollID AND py.Status IN ('Approved', 'Released')
-      WHERE t.EmployeeID = ?
+      WHERE t.EmployeeID = ? AND t.Status = 'Posted'
       ORDER BY t.TransactionDate DESC, t.TransactionRecordID DESC`,
     [employeeId],
   )
@@ -239,6 +277,23 @@ async function employeeRecords(employeeId: number) {
   for (const transaction of transactionRows) {
     const key = `${transaction.EntryType}-${transaction.SourceRecordID}`
     transactionsByIssuance.set(key, [...(transactionsByIssuance.get(key) || []), transaction])
+  }
+  const [skipRows] = await pool.execute<any[]>(
+    `SELECT o.EntryType, o.SourceRecordID, o.Reason,
+            DATE_FORMAT(d.PeriodEnd, '%Y-%m-%d') AS CutoffEndDate
+       FROM payroll_deduction_override o
+       INNER JOIN attendance_dtr d ON d.BatchID = o.BatchID
+      WHERE o.EmployeeID = ? AND o.EntryType IN ('Loan', 'Deduction') AND o.RemovedAt IS NULL
+        AND (d.Status IN ('Computed to Payroll', 'Computed to Both') OR EXISTS (
+          SELECT 1 FROM payroll_processing_posting pp
+          WHERE pp.BatchID = d.BatchID AND pp.Status = 'Active'))
+      ORDER BY o.OverrideID DESC`,
+    [employeeId],
+  )
+  const skipsByIssuance = new Map<string, any[]>()
+  for (const skip of skipRows) {
+    const key = `${skip.EntryType}-${skip.SourceRecordID}`
+    skipsByIssuance.set(key, [...(skipsByIssuance.get(key) || []), skip])
   }
   const queue = rows
     .filter(row => row.Status === 'Active')
@@ -260,11 +315,15 @@ async function employeeRecords(employeeId: number) {
   }
   return rows.map(row => {
     const position = positions.get(`${row.EntryType}-${row.RecordID}`) || { first: null, second: null }
+    const key = `${row.EntryType}-${row.RecordID}`
+    const transactions = transactionsByIssuance.get(key) || []
+    const schedule = repaymentSchedule(row, skipsByIssuance.get(key) || [], transactions)
     return {
       ...row,
-      Transactions: transactionsByIssuance.get(`${row.EntryType}-${row.RecordID}`) || [],
+      Transactions: transactions,
       RepaymentPeriods: Number(row.RepaymentMonths || 1),
-      RepaymentSchedule: repaymentSchedule(row),
+      RepaymentSchedule: schedule,
+      ProjectedRepaymentEndDate: schedule.at(-1)?.CutoffEndDate || row.RepaymentEndDate,
       FifoPosition: position.first ?? position.second,
       FifoPositionFirst: position.first,
       FifoPositionSecond: position.second,
@@ -363,7 +422,6 @@ export async function createEmployeeLoanDeduction(event: any) {
   const employeeId = positiveId(body?.EmployeeID, 'Employee')
   const kind = entryType(body?.EntryType)
   const catalogItemId = positiveId(body?.CatalogItemID, `${kind} catalog item`)
-  const code = requiredText(body?.IssuanceCode, 'Issuance code', 100)
   const date = requiredDate(body?.IssuanceDate, 'Issuance date')
   const amount = money(body?.OriginalAmount)
   const plan = repaymentPlan(body, amount, kind, date)
@@ -386,6 +444,7 @@ export async function createEmployeeLoanDeduction(event: any) {
         [catalogItemId],
       )
       if (!catalogRows[0]) throw createError({ statusCode: 400, statusMessage: 'Select an active loan catalog entry.' })
+      const code = issuanceCode(body, catalogRows[0].ClassificationName, catalogRows[0].ItemName)
       const [result] = await connection.execute<any>(
         `INSERT INTO employee_loan
           (EmployeeID, LoanTypeID, IssuanceCode, LoanAmount, RemainingBalance, MonthlyDeduction,
@@ -410,6 +469,7 @@ export async function createEmployeeLoanDeduction(event: any) {
       [catalogItemId],
     )
     if (!catalogRows[0]) throw createError({ statusCode: 400, statusMessage: 'Select an active deduction catalog entry.' })
+    const code = issuanceCode(body, catalogRows[0].ClassificationName, catalogRows[0].ItemName)
     const [result] = await connection.execute<any>(
       `INSERT INTO employee_deduction
         (EmployeeID, DeductionTypeID, IssuanceCode, IssuanceDate, Amount, RemainingBalance,
