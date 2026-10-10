@@ -105,13 +105,18 @@ function periodDates(start: unknown, end: unknown) {
 }
 
 async function excludedManualDates(connection: any, source: any) {
+  const [[sitePolicy]] = await connection.execute<any[]>(`SELECT COALESCE(sp.SundayWDOOTEnabled, 0) AS SundayWDOOTEnabled
+    FROM site s
+    LEFT JOIN site_policy sp ON sp.SiteID = s.SiteID AND sp.Status = 'Active'
+    WHERE s.SiteID = ?`, [source.SiteID])
+  const sundayWdoOtEnabled = Number(sitePolicy?.SundayWDOOTEnabled || 0) === 1
   const [holidays] = await connection.execute<any[]>(`SELECT h.HolidayDate, h.HolidayType, h.HolidayName, h.Recurring,
     ssh.SiteSpecialHolidayID FROM holiday h
     LEFT JOIN site_special_holiday ssh ON ssh.HolidayID = h.HolidayID AND ssh.SiteID = ?
     WHERE h.Status = 'Active' AND (h.HolidayType = 'Legal' OR ssh.SiteSpecialHolidayID IS NOT NULL)`, [source.SiteID])
   const excluded = new Map<string, string>()
   for (const day of periodDates(source.PeriodStart, source.PeriodEnd)) {
-    if (new Date(`${day}T00:00:00Z`).getUTCDay() === 0) excluded.set(day, 'Sunday requires rest-day treatment; correct it through a reviewed payroll calculation.')
+    if (sundayWdoOtEnabled && new Date(`${day}T00:00:00Z`).getUTCDay() === 0) excluded.set(day, 'Sunday WDO OT is enabled for this site, so this day requires rest-day rates.')
     const holiday = holidays.find(item => {
       const holidayDate = dateOnly(item.HolidayDate)
       return holidayDate === day || (Number(item.Recurring) === 1 && holidayDate.slice(5) === day.slice(5))

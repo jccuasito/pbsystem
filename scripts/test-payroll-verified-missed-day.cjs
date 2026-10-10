@@ -30,9 +30,13 @@ async function main() {
       INNER JOIN employee_deployment deployment ON deployment.DeploymentID = roster.DeploymentID
       INNER JOIN site_rate rate ON rate.SiteRateID = deployment.SiteRateID
       INNER JOIN payroll_rate payroll ON payroll.PayrollRateID = rate.PayrollRateID
+      LEFT JOIN site_policy policy ON policy.SiteID = target.SiteID AND policy.Status = 'Active'
       WHERE target.Status <> 'Locked' AND target.PeriodStart > '2000-01-15'
+        AND COALESCE(policy.SundayWDOOTEnabled, 0) = 0
+        AND NOT EXISTS (SELECT 1 FROM payroll_processing_posting posting
+          WHERE posting.BatchID = target.BatchID AND posting.Status = 'Active')
       ORDER BY target.BatchID DESC LIMIT 1`)
-    assert.ok(user && candidate, 'An active reviewer and a target DTR employee with payroll rates are required.')
+    assert.ok(user && candidate, 'An active reviewer and a target DTR employee at a site with Sunday WDO OT off are required.')
 
     const [source] = await connection.query(`INSERT INTO attendance_dtr
       (AgencyID, ClientID, SiteID, PeriodStart, PeriodEnd, Status, CreatedBy)
@@ -48,8 +52,9 @@ async function main() {
     const headers = { cookie: `pbs_session=${token}`, 'content-type': 'application/json' }
     const list = await request(`/api/payroll/adjustments?targetBatchId=${candidate.TargetBatchID}&sourceBatchId=${sourceBatchId}&employeeId=${candidate.EmployeeID}`, { headers })
     assert.equal(list.response.status, 200, JSON.stringify(list.body))
-    const missedDate = list.body.missedDates.find(day => !day.PayableHours && !day.ExistingAdjustmentID && !day.UnavailableReason)
-    assert.ok(missedDate, 'The finalized source DTR should contain an eligible missed work date.')
+    const missedDate = list.body.missedDates.find(day => ['2000-01-02', '2000-01-09'].includes(day.SourceDate) &&
+      !day.PayableHours && !day.ExistingAdjustmentID && !day.UnavailableReason)
+    assert.ok(missedDate, 'A non-holiday Sunday should be eligible when Sunday WDO OT is off.')
 
     const payload = {
       EmployeeID: candidate.EmployeeID, SourceBatchID: sourceBatchId, TargetBatchID: candidate.TargetBatchID,
@@ -82,7 +87,7 @@ async function main() {
     assert.equal(recreated.response.status, 200, JSON.stringify(recreated.body))
     adjustmentIds.push(Number(recreated.body.id))
     assert.equal(recreated.body.status, 'Ready for Payroll')
-    console.log('Verified missed day workflow passed: direct hours, optional shift, no separate approval, duplicate claim, and cancellation release.')
+    console.log('Verified missed day workflow passed: ordinary-rate Sunday, direct hours, optional shift, no separate approval, duplicate claim, and cancellation release.')
   } finally {
     for (const id of adjustmentIds) {
       await connection.query('DELETE FROM payroll_adjustment_line WHERE AdjustmentID = ?', [id])
