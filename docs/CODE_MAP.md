@@ -159,6 +159,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/organization/region/index.vue`
   - `app/pages/organization/site/index.vue`
   - `app/pages/payroll/adjustments/index.vue`
+  - `app/pages/payroll/payslip/index.vue`
   - `app/pages/payroll/processing/index.vue`
   - `app/pages/rates/billing/index.vue`
   - `app/pages/rates/payroll/index.vue`
@@ -259,6 +260,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/payroll/adjustments` → `server/api/payroll/adjustments/index.get.ts`
   - `POST /api/payroll/adjustments` → `server/api/payroll/adjustments/index.post.ts`
   - `PUT /api/payroll/adjustments` → `server/api/payroll/adjustments/index.put.ts`
+  - `GET /api/payroll/payslips` → `server/api/payroll/payslips.get.ts`
   - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
   - `POST /api/payroll/processing/[param]/deductions` → `server/api/payroll/processing/[id]/deductions.post.ts`
@@ -290,6 +292,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/payrollDeductionOverrideCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
+  - `server/utils/payslipCrud.ts`
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersionCrud.ts`
@@ -667,6 +670,23 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - None detected.
 - Related backend utilities:
   - None detected.
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/payroll/payslip`
+
+- Page: `app/pages/payroll/payslip/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - None detected.
+- API calls and handlers:
+  - `GET /api/payroll/payslips` → `server/api/payroll/payslips.get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/payslipCrud.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
