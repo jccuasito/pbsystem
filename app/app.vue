@@ -18,6 +18,7 @@ useHead({
 <template>
   <div>
     <NuxtRouteAnnouncer />
+    <NuxtLoadingIndicator color="#2862e9" :height="4" :throttle="0" />
     <NuxtPage />
   </div>
 </template>

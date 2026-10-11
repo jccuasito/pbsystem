@@ -38,6 +38,7 @@ const currentUser = ref<any>(null)
 const moduleAccess = ref<Record<string, { canView: boolean; canEdit: boolean }> | null>(null)
 const showLogoutAlert = ref(false)
 const loggingOut = ref(false)
+const isBooting = ref(true)
 let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
@@ -393,6 +394,8 @@ onMounted(async () => {
 
   if (moduleAccess.value?.dashboard?.canView) await refreshDashboardData()
 
+  isBooting.value = false
+
 })
 
 onBeforeUnmount(() => {
@@ -501,6 +504,7 @@ onBeforeUnmount(() => {
 
       <div class="dash-main">
         <header class="dash-topbar">
+          <div v-if="isBooting" class="dash-boot-progress" role="progressbar" aria-label="Loading dashboard"></div>
           <div class="dash-topbar__left">
             <button
               type="button"

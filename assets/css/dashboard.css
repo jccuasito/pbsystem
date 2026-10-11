@@ -257,6 +257,30 @@
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
+.dash-boot-progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(40, 98, 233, 0.12);
+}
+.dash-boot-progress::after {
+  content: '';
+  display: block;
+  width: 35%;
+  height: 100%;
+  background: #2862e9;
+  animation: dash-loading-slide 1.2s ease-in-out infinite;
+}
+@keyframes dash-loading-slide {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(290%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-boot-progress::after { animation-duration: 3s; }
+}
 .dash-topbar__left { display: flex; align-items: center; gap: 12px; }
 .dash-topbar__right { display: flex; align-items: center; gap: 10px; }
 
