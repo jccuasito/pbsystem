@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatEmployeeId } from '~/utils/employee'
-import { payrollHourComponents, payrollTimeDeductions } from '~~/shared/utils/payrollPreview'
+import { combinedLateUndertimeLines, payrollHourComponents, payrollTimeDeductions } from '~~/shared/utils/payrollPreview'
 
 const props = defineProps<{ site: any; canReview: boolean; busy: boolean; error: string }>()
 const emit = defineEmits<{
@@ -24,11 +24,11 @@ const previouslyOverflow = ref('')
 const money = (value: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value || 0)
 const moment = (value: string) => value ? new Date(value.replace(' ', 'T')).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : ''
 const day = (value: string) => value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : ''
-const lines = computed(() => [...payrollHourComponents, ['BTRHours', 'RegularRate', 'BTR (regular rate)'] as const, ...payrollTimeDeductions].map(([code, , label]) => ({
+const lines = computed(() => combinedLateUndertimeLines([...payrollHourComponents, ['BTRHours', 'RegularRate', 'BTR (regular rate)'] as const, ...payrollTimeDeductions].map(([code, , label]) => ({
   code, label, direction: ['LateHours', 'UndertimeHours', 'BreakHours'].includes(code) ? 'Deduction' : 'Earning',
   hours: props.site.employees.reduce((sum: number, employee: any) => sum + Number(employee.components.find((line: any) => line.code === code)?.hours || 0), 0),
   amount: props.site.employees.reduce((sum: number, employee: any) => sum + Number(employee.components.find((line: any) => line.code === code)?.amount || 0), 0),
-})).filter(line => line.hours))
+})).filter(line => line.hours)))
 const accountDeductions = computed(() => props.site.employees.reduce((sum: number, employee: any) => sum + Number(employee.accountDeductions || 0), 0))
 const adjustmentLines = computed(() => props.site.employees.flatMap((employee: any) => (employee.adjustments || []).map((line: any) => ({ ...line, employeeName: employee.EmployeeName }))))
 const selectedEmployee = computed(() => props.site.employees.find((employee: any) => Number(employee.EmployeeID) === selectedEmployeeId.value) || null)
@@ -41,7 +41,7 @@ function deductionDisplayName(item: any) {
   return `${provider} · ${name}`
 }
 const earningLines = computed(() => selectedEmployee.value?.components.filter((line: any) => line.direction === 'Earning') || [])
-const timeDeductionLines = computed(() => selectedEmployee.value?.components.filter((line: any) => line.direction === 'Deduction') || [])
+const timeDeductionLines = computed(() => combinedLateUndertimeLines(selectedEmployee.value?.components.filter((line: any) => line.direction === 'Deduction') || []))
 const employeeAdjustments = computed(() => selectedEmployee.value?.adjustments || [])
 const historyCycles = computed(() => {
   const cycles: { events: any[]; revision: number; status: string; date: string }[] = []

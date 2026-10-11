@@ -17,6 +17,8 @@ Run `node --test scripts/test-payroll-processing.cjs` for component arithmetic, 
 
 ## Employee payslips
 
+The payslip presentation combines posted `Late` and `Undertime` payroll-detail rows into one `Late / Undertime` line, summing their actual hours and amounts. Payroll Processing uses the same combined display for review and employee preview. Source payroll-detail rows, configured rates, and posted totals are unchanged.
+
 | Method | Path | Tables used | Caller | Request / response |
 | --- | --- | --- | --- | --- |
 | GET | `/api/payroll/payslips` | `employee`, `agency_position`, `agency`, `position`, `payroll`, `payroll_detail`, `payroll_deduction`, `deduction_type`, `deduction_loan_classification`, `employee_account_transaction`, `payroll_processing_posting`, `attendance_dtr`, `site`, `client`, `employee_deployment` | `app/pages/payroll/payslip/index.vue` (also loaded in dashboard Payslip workspace) | Session required; read-only. Without `employeeId`, accepts `search`, `agencyId`, and `page`; returns employees (25 per page), agencies, each employee's latest Approved/Released cutoff and distinct cutoff count. With `employeeId`, returns `{ employee, cutoffs }`: Approved/Released payrolls grouped by employee and `(StartDate, EndDate)`, so multiple reliever/site payroll records appear in one cutoff. Each cutoff includes source site records, summed posted gross/deduction/net, aggregated earning lines, prior-period adjustment totals by pay type, government and other deduction lines with catalog classification, and status. Loan labels use posted account transactions; cancelled payroll is excluded. This view does not release payslips or change payroll. |

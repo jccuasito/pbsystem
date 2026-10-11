@@ -1,6 +1,17 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction } = require('../shared/utils/payrollPreview.ts')
+const { btrRegularAllocation, combinedLateUndertimeLines, componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction } = require('../shared/utils/payrollPreview.ts')
+
+test('review display combines late and undertime without changing either deduction', () => {
+  const lines = combinedLateUndertimeLines([
+    { code: 'LateHours', label: 'Late', direction: 'Deduction', hours: 0.1, amount: 0.14 },
+    { code: 'UndertimeHours', label: 'Undertime', direction: 'Deduction', hours: 1, amount: 86.88 },
+    { code: 'BreakHours', label: 'Break', direction: 'Deduction', hours: 0.5, amount: 43.44 },
+  ])
+  assert.deepEqual(lines.map(line => [line.label, line.hours, line.amount]), [
+    ['Late / Undertime', 1.1, 87.02], ['Break', 0.5, 43.44],
+  ])
+})
 
 test('daily components use their configured amount and keep cent precision', () => {
   const days = [

@@ -57,8 +57,10 @@ export function payslipGroups(payrolls: any[], details: any[], deductions: any[]
       addLine(group.lines, amount >= 0 ? 'adjustment' : 'other',
         `Adjustment · ${match?.[1] || description}`, amount, Number(detail.Quantity || 0))
     } else {
-      addLine(group.lines, amount >= 0 ? 'earnings' : 'other', description, amount,
-        amount >= 0 ? Number(detail.Quantity || 0) : 0)
+      const isLateUndertime = description === 'Late' || description === 'Undertime'
+      addLine(group.lines, amount >= 0 ? 'earnings' : 'other',
+        isLateUndertime ? 'Late / Undertime' : description, amount,
+        amount >= 0 || isLateUndertime ? Number(detail.Quantity || 0) : 0)
     }
   }
   for (const deduction of deductions) {

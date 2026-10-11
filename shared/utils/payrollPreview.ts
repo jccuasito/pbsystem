@@ -22,6 +22,19 @@ export const payrollTimeDeductions = [
   ['BreakHours', 'BreakDeduction', 'Break'],
 ] as const
 
+// Presentation only: keep the separately calculated late and undertime amounts,
+// but show their combined hours and deduction on payroll review screens.
+export function combinedLateUndertimeLines<T extends { code: string; label: string; hours: number; amount: number }>(lines: T[]) {
+  const firstIndex = lines.findIndex(line => line.code === 'LateHours' || line.code === 'UndertimeHours')
+  if (firstIndex < 0) return lines
+  const combined = lines.filter(line => line.code === 'LateHours' || line.code === 'UndertimeHours')
+  const totalHours = combined.reduce((sum, line) => sum + Math.round(Number(line.hours || 0) * 100), 0) / 100
+  const totalAmount = combined.reduce((sum, line) => sum + Math.round(Number(line.amount || 0) * 100), 0) / 100
+  const result = lines.filter(line => line.code !== 'LateHours' && line.code !== 'UndertimeHours')
+  result.splice(firstIndex, 0, { ...lines[firstIndex], code: 'LateUndertimeHours', label: 'Late / Undertime', hours: totalHours, amount: totalAmount })
+  return result
+}
+
 export function moneyCents(value: unknown) {
   return Math.round(Number(value || 0) * 100)
 }
