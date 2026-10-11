@@ -6,10 +6,13 @@ export default defineEventHandler(async (event) => {
   const session = requireSession(event)
   void session.sub
   await requireAdmin(event)
-  const [rows] = await pool.execute<any[]>('SELECT UserID, FirstName, LastName, Email, UserType, Status, CreatedAt FROM `user` ORDER BY LastName, FirstName, UserID')
-  return { users: await Promise.all(rows.map(async row => ({
+  const [[rows], [departmentRows]] = await Promise.all([
+    pool.execute<any[]>('SELECT UserID, FirstName, LastName, Email, DepartmentID, UserType, Status, CreatedAt FROM `user` ORDER BY LastName, FirstName, UserID'),
+    pool.execute<any[]>('SELECT DepartmentID, DepartmentName, Status FROM department ORDER BY DepartmentName, DepartmentID')
+  ])
+  return { departments: departmentRows.map(row => ({ id: row.DepartmentID, name: row.DepartmentName, status: row.Status })), users: await Promise.all(rows.map(async row => ({
     id: row.UserID, name: `${row.FirstName} ${row.LastName}`, email: row.Email,
-    role: row.UserType, status: row.Status, createdAt: row.CreatedAt,
+    departmentId: row.DepartmentID, role: row.UserType, status: row.Status, createdAt: row.CreatedAt,
     access: await accessForUser(row.UserID, row.UserType)
   }))) }
 })

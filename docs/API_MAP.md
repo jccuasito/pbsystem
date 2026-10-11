@@ -7,7 +7,7 @@ Apply `node --env-file=.env scripts/apply-settings-access.mjs` to create `user_m
 | Method | Path | Tables used | Caller | Request / response |
 | --- | --- | --- | --- | --- |
 | GET | `/api/settings/access` | `user`, `user_module_permission` | `app/pages/settings/index.vue`, `app/pages/dashboard/index.vue` | Signed-in user's current role, module catalog, and effective `canView`/`canEdit` map. |
-| GET | `/api/settings/users` | `user`, `user_module_permission` | `app/pages/settings/index.vue` | Admin only. Returns user ID, name, email, role, status, and effective module access. |
+| GET | `/api/settings/users` | `user`, `department`, `user_module_permission` | `app/pages/settings/index.vue` | Admin only. Returns all departments (including empty or inactive ones) as `{ id, name, status }` plus each user's ID, name, email, `departmentId`, role, account status, and effective module access for the department-grouped Team access view. |
 | PUT | `/api/settings/users` | `user`, `user_module_permission` | `app/pages/settings/index.vue` | Admin only. Body `{ userId, role, status, access: { [moduleKey]: { canView, canEdit } } }`. Validates every module, updates role/status and permissions in one transaction, blocks self-demotion/deactivation; returns `{ success: true }`. |
 | GET | `/api/settings/backups` | none; filesystem backup metadata | `app/pages/settings/index.vue` | Admin only. Returns completed SQL backups, automatic-backup flag, and time zone. |
 | POST | `/api/settings/backups` | all database tables read by dump client | `app/pages/settings/index.vue` | Admin only. Creates a manual `mysqldump` SQL backup and SHA-256 metadata; returns `{ backup }`. |
