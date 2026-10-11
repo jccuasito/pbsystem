@@ -193,6 +193,8 @@
 .payroll-modal-backdrop .line-table th { background: #f6f8fc; color: #526b8b; font-size: 12px; text-transform: uppercase; }
 .payroll-modal-backdrop .line-table th:last-child,
 .payroll-modal-backdrop .line-table td:last-child { text-align: right; }
+.payroll-modal-backdrop .line-table th:nth-child(2),
+.payroll-modal-backdrop .line-table td:nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; }
 .payroll-modal-backdrop .line-table tr:last-child td { border: 0; }
 .payroll-modal-backdrop .total-line { font-weight: 800; }
 .payroll-modal-backdrop .empty { color: #70819a; text-align: center !important; }
@@ -222,11 +224,15 @@
 .payroll-modal-backdrop .payslip-section h4 { margin: 0 0 13px; color: #1e4e99; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
 .payroll-modal-backdrop .payslip-table-head,
 .payroll-modal-backdrop .payslip-line { display: grid; grid-template-columns: minmax(0, 1fr) 65px 115px; gap: 8px; align-items: baseline; }
+.payroll-modal-backdrop .payslip-table-head:not(.payslip-deduction-head),
+.payroll-modal-backdrop .payslip-line:not(.payslip-deduction-line) { column-gap: 20px; }
 .payroll-modal-backdrop .payslip-table-head { padding: 0 0 8px; border-bottom: 1px solid #d9e4f1; color: #7286a1; font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .payroll-modal-backdrop .payslip-line { padding: 9px 0; border-bottom: 1px solid #eef2f7; color: #30496d; font-size: 12px; }
 .payroll-modal-backdrop .payslip-table-head span:nth-child(n+2),
 .payroll-modal-backdrop .payslip-line > span:nth-child(2),
 .payroll-modal-backdrop .payslip-line > strong { text-align: right; }
+.payroll-modal-backdrop .payslip-table-head span:nth-child(2),
+.payroll-modal-backdrop .payslip-line:not(.payslip-deduction-line) > span:nth-child(2) { font-variant-numeric: tabular-nums; }
 .payroll-modal-backdrop .payslip-line strong { color: #193a69; font-size: 12px; }
 .payroll-modal-backdrop .payslip-line small { display: block; margin-top: 3px; color: #8293ab; font-size: 11px; }
 .payroll-modal-backdrop .payslip-deduction-head,
