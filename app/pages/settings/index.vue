@@ -17,6 +17,9 @@ const draft = ref<User | null>(null)
 const userSearch = ref('')
 const restoreCandidate = ref<Backup | null>(null)
 const restoreAcknowledged = ref(false)
+const restorePhrase = ref('')
+const showBackups = ref(false)
+const backupLimit = ref(3)
 const uploadFile = ref<File | null>(null)
 const uploading = ref(false)
 const busy = ref(false)
@@ -27,6 +30,7 @@ const success = ref('')
 const isAdmin = computed(() => access.value?.isAdmin === true)
 const filteredUsers = computed(() => users.value.filter(user => `${user.name} ${user.email}`.toLowerCase().includes(userSearch.value.toLowerCase().trim())))
 const latestBackup = computed(() => backups.value[0] || null)
+const visibleBackups = computed(() => backups.value.slice(0, backupLimit.value))
 
 function errorMessage(cause: any) {
   return cause?.data?.statusMessage || cause?.statusMessage || cause?.message || 'The request could not be completed. Please try again.'
@@ -77,20 +81,22 @@ async function createBackup() {
   try {
     await $fetch('/api/settings/backups', { method: 'POST' })
     backups.value = (await $fetch<any>('/api/settings/backups')).backups
-    success.value = 'Backup created. You can download it from the list below.'
+    success.value = 'Backup created. You can download the latest copy above.'
   } catch (cause) { error.value = errorMessage(cause) }
   finally { busy.value = false }
 }
 
 function downloadBackup(name: string) { window.location.href = `/api/settings/backups/download?name=${encodeURIComponent(name)}` }
-function askRestore(backup: Backup) { restoreCandidate.value = backup; restoreAcknowledged.value = false; error.value = ''; success.value = '' }
+function toggleBackups() { showBackups.value = !showBackups.value; backupLimit.value = 3 }
+function closeRestore() { restoreCandidate.value = null; restoreAcknowledged.value = false; restorePhrase.value = '' }
+function askRestore(backup: Backup) { restoreCandidate.value = backup; restoreAcknowledged.value = false; restorePhrase.value = ''; error.value = ''; success.value = '' }
 
 async function restoreBackup() {
-  if (!restoreCandidate.value || !restoreAcknowledged.value) return
+  if (!restoreCandidate.value || !restoreAcknowledged.value || restorePhrase.value !== 'RESTORE') return
   busy.value = true; error.value = ''; success.value = ''
   try {
-    await $fetch('/api/settings/backups/restore', { method: 'POST', body: { name: restoreCandidate.value.name, confirmation: 'RESTORE' } })
-    restoreCandidate.value = null
+    await $fetch('/api/settings/backups/restore', { method: 'POST', body: { name: restoreCandidate.value.name, confirmation: restorePhrase.value } })
+    closeRestore()
     await loadSettings()
     success.value = 'Backup restored. A safety copy was created first. Sign in again if your account changed.'
   } catch (cause) { error.value = errorMessage(cause) }
@@ -107,7 +113,7 @@ async function importBackup() {
     backups.value = (await $fetch<any>('/api/settings/backups')).backups
     uploadFile.value = null
     uploading.value = false
-    success.value = 'Backup added to the list. Select Restore when you need to recover it.'
+    success.value = 'Backup added. Open saved backups if you need to download or restore it.'
   } catch (cause) { error.value = errorMessage(cause) }
   finally { busy.value = false }
 }
@@ -173,19 +179,24 @@ onMounted(loadSettings)
           <article class="panel latest-card"><div class="panel-kicker">LATEST SAVED COPY</div><h2>{{ latestBackup ? formatDate(latestBackup.createdAt) : 'No backup yet' }}</h2><p class="subtle">{{ latestBackup ? `${backupLabel(latestBackup.kind)} · ${formatSize(latestBackup.size)}` : 'Create your first backup to protect your records.' }}</p><button v-if="latestBackup" class="button secondary" type="button" @click="downloadBackup(latestBackup.name)">Download latest</button></article>
         </div>
         <article class="panel library-panel">
-          <div class="library-head"><div><div class="panel-kicker">SAVED COPIES</div><h2>Backup history</h2><p class="subtle">Download a copy to keep it somewhere safe. Restore only when you need to recover older data.</p></div><button class="button primary" type="button" :disabled="busy" @click="createBackup">{{ busy ? 'Working...' : 'Back up now' }}</button></div>
+          <div class="library-head"><div><div class="panel-kicker">SAVED COPIES</div><h2>Backup history</h2><p class="subtle">Older backups stay hidden until you need them. Restore is available only after opening this list.</p></div><button class="button primary" type="button" :disabled="busy" @click="createBackup">{{ busy ? 'Working...' : 'Back up now' }}</button></div>
           <div v-if="!backups.length" class="empty">No saved backups yet.</div>
-          <div v-else class="backup-table-wrap"><table><thead><tr><th>Date saved</th><th>Created by</th><th>Size</th><th>Actions</th></tr></thead><tbody><tr v-for="backup in backups" :key="backup.name"><td><strong>{{ formatDate(backup.createdAt) }}</strong></td><td>{{ backupLabel(backup.kind) }}</td><td>{{ formatSize(backup.size) }}</td><td><div class="row-actions"><button class="button secondary" type="button" @click="downloadBackup(backup.name)">Download</button><button class="button text-button" type="button" @click="askRestore(backup)">Restore</button></div></td></tr></tbody></table></div>
+          <template v-else>
+            <button class="button secondary history-toggle" type="button" :aria-expanded="showBackups" @click="toggleBackups">{{ showBackups ? 'Hide saved backups' : `View saved backups (${backups.length})` }}</button>
+            <div v-if="showBackups" class="backup-table-wrap"><table><thead><tr><th>Date saved</th><th>Backup type</th><th>Size</th><th>Actions</th></tr></thead><tbody><tr v-for="backup in visibleBackups" :key="backup.name"><td><strong>{{ formatDate(backup.createdAt) }}</strong></td><td>{{ backupLabel(backup.kind) }}</td><td>{{ formatSize(backup.size) }}</td><td><div class="row-actions"><button class="button secondary" type="button" @click="downloadBackup(backup.name)">Download</button><button class="button text-button" type="button" @click="askRestore(backup)">Restore</button></div></td></tr></tbody></table></div>
+            <button v-if="showBackups && backupLimit < backups.length" class="button secondary more-backups" type="button" @click="backupLimit += 3">Show 3 more</button>
+          </template>
           <button class="upload-link" type="button" :aria-expanded="uploading" @click="uploading = !uploading">{{ uploading ? 'Hide upload' : 'Upload a downloaded backup' }}</button>
           <div v-if="uploading" class="upload-area"><p>Have a backup file from this system? Add it here so it appears in your saved copies.</p><label>Choose saved backup file<input type="file" accept=".sql" @change="uploadFile = ($event.target as HTMLInputElement).files?.[0] || null" /></label><button class="button secondary" type="button" :disabled="busy || !uploadFile" @click="importBackup">Add backup</button></div>
         </article>
       </div>
     </template>
 
-    <div v-if="restoreCandidate" class="modal-backdrop" role="presentation" @click.self="!busy && (restoreCandidate = null)"><section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="restore-title"><div class="panel-kicker">RESTORE BACKUP</div><h2 id="restore-title">Go back to this saved copy?</h2><p>This will replace the current records with the data saved on <strong>{{ formatDate(restoreCandidate.createdAt) }}</strong>. Changes made after that backup may be lost. The system will save a safety copy first.</p><label class="confirm-check"><input v-model="restoreAcknowledged" type="checkbox" /><span>I understand that newer changes may be replaced.</span></label><div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="restoreCandidate = null">Cancel</button><button class="button danger" type="button" :disabled="busy || !restoreAcknowledged" @click="restoreBackup">{{ busy ? 'Restoring...' : 'Restore this backup' }}</button></div></section></div>
+    <div v-if="restoreCandidate" class="modal-backdrop" role="presentation" @click.self="!busy && closeRestore()"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="restore-title" aria-describedby="restore-warning"><div class="panel-kicker">RESTORE BACKUP</div><h2 id="restore-title">Restore this saved copy?</h2><p id="restore-warning" class="restore-warning">This will replace the current database with the copy saved on <strong>{{ formatDate(restoreCandidate.createdAt) }}</strong>. Changes made after that time may be lost. A safety backup will be created first.</p><label class="confirm-check"><input v-model="restoreAcknowledged" type="checkbox" /><span>I understand that newer changes may be replaced.</span></label><label class="restore-phrase">Type RESTORE to confirm<input v-model.trim="restorePhrase" type="text" autocomplete="off" spellcheck="false" placeholder="RESTORE" /></label><div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeRestore">Cancel</button><button class="button danger" type="button" :disabled="busy || !restoreAcknowledged || restorePhrase !== 'RESTORE'" @click="restoreBackup">{{ busy ? 'Restoring...' : 'Restore this backup' }}</button></div></section></div>
   </section>
 </template>
 
 <style scoped>
 .settings-page{max-width:1540px;margin:auto;padding:34px clamp(18px,3vw,42px) 70px;color:var(--ink);font-family:'Plus Jakarta Sans',Inter,system-ui,sans-serif}.page-head{margin-bottom:28px}.eyebrow,.panel-kicker{color:#2862ce;font-size:.77rem;font-weight:800;letter-spacing:.11em}.page-head h1{font-size:2.1rem;letter-spacing:-.035em;margin:5px 0}.page-head p,.subtle{color:var(--muted);line-height:1.55}.page-head p{margin:0;font-size:1rem}.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:24px}.tabs button{border:0;border-bottom:3px solid transparent;background:transparent;color:var(--muted);padding:14px 18px;font:inherit;font-weight:750;cursor:pointer}.tabs button.active{color:#245fe5;border-color:#245fe5}.two-column,.backup-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:27px;min-width:0;box-shadow:0 8px 26px rgba(21,48,96,.035)}.panel h2{font-size:1.3rem;margin:8px 0 5px}.panel h3{font-size:1.05rem;margin:0 0 4px}.panel p{margin:0}.identity{display:flex;align-items:center;gap:16px;margin:24px 0}.identity h2{margin:0 0 4px}.identity p{color:var(--muted);overflow-wrap:anywhere}.avatar{width:62px;height:62px;border-radius:17px;background:#e9f0ff;color:#2256bb;display:grid;place-items:center;font-size:1.2rem;font-weight:800;flex:none}.facts{margin:0 0 22px}.facts div,.access-list div{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line)}.facts dt{color:var(--muted)}.facts dd{margin:0;font-weight:700}.access-list{margin-top:18px}.access-tag{color:#196c52;font-weight:700;font-size:.88rem;white-space:nowrap}.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;border-radius:10px;padding:0 17px;font:inherit;font-weight:750;text-decoration:none;cursor:pointer;white-space:nowrap}.primary{border:1px solid #2862e9;background:#2862e9;color:#fff}.secondary{border:1px solid #cbdaf5;background:var(--surface);color:#194788}.danger{border:1px solid #c73939;background:#c73939;color:#fff}.text-button{border:0;background:transparent;color:#235bc9}.button:disabled{opacity:.55;cursor:not-allowed}.notice{padding:13px 16px;border-radius:10px;margin-bottom:18px}.notice.error{background:#fff0f0;color:#a42828}.notice.success{background:#e9f8ee;color:#157348}.empty{padding:30px;text-align:center;color:var(--muted)}.team-layout{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(480px,1.2fr);gap:20px;align-items:start}.search,.form-pair select,.upload-area input{width:100%;min-width:0;min-height:44px;border:1px solid #cbdaf5;border-radius:10px;background:var(--surface);color:var(--ink);padding:0 12px;font:inherit}.search{margin:18px 0 12px}.people-list{display:grid;gap:8px;max-height:680px;overflow:auto}.people-list button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:13px;border:1px solid var(--line);border-radius:11px;background:var(--surface);color:var(--ink);cursor:pointer}.people-list button.selected{border-color:#2862e9;background:#eef4ff}.people-list small{display:block;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}.mini-status{color:#147a50;background:#e5f8ed;padding:4px 9px;border-radius:999px;font-size:.75rem;font-weight:750}.mini-status.inactive{color:#9a4d12;background:#fff3dd}.form-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:22px 0}.form-pair label,.upload-area label{display:grid;gap:7px;font-size:.88rem;font-weight:700}.info-note{background:#edf3ff;padding:12px;border-radius:10px;color:#315b9b}.permissions-title{margin:25px 0 8px}.permissions-title p{color:var(--muted);font-size:.9rem}.permission-head,.permission-row{display:grid;grid-template-columns:minmax(0,1fr) 86px 86px;align-items:center;gap:8px;padding:11px 6px;border-bottom:1px solid var(--line)}.permission-head{color:var(--muted);font-size:.75rem;text-transform:uppercase}.permission-head strong:not(:first-child),.permission-row label{text-align:center}.permission-row input{width:18px;height:18px;accent-color:#2862e9}.panel-footer{display:flex;justify-content:flex-end;margin-top:20px}.select-person{display:grid;place-content:center;min-height:290px;text-align:center}.select-person p{color:var(--muted)}.backup-layout{display:grid;gap:20px}.schedule-card,.latest-card{min-height:220px}.schedule-status{display:flex;align-items:center;gap:9px;margin-top:22px;color:#147a50;font-weight:750}.dot{width:9px;height:9px;background:#1bb36e;border-radius:50%}.dot.off{background:#dc7b3e}.latest-card .button{margin-top:22px}.library-head{display:flex;justify-content:space-between;align-items:start;gap:20px;margin-bottom:22px}.library-head .subtle{max-width:650px}.backup-table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;text-align:left}th{background:#f1f5fc;color:#526f9f;text-transform:uppercase;font-size:.75rem}td,th{padding:14px;border-bottom:1px solid var(--line);white-space:nowrap}td strong{font-weight:700}.row-actions{display:flex;gap:6px}.upload-link{margin-top:24px;border:0;background:transparent;color:#245fe5;font:inherit;font-weight:750;cursor:pointer;padding:0}.upload-area{margin-top:14px;padding:18px;border:1px dashed #b9cdef;border-radius:12px;background:#f7faff;display:grid;gap:14px;max-width:680px}.upload-area p{color:var(--muted)}.upload-area input{padding:9px}.upload-area .button{justify-self:start}.modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(10,25,55,.54);display:grid;place-items:center;padding:18px}.confirm-dialog{width:min(100%,510px);background:var(--surface);border-radius:18px;padding:30px;box-shadow:0 28px 70px rgba(8,20,42,.24)}.confirm-dialog h2{margin:9px 0 13px}.confirm-dialog p{color:var(--muted);line-height:1.55}.confirm-check{display:flex;align-items:start;gap:11px;margin:23px 0;font-weight:700}.confirm-check input{width:19px;height:19px;accent-color:#2862e9}.dialog-actions{display:flex;justify-content:flex-end;gap:9px}.sr-only{position:absolute;width:1px;height:1px;clip:rect(0,0,0,0);overflow:hidden}@media(max-width:900px){.two-column,.backup-overview,.team-layout{grid-template-columns:1fr}}@media(max-width:560px){.settings-page{padding:24px 16px 55px}.page-head h1{font-size:1.75rem}.tabs button{padding:12px 10px;font-size:.88rem}.panel{padding:19px}.form-pair{grid-template-columns:1fr}.library-head{display:grid}.dialog-actions{flex-wrap:wrap}}
+.history-toggle{margin-bottom:18px}.more-backups{margin-top:16px}.restore-warning{margin:16px 0 0!important;padding:14px 16px;border:1px solid #f1c7a4;border-radius:10px;background:#fff7ef;color:#7f3f1d!important}.restore-phrase{display:grid;gap:8px;margin:0 0 24px;font-size:.88rem;font-weight:750}.restore-phrase input{min-height:45px;width:100%;border:1px solid #cbdaf5;border-radius:10px;background:var(--surface);color:var(--ink);padding:0 12px;font:inherit}
 </style>
