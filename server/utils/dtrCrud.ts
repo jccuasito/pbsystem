@@ -691,12 +691,14 @@ export async function listDtrRecords(event: any) {
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id)
-    await syncPermanentSiteEmployees(connection, batch, session.sub)
-    await attachPendingEmployeeStatuses(connection, batch, session.sub)
-    await syncBatchHolidays(connection, batch, session.sub)
-    await syncAutomaticAttendanceStatuses(connection, batch)
+    if (event.context.moduleCanEdit !== false) {
+      await syncPermanentSiteEmployees(connection, batch, session.sub)
+      await attachPendingEmployeeStatuses(connection, batch, session.sub)
+      await syncBatchHolidays(connection, batch, session.sub)
+      await syncAutomaticAttendanceStatuses(connection, batch)
+    }
     const policy = await sitePolicyForBatch(connection, batch)
-    if (batch.Status === 'Draft') {
+    if (batch.Status === 'Draft' && event.context.moduleCanEdit !== false) {
       const [enrollments] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? ORDER BY EmployeeID FOR UPDATE', [id])
       for (const enrollment of enrollments) await syncAutoWdo(connection, batch, Number(enrollment.EmployeeID), policy)
     }

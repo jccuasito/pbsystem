@@ -37,6 +37,9 @@ export function clearSession(event: any) {
 export function requireSession(event: any) {
   const token = getCookie(event, SESSION_COOKIE)
   if (!token) throw createError({ statusCode: 401, statusMessage: 'Please sign in.' })
-  try { return verifyToken(token) as { sub: number; email: string; userType: string; historyId?: number } }
+  try {
+    const claims = verifyToken(token) as { sub: number; email: string; userType: string; historyId?: number }
+    return event.context?.activeUserType ? { ...claims, userType: event.context.activeUserType as string } : claims
+  }
   catch { throw createError({ statusCode: 401, statusMessage: 'Your session has expired. Please sign in again.' }) }
 }

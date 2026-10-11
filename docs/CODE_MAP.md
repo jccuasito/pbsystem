@@ -166,6 +166,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/rates/billing/index.vue`
   - `app/pages/rates/payroll/index.vue`
   - `app/pages/rates/site/index.vue`
+  - `app/pages/settings/index.vue`
   - `app/utils/employee.ts`
   - `components/alertmessage/logoutalert.vue`
   - `components/alertmessage/messages.ts`
@@ -278,11 +279,19 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/rates/site-rate` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/site-rate` → `server/api/rates/[resource].put.ts`
   - `POST /api/rates/versions` → `server/api/rates/versions.post.ts`
+  - `GET /api/settings/access` → `server/api/settings/access.get.ts`
+  - `GET /api/settings/backups` → `server/api/settings/backups/index.get.ts`
+  - `POST /api/settings/backups` → `server/api/settings/backups/index.post.ts`
+  - `POST /api/settings/backups/import` → `server/api/settings/backups/import.post.ts`
+  - `POST /api/settings/backups/restore` → `server/api/settings/backups/restore.post.ts`
+  - `GET /api/settings/users` → `server/api/settings/users.get.ts`
+  - `PUT /api/settings/users` → `server/api/settings/users.put.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
   - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
+  - `server/utils/databaseBackup.mjs`
   - `server/utils/deductionLoanCatalogCrud.ts`
   - `server/utils/dtrBtrCrud.ts`
   - `server/utils/dtrCrud.ts`
@@ -304,6 +313,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/rateVersionCrud.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`
+  - `server/utils/settingsAccess.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/issuanceCode.ts`
@@ -847,6 +857,31 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Static assets:
   - `public/images/logo.png`
 - Links to: `/forgotpass`, `/funnelpage`, `/loginscreen`
+
+### `/settings`
+
+- Page: `app/pages/settings/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - None detected.
+- API calls and handlers:
+  - `GET /api/auth/me` → `server/api/auth/me.get.ts`
+  - `GET /api/settings/access` → `server/api/settings/access.get.ts`
+  - `GET /api/settings/backups` → `server/api/settings/backups/index.get.ts`
+  - `POST /api/settings/backups` → `server/api/settings/backups/index.post.ts`
+  - `POST /api/settings/backups/import` → `server/api/settings/backups/import.post.ts`
+  - `POST /api/settings/backups/restore` → `server/api/settings/backups/restore.post.ts`
+  - `GET /api/settings/users` → `server/api/settings/users.get.ts`
+  - `PUT /api/settings/users` → `server/api/settings/users.put.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/databaseBackup.mjs`
+  - `server/utils/jwt.ts`
+  - `server/utils/settingsAccess.ts`
+- Static assets:
+  - None detected.
+- Links to: `/userprofile/viewprofile`
 
 ### `/signupscreen`
 

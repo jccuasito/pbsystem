@@ -25,6 +25,7 @@ import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 import PayrollProcessingPage from '../payroll/processing/index.vue'
 import PayslipPage from '../payroll/payslip/index.vue'
 import PayrollHistoryPage from '../payroll/history/index.vue'
+import SettingsPage from '../settings/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,6 +35,7 @@ const isPinned = ref(false)
 const isHovering = ref(false)
 const isMobileNavOpen = ref(false)
 const currentUser = ref<any>(null)
+const moduleAccess = ref<Record<string, { canView: boolean; canEdit: boolean }> | null>(null)
 const showLogoutAlert = ref(false)
 const loggingOut = ref(false)
 let documentOverflowBeforeDrawer = ''
@@ -214,6 +216,23 @@ const navGroups = [
   { label: 'Settings', to: '/settings', icon: 'settings', view: 'settings' }
 ]
 
+function viewModule(view: string) {
+  if (view === 'settings') return 'settings'
+  if (view === 'payslip') return 'payslips'
+  if (view.startsWith('employees-')) return 'employees'
+  if (view.startsWith('organization-')) return 'organization'
+  if (view.startsWith('attendance-')) return 'attendance'
+  if (view.startsWith('payroll-')) return 'payroll'
+  if (view.startsWith('billing-')) return 'billing'
+  if (view.startsWith('rates-')) return 'rates'
+  if (view.startsWith('deductions-loans-') || view === 'employee-loans-deductions') return 'deductions'
+  return view
+}
+const canViewWorkspace = (view: string) => view === 'settings' || moduleAccess.value?.[viewModule(view)]?.canView === true
+const visibleNavGroups = computed(() => navGroups.map((group: any) => group.children
+  ? { ...group, children: group.children.filter((child: any) => canViewWorkspace(child.view)) }
+  : group).filter((group: any) => group.children ? group.children.length : group.label === 'Dashboard' ? moduleAccess.value?.dashboard?.canView === true : canViewWorkspace(group.view)))
+
 const openGroups = ref(new Set())
 
 const isActive = (to) => route.path === to || route.path.startsWith(to + '/')
@@ -221,6 +240,7 @@ const isNavActive = (item: any) => activeWorkspaceView.value === item.view || (!
 const groupHasActiveChild = (group: any) => group.children?.some((child: any) => isNavActive(child))
 
 function openWorkspaceView(view: WorkspaceView, updateUrl = true) {
+  if (!canViewWorkspace(view)) return
   isMobileNavOpen.value = false
 
   // Keep the navigation in sync with the content: only the group that owns
@@ -261,9 +281,10 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'employee-loans-deductions': EmployeeLoanDeductionPage,
   'deductions-loans-contributions': AgencyContributionsPage,
   'deductions-loans-transactions': EmployeeAccountTransactionsPage,
-  'deductions-loans-catalog': DeductionLoanCatalogPage
+  'deductions-loans-catalog': DeductionLoanCatalogPage,
+  'settings': SettingsPage
 }
-const activePageComponent = computed(() => activeWorkspaceView.value ? workspaceComponents[activeWorkspaceView.value] : null)
+const activePageComponent = computed(() => activeWorkspaceView.value && canViewWorkspace(activeWorkspaceView.value) ? workspaceComponents[activeWorkspaceView.value] : null)
 
 watch(activeWorkspaceView, (view) => {
   if (view) openWorkspaceView(view, false)
@@ -340,13 +361,12 @@ onMounted(async () => {
   window.addEventListener('offline', updateOnlineStatus)
   window.addEventListener('keydown', handleDashboardKeydown)
 
-  // Fetch dashboard data in parallel with the existing session request.
-  const dashboardRefresh = refreshDashboardData()
-
   // 3. Subukan mag-fetch ng fresh session
   try {
     const res = await $fetch<any>('/api/auth/me')
     currentUser.value = res.user
+    const rights = await $fetch<any>('/api/settings/access')
+    moduleAccess.value = rights.access
     isUsingCachedData.value = false
     isOffline.value = false
     saveCache(CACHE_KEYS.user, res.user)
@@ -371,7 +391,7 @@ onMounted(async () => {
     }
   }
 
-  await dashboardRefresh
+  if (moduleAccess.value?.dashboard?.canView) await refreshDashboardData()
 
 })
 
@@ -417,7 +437,7 @@ onBeforeUnmount(() => {
         </div>
 
         <nav class="dash-nav">
-          <template v-for="group in navGroups" :key="group.label">
+          <template v-for="group in visibleNavGroups" :key="group.label">
             <button
               v-if="!group.children"
               type="button"
@@ -521,13 +541,19 @@ onBeforeUnmount(() => {
             <component v-if="activePageComponent" :key="activeWorkspaceView" :is="activePageComponent" class="dash-workspace-page" @navigate="openWorkspaceView" />
           </KeepAlive>
 
-          <section v-if="activeWorkspaceView && !activePageComponent" class="workspace-placeholder">
+          <section v-if="activeWorkspaceView && !moduleAccess && activeWorkspaceView !== 'settings'" class="workspace-placeholder">
+            <p>LOADING</p><h1>Checking access…</h1>
+          </section>
+          <section v-else-if="activeWorkspaceView && !canViewWorkspace(activeWorkspaceView)" class="workspace-placeholder">
+            <p>ACCESS RESTRICTED</p><h1>You do not have access to this module</h1><span>Ask an administrator to update your module permissions.</span>
+          </section>
+          <section v-else-if="activeWorkspaceView && !activePageComponent" class="workspace-placeholder">
             <p>{{ activeWorkspaceView.replace(/-/g, ' ') }}</p>
             <h1>Module is being prepared</h1>
             <span>This section now stays inside the dashboard workspace. Its full screen will appear here once it is added to the system.</span>
           </section>
 
-          <template v-if="!activeWorkspaceView">
+          <template v-if="!activeWorkspaceView && moduleAccess?.dashboard?.canView">
           <div class="dash-header-row">
             <div class="dash-header">
               <h1>Dashboard</h1>
@@ -583,6 +609,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           </template>
+          <section v-else-if="!activeWorkspaceView && moduleAccess && !moduleAccess.dashboard?.canView" class="workspace-placeholder"><p>ACCESS RESTRICTED</p><h1>Dashboard access is disabled</h1><span>Ask an administrator to update your module permissions.</span></section>
         </main>
       </div>
 
