@@ -8,13 +8,14 @@ const props = defineProps({
 })
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [user: any] }>()
 
-const form = ref({ firstName: '', lastName: '', gender: '', departmentName: '' })
+const form = ref({ firstName: '', lastName: '', gender: '', departmentId: null as number | null })
+const departments = ref<{ DepartmentID: number; DepartmentName: string }[]>([])
 const error = ref(''); const busy = ref(false)
 const photoBusy = ref(false); const photoError = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const previewImage = ref('')
 
-watch(() => props.modelValue, (open) => {
+watch(() => props.modelValue, async (open) => {
   if (!open || !props.user) return
   error.value = ''; photoError.value = ''
   previewImage.value = props.user.image || ''
@@ -22,8 +23,10 @@ watch(() => props.modelValue, (open) => {
     firstName: props.user.firstName || '',
     lastName: props.user.lastName || '',
     gender: props.user.gender || '',
-    departmentName: props.user.departmentName === 'Unassigned' ? '' : (props.user.departmentName || '')
+    departmentId: props.user.departmentId || null
   }
+  try { departments.value = (await $fetch<any>('/api/auth/departments')).departments }
+  catch { error.value = 'Departments could not be loaded. Please try again.' }
 })
 
 function initials() {
@@ -137,7 +140,7 @@ function close() { if (!busy.value) emit('update:modelValue', false) }
           </div>
           <div class="edit-profile__field">
             <label for="edit-department">Department</label>
-            <input id="edit-department" v-model.trim="form.departmentName" maxlength="100" placeholder="e.g. Human Resources" />
+            <select id="edit-department" v-model="form.departmentId"><option :value="null">No department</option><option v-for="department in departments" :key="department.DepartmentID" :value="department.DepartmentID">{{ department.DepartmentName }}</option></select>
           </div>
           <p v-if="error" role="alert" class="edit-profile__error">{{ error }}</p>
           <div class="edit-profile__actions">

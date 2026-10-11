@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 type Permission = { canView: boolean; canEdit: boolean }
 type User = { id: number; name: string; email: string; departmentId: number | null; role: string; status: string; access: Record<string, Permission> }
@@ -17,6 +17,10 @@ const automatic = ref(false)
 const selectedUserId = ref<number | null>(null)
 const draft = ref<User | null>(null)
 const userSearch = ref('')
+const expandedGroups = ref<Record<string, boolean>>({})
+const newDepartmentName = ref('')
+const showAddDepartment = ref(false)
+const departmentToRemove = ref<Department | null>(null)
 const restoreCandidate = ref<Backup | null>(null)
 const restoreAcknowledged = ref(false)
 const restorePhrase = ref('')
@@ -32,9 +36,9 @@ const success = ref('')
 
 const isAdmin = computed(() => access.value?.isAdmin === true)
 const departmentGroups = computed(() => {
-  const groups = departments.value.map(department => ({ key: `department-${department.id}`, name: department.name, status: department.status, users: users.value.filter(user => user.departmentId === department.id) }))
+  const groups = departments.value.map(department => ({ key: `department-${department.id}`, id: department.id as number | null, name: department.name, status: department.status, users: users.value.filter(user => user.departmentId === department.id) }))
   const unassigned = users.value.filter(user => !departments.value.some(department => department.id === user.departmentId))
-  if (unassigned.length) groups.push({ key: 'unassigned', name: 'Unassigned', status: '', users: unassigned })
+  if (unassigned.length) groups.push({ key: 'unassigned', id: null, name: 'Unassigned users', status: '', users: unassigned })
   const query = userSearch.value.toLowerCase().trim()
   if (!query) return groups
   return groups.map(group => group.name.toLowerCase().includes(query)
@@ -47,6 +51,7 @@ const latestBackup = computed(() => backups.value[0] || null)
 const visibleBackups = computed(() => backups.value.slice(0, backupLimit.value))
 const visibleModules = computed(() => (access.value?.modules || []).filter((item: any) => access.value?.access?.[item.key]?.canView))
 const editableModuleCount = computed(() => visibleModules.value.filter((item: any) => access.value?.access?.[item.key]?.canEdit).length)
+watch(userSearch, () => { expandedGroups.value = {} })
 
 function errorMessage(cause: any) {
   return cause?.data?.statusMessage || cause?.statusMessage || cause?.message || 'The request could not be completed. Please try again.'
@@ -59,6 +64,14 @@ function formatDate(value: string) { return new Date(value).toLocaleString('en-P
 function formatSize(value: number) { return value < 1024 * 1024 ? `${Math.max(1, Math.round(value / 1024))} KB` : `${(value / (1024 * 1024)).toFixed(1)} MB` }
 function backupLabel(kind: string) { return kind === 'daily' ? 'Automatic' : kind === 'manual' ? 'Created manually' : kind === 'before-restore' ? 'Safety copy' : 'Uploaded' }
 function chooseSection(next: Section) { section.value = next; error.value = ''; success.value = '' }
+function isGroupExpanded(key: string) { return expandedGroups.value[key] ?? Boolean(userSearch.value.trim()) }
+function toggleGroup(key: string) { expandedGroups.value = { ...expandedGroups.value, [key]: !isGroupExpanded(key) } }
+function closeAddDepartment() { if (!busy.value) { showAddDepartment.value = false; newDepartmentName.value = ''; error.value = '' } }
+async function refreshDirectory() {
+  const result = await $fetch<{ users: User[]; departments: Department[] }>('/api/settings/users')
+  users.value = result.users
+  departments.value = result.departments
+}
 
 async function loadSettings() {
   loading.value = true
@@ -87,10 +100,37 @@ async function saveUser() {
   busy.value = true; error.value = ''; success.value = ''
   try {
     await $fetch('/api/settings/users', { method: 'PUT', body: { userId: draft.value.id, role: draft.value.role, status: draft.value.status, access: draft.value.access } })
-    users.value = (await $fetch<any>('/api/settings/users')).users
+    await refreshDirectory()
     const updated = users.value.find(user => user.id === draft.value?.id)
     success.value = `Access settings saved for ${updated?.name || draft.value.name}.`
     closeUser()
+  } catch (cause) { error.value = errorMessage(cause) }
+  finally { busy.value = false }
+}
+
+async function createDepartment() {
+  const name = newDepartmentName.value.trim()
+  if (!name) { error.value = 'Enter a department name.'; return }
+  busy.value = true; error.value = ''; success.value = ''
+  try {
+    await $fetch('/api/settings/departments', { method: 'POST', body: { name } })
+    await refreshDirectory()
+    newDepartmentName.value = ''
+    showAddDepartment.value = false
+    success.value = `${name} is now available for user accounts.`
+  } catch (cause) { error.value = errorMessage(cause) }
+  finally { busy.value = false }
+}
+
+async function removeDepartment() {
+  if (!departmentToRemove.value) return
+  const department = departmentToRemove.value
+  busy.value = true; error.value = ''; success.value = ''
+  try {
+    await $fetch(`/api/settings/departments/${department.id}`, { method: 'DELETE' })
+    await refreshDirectory()
+    departmentToRemove.value = null
+    success.value = `${department.name} was removed from active departments.`
   } catch (cause) { error.value = errorMessage(cause) }
   finally { busy.value = false }
 }
@@ -148,61 +188,58 @@ onMounted(loadSettings)
       <p>Your account, team access, and saved backups in one place.</p>
     </header>
 
-    <div v-if="error" class="notice error" role="alert">{{ error }}</div>
-    <div v-if="success" class="notice success" role="status">{{ success }}</div>
+    <div v-if="error" class="notice error page-notice" role="alert"><span>{{ error }}</span><button type="button" aria-label="Dismiss error" @click="error = ''">×</button></div>
+    <div v-if="success" class="notice success page-notice" role="status"><span>{{ success }}</span><button type="button" aria-label="Dismiss message" @click="success = ''">×</button></div>
     <div v-if="loading" class="empty">Loading settings...</div>
     <template v-else>
       <div class="settings-shell">
         <nav class="section-nav" aria-label="Settings sections">
-          <span class="nav-heading">WORKSPACE SETTINGS</span>
-          <button type="button" :class="{ active: section === 'account' }" :aria-current="section === 'account' ? 'page' : undefined" @click="chooseSection('account')">
-            <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.4-3.5 2.7-5.5 7-5.5s6.6 2 7 5.5"/></svg></span><span><strong>My account</strong><small>Profile and access</small></span>
-          </button>
-          <button v-if="isAdmin" type="button" :class="{ active: section === 'users' }" :aria-current="section === 'users' ? 'page' : undefined" @click="chooseSection('users')">
-            <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M2.5 19c.3-3.1 2-5 5.5-5s5.2 1.9 5.5 5M16 5.5a3 3 0 0 1 0 5.8M16.5 14c3.2.1 4.7 1.9 5 5"/></svg></span><span><strong>Team access</strong><small>People and permissions</small></span>
-          </button>
-          <button v-if="isAdmin" type="button" :class="{ active: section === 'backups' }" :aria-current="section === 'backups' ? 'page' : undefined" @click="chooseSection('backups')">
-            <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16v12H4zM7 4.5h10M8 12.5h8M8 16h5"/></svg></span><span><strong>Backups</strong><small>Saved copies and recovery</small></span>
-          </button>
-          <div class="nav-note">Changes to team access take effect on the next request.</div>
+          <button type="button" :class="{ active: section === 'account' }" :aria-current="section === 'account' ? 'page' : undefined" @click="chooseSection('account')">My account</button>
+          <button v-if="isAdmin" type="button" :class="{ active: section === 'users' }" :aria-current="section === 'users' ? 'page' : undefined" @click="chooseSection('users')">Team access</button>
+          <button v-if="isAdmin" type="button" :class="{ active: section === 'backups' }" :aria-current="section === 'backups' ? 'page' : undefined" @click="chooseSection('backups')">Backups</button>
         </nav>
 
         <div class="section-content">
-      <div v-if="section === 'account'" class="account-layout">
-        <div class="section-intro"><span class="panel-kicker">PERSONAL SETTINGS</span><h2>My account</h2><p>Your profile and access at a glance.</p></div>
-        <article class="panel account-overview">
-          <div class="account-main"><div class="identity"><span class="avatar">{{ account?.firstName?.[0] }}{{ account?.lastName?.[0] }}</span><div><span class="account-status">Active account</span><h3>{{ account?.firstName }} {{ account?.lastName }}</h3><p>{{ account?.email }}</p></div></div><NuxtLink class="button secondary" to="/userprofile/viewprofile">Manage profile <span aria-hidden="true">↗</span></NuxtLink></div>
-          <dl class="account-facts"><div><dt>Role</dt><dd>{{ account?.userType }}</dd></div><div><dt>Department</dt><dd>{{ account?.departmentName || 'Not assigned' }}</dd></div><div><dt>Email</dt><dd>{{ account?.emailVerified ? 'Verified' : 'Not verified' }}</dd></div></dl>
+      <div v-if="section === 'account'" class="section-stack">
+        <div class="section-intro"><span class="panel-kicker">PERSONAL SETTINGS</span><h2>My account</h2><p>Review your profile and workspace access.</p></div>
+        <article class="panel settings-list">
+          <div class="list-title"><h3>Profile</h3><NuxtLink class="button secondary" to="/userprofile/viewprofile">Edit profile</NuxtLink></div>
+          <div class="profile-list-identity"><span class="avatar">{{ account?.firstName?.[0] }}{{ account?.lastName?.[0] }}</span><div><strong>{{ account?.firstName }} {{ account?.lastName }}</strong><span>{{ account?.email }}</span></div></div>
+          <dl class="setting-facts"><div><dt>Role</dt><dd>{{ account?.userType }}</dd></div><div><dt>Department</dt><dd>{{ account?.departmentName || 'Not assigned' }}</dd></div><div><dt>Email status</dt><dd>{{ account?.emailVerified ? 'Verified' : 'Not verified' }}</dd></div></dl>
         </article>
-        <article class="panel access-overview">
-          <div class="access-summary"><div><span class="panel-kicker">ACCESS OVERVIEW</span><h3>Your workspace</h3><p class="subtle">{{ isAdmin ? 'Administrator access to every section of the system.' : 'A summary of the sections available to your account.' }}</p></div><span class="access-level">{{ isAdmin ? 'Full access' : `${visibleModules.length} sections` }}</span></div>
-          <div class="access-stats"><div><strong>{{ visibleModules.length }}</strong><span>Sections available</span></div><div><strong>{{ editableModuleCount }}</strong><span>Sections you can edit</span></div></div>
-          <button v-if="!isAdmin" class="detail-toggle" type="button" :aria-expanded="showAccessDetails" @click="showAccessDetails = !showAccessDetails">{{ showAccessDetails ? 'Hide access details' : 'View access details' }} <span aria-hidden="true">{{ showAccessDetails ? '↑' : '↓' }}</span></button>
+        <article class="panel settings-list">
+          <div class="list-title"><div><h3>Workspace access</h3><p>{{ visibleModules.length }} sections available · {{ editableModuleCount }} editable</p></div><button v-if="!isAdmin" class="button secondary" type="button" :aria-expanded="showAccessDetails" @click="showAccessDetails = !showAccessDetails">{{ showAccessDetails ? 'Hide details' : 'View details' }}</button><span v-else class="role-badge role-admin">Full access</span></div>
           <div v-if="!isAdmin && showAccessDetails" class="access-list"><div v-for="module in visibleModules" :key="module.key"><span>{{ module.label }}</span><span class="access-tag">{{ access?.access?.[module.key]?.canEdit ? 'Can edit' : 'View only' }}</span></div></div>
         </article>
       </div>
 
       <div v-else-if="section === 'users' && isAdmin" class="section-stack">
-        <div class="section-intro"><span class="panel-kicker">ACCESS MANAGEMENT</span><h2>Departments &amp; users</h2><p>See who belongs to each department and manage their access.</p></div>
-        <div class="team-stats"><div><strong>{{ departments.length }}</strong><span>Departments</span></div><div><strong>{{ users.length }}</strong><span>User accounts</span></div><div><strong>{{ adminCount }}</strong><span>Admins</span></div></div>
-        <div class="directory-head"><div><h3>Department directory</h3><p>All departments are shown, including those without assigned users.</p></div><label><span class="sr-only">Search departments or users</span><input v-model="userSearch" class="search" placeholder="Search department, name, or role" /></label></div>
-        <div v-if="!departmentGroups.length" class="panel empty">No matching departments or users.</div>
-        <article v-for="group in departmentGroups" :key="group.key" class="panel department-card">
-          <div class="department-head"><div class="department-title"><span class="department-icon" aria-hidden="true">{{ group.name.slice(0, 1).toUpperCase() }}</span><div><h3>{{ group.name }}</h3><p>{{ group.users.length }} {{ group.users.length === 1 ? 'user' : 'users' }}<span v-if="group.status && group.status !== 'Active'"> · {{ group.status }} department</span></p></div></div></div>
-          <div v-if="!group.users.length" class="department-empty">No users assigned to this department.</div>
-          <div v-else class="member-list"><div class="member-heading"><span>USER</span><span>ROLE</span><span>STATUS</span><span>ACTION</span></div><div v-for="user in group.users" :key="user.id" class="member-row"><div class="member-identity"><span class="member-avatar">{{ initials(user.name) }}</span><span><strong>{{ user.name }}</strong><small>{{ user.email }}</small></span></div><span class="role-badge" :class="{ 'role-admin': user.role === 'Admin' }">{{ user.role }}</span><span class="mini-status" :class="{ inactive: user.status !== 'Active' }">{{ user.status }}</span><button class="button secondary" type="button" @click="selectUser(user)">Manage</button></div></div>
-        </article>
+        <div class="section-intro section-intro-actions"><div><span class="panel-kicker">ACCESS MANAGEMENT</span><h2>Departments &amp; users</h2><p>Manage departments and account permissions in one list.</p></div><button class="button primary" type="button" @click="showAddDepartment = true; error = ''; success = ''">Add department</button></div>
+        <div class="directory-summary">{{ departments.length }} departments <span>·</span> {{ users.length }} user accounts <span>·</span> {{ adminCount }} admins</div>
+        <div class="list-toolbar"><label class="sr-only" for="team-search">Search departments or users</label><input id="team-search" v-model="userSearch" class="search" placeholder="Search department, name, or role" /><span>Select a department to view its users.</span></div>
+        <div class="panel directory-list">
+          <div class="directory-columns"><span>Department / user</span><span>Role</span><span>Status</span><span>Action</span></div>
+          <div v-if="!departmentGroups.length" class="empty">No matching departments or users.</div>
+          <section v-for="group in departmentGroups" :key="group.key" class="directory-group" :aria-label="group.name">
+            <div class="directory-group-head">
+              <button v-if="group.users.length" class="directory-expand" type="button" :aria-expanded="isGroupExpanded(group.key)" :aria-controls="`members-${group.key}`" @click="toggleGroup(group.key)"><span class="department-icon" aria-hidden="true">{{ group.id === null ? 'U' : group.name.slice(0, 1).toUpperCase() }}</span><strong>{{ group.name }}</strong><span class="member-count">{{ group.users.length }} {{ group.users.length === 1 ? 'user' : 'users' }}</span><svg class="directory-chevron" :class="{ open: isGroupExpanded(group.key) }" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 5 5-5" /></svg></button>
+              <div v-else class="directory-name"><span class="department-icon" aria-hidden="true">{{ group.name.slice(0, 1).toUpperCase() }}</span><strong>{{ group.name }}</strong><span class="member-count">0 users</span></div>
+              <button v-if="group.id !== null && !group.users.length" class="department-remove" type="button" :disabled="busy" :aria-label="`Remove ${group.name}`" @click="departmentToRemove = departments.find(item => item.id === group.id) || null">Remove</button>
+            </div>
+            <div v-if="group.users.length" v-show="isGroupExpanded(group.key)" :id="`members-${group.key}`" class="directory-members"><div v-for="user in group.users" :key="user.id" class="directory-user-row"><div class="member-identity"><span class="member-avatar">{{ initials(user.name) }}</span><span><strong>{{ user.name }}</strong><small>{{ user.email }}</small></span></div><span class="role-badge" :class="{ 'role-admin': user.role === 'Admin' }">{{ user.role }}</span><span class="mini-status" :class="{ inactive: user.status !== 'Active' }">{{ user.status }}</span><button class="button secondary" type="button" @click="selectUser(user)">Manage</button></div></div>
+          </section>
+        </div>
       </div>
 
       <div v-else-if="section === 'backups' && isAdmin" class="section-stack">
-        <div class="section-intro"><span class="panel-kicker">DATA PROTECTION</span><h2>Backups</h2><p>Keep a recent copy of your records and recover one when needed.</p></div>
-        <div class="backup-layout">
-        <div class="backup-overview">
-          <article class="panel schedule-card"><div class="panel-kicker">AUTOMATIC BACKUP</div><h2>Protected every day</h2><p class="subtle">A new copy is saved at 12:00 AM (Asia/Singapore) while the computer and database are running.</p><div class="schedule-status"><span class="dot" :class="{ off: !automatic }"></span>{{ automatic ? 'Daily backup is on' : 'Daily backup is off' }}</div></article>
-          <article class="panel latest-card"><div class="panel-kicker">LATEST SAVED COPY</div><h2>{{ latestBackup ? formatDate(latestBackup.createdAt) : 'No backup yet' }}</h2><p class="subtle">{{ latestBackup ? `${backupLabel(latestBackup.kind)} · ${formatSize(latestBackup.size)}` : 'Create your first backup to protect your records.' }}</p><button v-if="latestBackup" class="button secondary" type="button" @click="downloadBackup(latestBackup.name)">Download latest</button></article>
-        </div>
-        <article class="panel library-panel">
-          <div class="library-head"><div><div class="panel-kicker">SAVED COPIES</div><h2>Backup history</h2><p class="subtle">Older backups stay hidden until you need them. Restore is available only after opening this list.</p></div><button class="button primary" type="button" :disabled="busy" @click="createBackup">{{ busy ? 'Working...' : 'Back up now' }}</button></div>
+        <div class="section-intro section-intro-actions"><div><span class="panel-kicker">DATA PROTECTION</span><h2>Backups</h2><p>See backup status and manage saved copies.</p></div><button class="button primary" type="button" :disabled="busy" @click="createBackup">{{ busy ? 'Working...' : 'Back up now' }}</button></div>
+        <article class="panel settings-list backup-status-list">
+          <div class="list-title"><h3>Backup status</h3></div>
+          <div class="setting-row"><div><strong>Automatic backup</strong><small>Runs at 12:00 AM (Asia/Singapore) while the server and database are running.</small></div><span class="mini-status" :class="{ inactive: !automatic }">{{ automatic ? 'On' : 'Off' }}</span></div>
+          <div class="setting-row"><div><strong>Latest saved copy</strong><small>{{ latestBackup ? `${backupLabel(latestBackup.kind)} · ${formatSize(latestBackup.size)}` : 'No backup yet' }}</small></div><div class="setting-row-action"><strong>{{ latestBackup ? formatDate(latestBackup.createdAt) : '—' }}</strong><button v-if="latestBackup" class="button secondary" type="button" @click="downloadBackup(latestBackup.name)">Download</button></div></div>
+        </article>
+        <article class="panel settings-list backup-history-list">
+          <div class="list-title"><div><h3>Saved copies</h3><p>Older backups stay hidden until you choose to view them.</p></div><span class="member-count">{{ backups.length }} saved</span></div>
           <div v-if="!backups.length" class="empty">No saved backups yet.</div>
           <template v-else>
             <button class="button secondary history-toggle" type="button" :aria-expanded="showBackups" @click="toggleBackups">{{ showBackups ? 'Hide saved backups' : `View saved backups (${backups.length})` }}</button>
@@ -212,13 +249,14 @@ onMounted(loadSettings)
           <button class="upload-link" type="button" :aria-expanded="uploading" @click="uploading = !uploading">{{ uploading ? 'Hide upload' : 'Upload a downloaded backup' }}</button>
           <div v-if="uploading" class="upload-area"><p>Have a backup file from this system? Add it here so it appears in your saved copies.</p><label>Choose saved backup file<input type="file" accept=".sql" @change="uploadFile = ($event.target as HTMLInputElement).files?.[0] || null" /></label><button class="button secondary" type="button" :disabled="busy || !uploadFile" @click="importBackup">Add backup</button></div>
         </article>
-        </div>
       </div>
         </div>
       </div>
     </template>
 
     <div v-if="restoreCandidate" class="modal-backdrop" role="presentation" @click.self="!busy && closeRestore()"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="restore-title" aria-describedby="restore-warning"><div class="panel-kicker">RESTORE BACKUP</div><h2 id="restore-title">Restore this saved copy?</h2><p id="restore-warning" class="restore-warning">This will replace the current database with the copy saved on <strong>{{ formatDate(restoreCandidate.createdAt) }}</strong>. Changes made after that time may be lost. A safety backup will be created first.</p><label class="confirm-check"><input v-model="restoreAcknowledged" type="checkbox" /><span>I understand that newer changes may be replaced.</span></label><label class="restore-phrase">Type RESTORE to confirm<input v-model.trim="restorePhrase" type="text" autocomplete="off" spellcheck="false" placeholder="RESTORE" /></label><div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeRestore">Cancel</button><button class="button danger" type="button" :disabled="busy || !restoreAcknowledged || restorePhrase !== 'RESTORE'" @click="restoreBackup">{{ busy ? 'Restoring...' : 'Restore this backup' }}</button></div></section></div>
+    <div v-if="showAddDepartment" class="modal-backdrop" role="presentation" @click.self="closeAddDepartment"><form class="confirm-dialog department-form-dialog" role="dialog" aria-modal="true" aria-labelledby="department-form-title" @submit.prevent="createDepartment"><div class="panel-kicker">DEPARTMENT MANAGEMENT</div><h2 id="department-form-title">Add department</h2><p>It will appear in account department choices once saved.</p><div v-if="error" class="notice error" role="alert">{{ error }}</div><label for="new-department" class="department-form-label">Department name</label><input id="new-department" v-model="newDepartmentName" maxlength="100" placeholder="e.g. Operations Department" autocomplete="off" autofocus /><div class="dialog-actions department-dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeAddDepartment">Cancel</button><button class="button primary" type="submit" :disabled="busy || !newDepartmentName.trim()">{{ busy ? 'Saving...' : 'Add department' }}</button></div></form></div>
+    <div v-if="departmentToRemove" class="modal-backdrop" role="presentation" @click.self="!busy && (departmentToRemove = null)"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="department-remove-title"><span class="panel-kicker">REMOVE DEPARTMENT</span><h2 id="department-remove-title">Remove {{ departmentToRemove.name }}?</h2><p>It will no longer appear in account department choices. You can add it again later if needed.</p><div v-if="error" class="notice error" role="alert">{{ error }}</div><div class="dialog-actions department-dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="departmentToRemove = null">Cancel</button><button class="button danger" type="button" :disabled="busy" @click="removeDepartment">{{ busy ? 'Removing...' : 'Remove department' }}</button></div></section></div>
     <div v-if="draft" class="modal-backdrop" role="presentation" @click.self="!busy && closeUser()"><section class="user-dialog" role="dialog" aria-modal="true" aria-labelledby="user-dialog-title"><header class="user-dialog-head"><div><span class="panel-kicker">ACCOUNT ACCESS</span><h2 id="user-dialog-title">{{ draft.name }}</h2><p>{{ draft.email }}</p></div><button class="dialog-close" type="button" aria-label="Close user settings" :disabled="busy" @click="closeUser">×</button></header><div class="user-dialog-body"><div v-if="error" class="notice error" role="alert">{{ error }}</div><div class="form-pair"><label>Account role<select v-model="draft.role"><option>Admin</option><option>Supervisor</option><option>Encoder</option><option>Viewer</option></select></label><label>Account status<select v-model="draft.status"><option>Active</option><option>Inactive</option></select></label></div><p v-if="draft.role === 'Admin'" class="info-note">Admins can view and change all sections.</p><div class="permissions-title"><h3>Section access</h3><p>Choose the sections this person can open and update.</p></div><div class="permission-head"><strong>Section</strong><strong>Can view</strong><strong>Can edit</strong></div><div v-for="module in access?.modules" :key="module.key" class="permission-row"><span>{{ module.label }}</span><label><input v-model="draft.access[module.key].canView" type="checkbox" :disabled="draft.role === 'Admin'" @change="!draft!.access[module.key].canView && (draft!.access[module.key].canEdit = false)" /><span class="sr-only">Can view {{ module.label }}</span></label><label><input v-model="draft.access[module.key].canEdit" type="checkbox" :disabled="draft.role === 'Admin' || !draft.access[module.key].canView" /><span class="sr-only">Can edit {{ module.label }}</span></label></div></div><footer class="user-dialog-footer"><button class="button secondary" type="button" :disabled="busy" @click="closeUser">Cancel</button><button class="button primary" type="button" :disabled="busy" @click="saveUser">{{ busy ? 'Saving...' : 'Save changes' }}</button></footer></section></div>
   </section>
 </template>
@@ -239,9 +277,20 @@ onMounted(loadSettings)
 @media(max-width:1100px){.settings-shell{grid-template-columns:1fr;gap:20px}.section-nav{position:static;display:flex;flex-wrap:wrap;gap:8px;padding:9px}.section-nav button{flex:1 1 190px}.nav-heading,.nav-note{display:none}}
 @media(max-width:700px){.account-main{align-items:flex-start;flex-direction:column}.account-facts{grid-template-columns:1fr;gap:14px}.account-facts div,.account-facts div:first-child{padding:0;border:0}.account-facts div+div{padding-top:14px;border-top:1px solid var(--line)}.access-summary{flex-wrap:wrap}.section-nav button{flex-basis:130px}.section-nav button small{display:none}.section-nav button strong{font-size:.82rem}}
 .team-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.team-stats div{display:grid;gap:3px;padding:17px 20px;border:1px solid var(--line);border-radius:13px;background:var(--surface)}.team-stats strong{font-size:1.45rem;color:#174a9a;line-height:1.15}.team-stats span{font-size:.78rem;color:var(--muted)}
+.department-create{display:flex;align-items:end;justify-content:space-between;gap:24px;padding:22px 25px}.department-create h3{margin:7px 0 4px;font-size:1.05rem}.department-create p{color:var(--muted);font-size:.84rem;line-height:1.45}.department-create-controls{display:flex;gap:9px;width:min(100%,480px)}.department-create-controls input{min-width:0;flex:1;min-height:44px;border:1px solid #cbdaf5;border-radius:10px;background:var(--surface);color:var(--ink);padding:0 12px;font:inherit}.department-remove{border:0;background:transparent;color:#ad3838;font:inherit;font-size:.8rem;font-weight:750;cursor:pointer}.department-remove:hover{text-decoration:underline}.department-remove:focus-visible{outline:3px solid #96b6fa;outline-offset:3px}.department-dialog-actions{margin-top:24px}
 .directory-head{display:flex;justify-content:space-between;align-items:end;gap:20px;margin:4px 0 0}.directory-head h3{font-size:1.08rem;margin:0 0 4px}.directory-head p{color:var(--muted);font-size:.86rem;line-height:1.45}.directory-head label{min-width:min(100%,320px)}.directory-head .search{margin:0}
 .department-card{padding:0;overflow:hidden}.department-head{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--line);background:#f9fbff}.department-title{display:flex;align-items:center;gap:13px}.department-icon{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:#e7efff;color:#235ac0;font-size:.95rem;font-weight:800;flex:none}.department-title h3{margin:0 0 3px;font-size:1.05rem}.department-title p{color:var(--muted);font-size:.8rem}.department-empty{padding:23px 24px;color:var(--muted);font-size:.86rem}.member-heading,.member-row{display:grid;grid-template-columns:minmax(0,1fr) 105px 100px 105px;align-items:center;gap:14px;padding:13px 24px}.member-heading{color:#627ca8;font-size:.7rem;font-weight:800;letter-spacing:.05em}.member-row{border-top:1px solid var(--line);min-height:72px}.member-identity{display:flex;align-items:center;gap:11px;min-width:0}.member-identity strong,.member-identity small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.member-identity strong{font-size:.86rem}.member-identity small{margin-top:3px;color:var(--muted);font-size:.77rem}.member-avatar{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:#e9f0ff;color:#2859b4;font-size:.72rem;font-weight:800;flex:none}.role-badge{justify-self:start;border-radius:999px;padding:5px 10px;background:#f0f3f8;color:#475e83;font-size:.75rem;font-weight:750}.role-badge.role-admin{background:#e7efff;color:#235ac0}.member-row .mini-status{justify-self:start}.member-row .button{min-height:37px;padding:0 12px;font-size:.78rem}
 .user-dialog{width:min(100%,800px);max-height:min(92vh,960px);display:flex;flex-direction:column;overflow:hidden;border-radius:18px;background:var(--surface);box-shadow:0 28px 70px rgba(8,20,42,.24)}.user-dialog-head{display:flex;justify-content:space-between;align-items:start;gap:18px;padding:23px 28px;border-bottom:1px solid var(--line)}.user-dialog-head h2{font-size:1.35rem;margin:5px 0 4px}.user-dialog-head p{color:var(--muted);overflow-wrap:anywhere}.dialog-close{border:0;background:transparent;color:#56709b;font-size:1.7rem;line-height:1;cursor:pointer}.user-dialog-body{overflow:auto;padding:2px 28px 28px}.user-dialog-body .form-pair{margin-top:22px}.user-dialog-body .permission-row{min-height:48px}.user-dialog-footer{display:flex;justify-content:flex-end;gap:10px;padding:17px 28px;border-top:1px solid var(--line);background:var(--surface)}
 @media(max-width:780px){.directory-head{align-items:stretch;flex-direction:column}.directory-head label{width:100%}.member-heading{display:none}.member-row{grid-template-columns:minmax(0,1fr) auto auto auto;gap:8px;padding:14px 18px}.member-identity{grid-column:1/-1}.department-head{padding:17px 18px}.department-empty{padding:18px}.member-row .button{justify-self:end}}
-@media(max-width:540px){.team-stats div{padding:14px}.team-stats strong{font-size:1.2rem}.team-stats span{font-size:.7rem}.member-row{grid-template-columns:auto auto minmax(0,1fr)}.member-identity{grid-column:1/-1}.user-dialog-head,.user-dialog-footer{padding:18px}.user-dialog-body{padding:2px 18px 20px}}
+@media(max-width:780px){.department-create{align-items:stretch;flex-direction:column}}
+@media(max-width:540px){.team-stats div{padding:14px}.team-stats strong{font-size:1.2rem}.team-stats span{font-size:.7rem}.member-row{grid-template-columns:auto auto minmax(0,1fr)}.member-identity{grid-column:1/-1}.user-dialog-head,.user-dialog-footer{padding:18px}.user-dialog-body{padding:2px 18px 20px}.department-create-controls{flex-direction:column}.department-create-controls .button{width:100%}}
+.settings-page{max-width:1500px;padding-top:28px}.page-head{margin-bottom:21px}.settings-shell{display:block}.section-nav{position:static;display:flex;gap:28px;padding:0;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;box-shadow:none;margin-bottom:25px}.section-nav button{flex:none;display:block;border:0;border-bottom:3px solid transparent;border-radius:0;padding:12px 4px 14px;color:var(--muted);font-weight:750}.section-nav button:hover{background:transparent;color:#174bad}.section-nav button.active{background:transparent;border-color:#2862e9;color:#174bad}.section-content{max-width:none}.section-stack{gap:17px}.section-intro-actions{display:flex;align-items:center;justify-content:space-between;gap:20px}.section-intro-actions .button{flex:none}.panel.settings-list,.directory-list{padding:0;overflow:hidden;border-radius:15px;box-shadow:0 5px 18px rgba(21,48,96,.025)}
+.page-notice{display:flex;align-items:center;justify-content:space-between;gap:14px;max-width:680px;padding:10px 14px;border:1px solid transparent;font-size:.83rem}.page-notice.success{border-color:#c8ebd4}.page-notice.error{border-color:#f0c8c8}.page-notice button{border:0;background:transparent;color:inherit;font:inherit;font-size:1.2rem;line-height:1;cursor:pointer}
+.list-title{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 23px;border-bottom:1px solid var(--line)}.list-title h3{font-size:1rem;margin:0}.list-title p{margin:4px 0 0;color:var(--muted);font-size:.82rem}.list-title .button{min-height:37px;font-size:.79rem}.profile-list-identity{display:flex;align-items:center;gap:15px;padding:19px 23px}.profile-list-identity .avatar{width:48px;height:48px;border-radius:13px;font-size:1rem}.profile-list-identity strong,.profile-list-identity span:not(.avatar){display:block}.profile-list-identity strong{font-size:.95rem}.profile-list-identity div span{margin-top:3px;color:var(--muted);font-size:.83rem}.setting-facts{margin:0;border-top:1px solid var(--line)}.setting-facts>div,.setting-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 23px;border-bottom:1px solid var(--line)}.setting-facts>div:last-child,.setting-row:last-child{border-bottom:0}.setting-facts dt{color:var(--muted);font-size:.84rem}.setting-facts dd{margin:0;text-align:right;font-weight:750;font-size:.86rem}.setting-row>div:first-child{display:grid;gap:4px}.setting-row strong{font-size:.86rem}.setting-row small{color:var(--muted);font-size:.78rem;line-height:1.4}.setting-row-action{display:flex;align-items:center;gap:18px}.setting-row-action .button{min-height:36px;font-size:.78rem}.settings-list .access-list{margin:0;padding:0 23px 10px}.settings-list .access-list div:last-child{border-bottom:0}
+.directory-summary{display:flex;gap:7px;color:var(--muted);font-size:.83rem}.directory-summary span{color:#9bb0d1}.list-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px}.list-toolbar .search{width:min(100%,400px);margin:0}.list-toolbar>span{color:var(--muted);font-size:.79rem}.directory-columns,.directory-user-row{display:grid;grid-template-columns:minmax(0,1fr) 130px 120px 115px;align-items:center;gap:14px;padding:12px 22px}.directory-columns{background:#f3f6fc;color:#5e78a3;text-transform:uppercase;font-size:.69rem;font-weight:800;letter-spacing:.045em}.directory-group+.directory-group{border-top:1px solid #dbe5f4}.directory-group-head{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 22px;background:#fafcff}.directory-name{display:flex;align-items:center;gap:11px;min-width:0}.directory-name strong{font-size:.88rem}.directory-name .department-icon{width:32px;height:32px;border-radius:9px;font-size:.78rem}.member-count{color:var(--muted);font-size:.76rem;white-space:nowrap}.directory-empty{padding:10px 22px 15px 65px;color:var(--muted);font-size:.8rem}.directory-user-row{min-height:62px;border-top:1px solid var(--line);padding-left:65px}.directory-user-row .button{justify-self:start;min-height:35px;font-size:.76rem;padding:0 12px}.directory-user-row .member-avatar{width:32px;height:32px}.directory-user-row .member-identity strong{font-size:.83rem}.directory-user-row .member-identity small{font-size:.74rem}.department-remove{white-space:nowrap}.directory-list .empty{padding:30px}
+.backup-status-list .mini-status{flex:none}.backup-history-list>.history-toggle{margin:16px 23px}.backup-history-list>.upload-link{margin:0 23px 20px}.backup-history-list .backup-table-wrap{margin:0 23px 14px}.backup-history-list .more-backups{margin:0 23px 18px}.backup-history-list .upload-area{margin:0 23px 22px}.backup-history-list>.empty{padding:26px 23px}.department-form-label{display:block;margin:23px 0 7px;font-size:.84rem;font-weight:750}.department-form-dialog input{width:100%;min-height:46px;border:1px solid #cbdaf5;border-radius:10px;background:var(--surface);color:var(--ink);padding:0 12px;font:inherit}
+@media(max-width:800px){.directory-columns{display:none}.directory-user-row{grid-template-columns:minmax(0,1fr) auto auto;gap:8px;padding:12px 17px 12px 52px}.directory-user-row .member-identity{grid-column:1/-1}.directory-user-row .button{justify-self:end}.directory-group-head{padding:13px 17px}.directory-empty{padding-left:52px}.list-toolbar{align-items:stretch;flex-direction:column}.list-toolbar .search{width:100%}}
+@media(max-width:560px){.settings-page{padding-top:22px}.section-nav{gap:18px;overflow-x:auto}.section-nav button{white-space:nowrap;font-size:.83rem}.section-intro-actions{align-items:stretch;flex-direction:column}.section-intro-actions .button{align-self:flex-start}.directory-summary{flex-wrap:wrap}.directory-name{flex-wrap:wrap}.directory-name .member-count{width:100%;padding-left:43px}.directory-user-row{padding-left:17px}.directory-empty{padding-left:17px}.setting-row,.setting-facts>div{align-items:flex-start}.setting-row-action{align-items:flex-end;flex-direction:column;gap:8px}.list-title{padding:17px}.profile-list-identity{padding:17px}.setting-facts>div,.setting-row{padding:14px 17px}}
+.directory-expand{display:flex;align-items:center;gap:11px;min-width:0;flex:1;border:0;background:transparent;color:var(--ink);padding:0;text-align:left;font:inherit;cursor:pointer}.directory-expand strong{font-size:.88rem}.directory-expand:hover strong{color:#235bc9}.directory-expand:focus-visible{outline:3px solid #96b6fa;outline-offset:5px;border-radius:6px}.directory-chevron{width:18px;height:18px;margin-left:auto;flex:none;fill:none;stroke:#607da9;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .16s}.directory-chevron.open{transform:rotate(180deg)}.directory-group-head:has(.directory-expand):hover{background:#f3f7ff}.directory-members{background:var(--surface)}
+@media(max-width:560px){.directory-expand{flex-wrap:wrap}.directory-expand .member-count{width:100%;padding-left:43px}.directory-expand .directory-chevron{position:absolute;right:17px}.directory-group-head{position:relative}}
 </style>

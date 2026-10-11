@@ -284,6 +284,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/settings/backups` → `server/api/settings/backups/index.post.ts`
   - `POST /api/settings/backups/import` → `server/api/settings/backups/import.post.ts`
   - `POST /api/settings/backups/restore` → `server/api/settings/backups/restore.post.ts`
+  - `POST /api/settings/departments` → `server/api/settings/departments.post.ts`
+  - `DELETE /api/settings/departments/[param]` → `server/api/settings/departments/[id].delete.ts`
   - `GET /api/settings/users` → `server/api/settings/users.get.ts`
   - `PUT /api/settings/users` → `server/api/settings/users.put.ts`
 - Related backend utilities:
@@ -871,6 +873,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/settings/backups` → `server/api/settings/backups/index.post.ts`
   - `POST /api/settings/backups/import` → `server/api/settings/backups/import.post.ts`
   - `POST /api/settings/backups/restore` → `server/api/settings/backups/restore.post.ts`
+  - `POST /api/settings/departments` → `server/api/settings/departments.post.ts`
+  - `DELETE /api/settings/departments/[param]` → `server/api/settings/departments/[id].delete.ts`
   - `GET /api/settings/users` → `server/api/settings/users.get.ts`
   - `PUT /api/settings/users` → `server/api/settings/users.put.ts`
 - Related backend utilities:
@@ -890,6 +894,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `components/modals/emailverification.vue`
 - API calls and handlers:
+  - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
   - `POST /api/auth/google-code` → `server/api/auth/google-code.post.ts`
   - `POST /api/auth/register` → `server/api/auth/register.post.ts`
   - `POST /api/auth/verify-email` → `server/api/auth/verify-email.post.ts`
@@ -910,6 +915,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `components/modals/editprofile.vue`
 - API calls and handlers:
+  - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
   - `GET /api/auth/me` → `server/api/auth/me.get.ts`
   - `POST /api/auth/update-profile` → `server/api/auth/update-profile.post.ts`
   - `POST /api/auth/upload-avatar` → `server/api/auth/upload-avatar.post.ts`

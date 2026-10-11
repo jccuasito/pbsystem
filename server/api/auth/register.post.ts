@@ -5,7 +5,7 @@ import { verifyToken } from '../../utils/jwt'
 import { sendVerificationEmail } from '../../utils/mailer'
 
 export default defineEventHandler(async (event) => {
-  const body = await readBody<{ firstName?: string; lastName?: string; gender?: string; email?: string; password?: string; departmentName?: string }>(event)
+  const body = await readBody<{ firstName?: string; lastName?: string; gender?: string; email?: string; password?: string; departmentId?: number | string | null }>(event)
   const firstName = body.firstName?.trim(); const lastName = body.lastName?.trim(); const email = body.email ? normalizeEmail(body.email) : ''
   if (!firstName || !lastName || !email || !body.password || !['Male', 'Female', 'Prefer not to say'].includes(body.gender || '')) throw createError({ statusCode: 400, statusMessage: 'Please complete all required fields.' })
   if (!/^\S+@\S+\.\S+$/.test(email)) throw createError({ statusCode: 400, statusMessage: 'Enter a valid email address.' })
@@ -19,12 +19,11 @@ export default defineEventHandler(async (event) => {
   try {
     await connection.beginTransaction()
     let departmentId: number | null = null
-    const departmentName = body.departmentName?.trim()
-    if (departmentName) {
-      if (departmentName.length > 100) throw createError({ statusCode: 400, statusMessage: 'Department must be 100 characters or fewer.' })
-      const [departments] = await connection.execute<any[]>('SELECT DepartmentID FROM department WHERE LOWER(DepartmentName) = LOWER(?) LIMIT 1', [departmentName])
-      if (departments.length) departmentId = departments[0].DepartmentID
-      else { const [createdDepartment] = await connection.execute<any>('INSERT INTO department (DepartmentName, Status) VALUES (?, \'Active\')', [departmentName]); departmentId = createdDepartment.insertId }
+    if (body.departmentId !== '' && body.departmentId !== null && body.departmentId !== undefined) {
+      departmentId = Number(body.departmentId)
+      if (!Number.isSafeInteger(departmentId) || departmentId < 1) throw createError({ statusCode: 400, statusMessage: 'Select an available department.' })
+      const [departments] = await connection.execute<any[]>('SELECT DepartmentID FROM department WHERE DepartmentID = ? AND Status = \'Active\' LIMIT 1 FOR UPDATE', [departmentId])
+      if (!departments.length) throw createError({ statusCode: 400, statusMessage: 'Select an available department.' })
     }
     const passwordHash = await hashPassword(body.password)
     if (google?.completeUserId) {

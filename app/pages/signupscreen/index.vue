@@ -3,7 +3,8 @@ import { ref, onMounted, watch } from 'vue'
 import EmailVerification from '../../../components/modals/emailverification.vue'
 
 const isDark = ref(false)
-const form = ref({ firstName: '', lastName: '', gender: '', departmentName: '', email: '', password: '', confirmPassword: '' })
+const form = ref({ firstName: '', lastName: '', gender: '', departmentId: null as number | null, email: '', password: '', confirmPassword: '' })
+const departments = ref<{ DepartmentID: number; DepartmentName: string }[]>([])
 const error = ref(''); const message = ref(''); const busy = ref(false)
 const showPassword = ref(false); const showConfirmPassword = ref(false)
 const googleReady = ref(false)
@@ -27,6 +28,8 @@ function startGoogle() { error.value = ''; if (!googleReady.value || !googleCode
 onMounted(async () => {
   const savedTheme = localStorage.getItem('dja-theme')
   isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
+  try { departments.value = (await $fetch<any>('/api/auth/departments')).departments }
+  catch { error.value = 'Departments could not be loaded. Please refresh the page.' }
   const id = useRuntimeConfig().public.googleClientId; if (!id) return
   const script = document.createElement('script'); script.src = 'https://accounts.google.com/gsi/client'; script.async = true; script.onload = () => { const google = (window as any).google; googleCodeClient.value = google?.accounts.oauth2.initCodeClient({ client_id: id, scope: 'openid email profile', ux_mode: 'popup', callback: googleSignup }); googleReady.value = Boolean(googleCodeClient.value) }; document.head.appendChild(script)
 })
@@ -58,7 +61,7 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
             <p class="auth-panel__lead">Set up your secure DJA Payroll access.</p>
             <form class="auth-form" novalidate @submit.prevent="register">
               <div class="auth-form__grid"><div class="auth-field"><label for="first-name">First name</label><input id="first-name" v-model="form.firstName" autocomplete="given-name" placeholder="Juan" required /></div><div class="auth-field"><label for="last-name">Last name</label><input id="last-name" v-model="form.lastName" autocomplete="family-name" placeholder="Dela Cruz" required /></div></div>
-              <div class="auth-form__grid"><div class="auth-field"><label for="gender">Gender</label><select id="gender" v-model="form.gender" required><option value="" disabled>Select</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></div><div class="auth-field"><label for="department">Department (optional)</label><input id="department" v-model.trim="form.departmentName" autocomplete="organization" maxlength="100" placeholder="e.g. Human Resources" /></div></div>
+              <div class="auth-form__grid"><div class="auth-field"><label for="gender">Gender</label><select id="gender" v-model="form.gender" required><option value="" disabled>Select</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></div><div class="auth-field"><label for="department">Department (optional)</label><select id="department" v-model="form.departmentId"><option :value="null">No department</option><option v-for="department in departments" :key="department.DepartmentID" :value="department.DepartmentID">{{ department.DepartmentName }}</option></select></div></div>
               <div class="auth-field"><label for="signup-email">Email address</label><input id="signup-email" v-model="form.email" type="email" autocomplete="email" placeholder="name@company.com" required /></div>
               <div class="auth-field">
                 <label for="new-password">Password</label>

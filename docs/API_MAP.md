@@ -7,8 +7,10 @@ Apply `node --env-file=.env scripts/apply-settings-access.mjs` to create `user_m
 | Method | Path | Tables used | Caller | Request / response |
 | --- | --- | --- | --- | --- |
 | GET | `/api/settings/access` | `user`, `user_module_permission` | `app/pages/settings/index.vue`, `app/pages/dashboard/index.vue` | Signed-in user's current role, module catalog, and effective `canView`/`canEdit` map. |
-| GET | `/api/settings/users` | `user`, `department`, `user_module_permission` | `app/pages/settings/index.vue` | Admin only. Returns all departments (including empty or inactive ones) as `{ id, name, status }` plus each user's ID, name, email, `departmentId`, role, account status, and effective module access for the department-grouped Team access view. |
+| GET | `/api/settings/users` | `user`, `department`, `user_module_permission` | `app/pages/settings/index.vue` | Admin only. Returns active departments, including empty ones, as `{ id, name, status }` plus each user's ID, name, email, `departmentId`, role, account status, and effective module access for the department-grouped Team access view. |
 | PUT | `/api/settings/users` | `user`, `user_module_permission` | `app/pages/settings/index.vue` | Admin only. Body `{ userId, role, status, access: { [moduleKey]: { canView, canEdit } } }`. Validates every module, updates role/status and permissions in one transaction, blocks self-demotion/deactivation; returns `{ success: true }`. |
+| POST | `/api/settings/departments` | `department` | `app/pages/settings/index.vue` | Admin only. Body `{ name }` creates a department or reactivates a previously removed matching name; rejects an active duplicate. Returns `{ department: { id, name, status } }`. |
+| DELETE | `/api/settings/departments/:id` | `department`, `user` | `app/pages/settings/index.vue` | Admin only. Refuses removal while any user is assigned; otherwise marks the department Inactive so it disappears from account choices and Team access. Returns `{ success: true }`. |
 | GET | `/api/settings/backups` | none; filesystem backup metadata | `app/pages/settings/index.vue` | Admin only. Returns completed SQL backups, automatic-backup flag, and time zone. |
 | POST | `/api/settings/backups` | all database tables read by dump client | `app/pages/settings/index.vue` | Admin only. Creates a manual `mysqldump` SQL backup and SHA-256 metadata; returns `{ backup }`. |
 | GET | `/api/settings/backups/download?name=&metadata=1` | none; filesystem SQL backup and manifest | `app/pages/settings/index.vue` | Admin only. Validates managed filename and SHA-256. Streams one downloadable `.sql` file with an embedded checksum manifest comment; `metadata=1` remains available for the matching `.sql.json` server metadata. |
@@ -16,6 +18,8 @@ Apply `node --env-file=.env scripts/apply-settings-access.mjs` to create `user_m
 | POST | `/api/settings/backups/restore` | all database tables in selected SQL dump | `app/pages/settings/index.vue` | Admin only. Body `{ name, confirmation: 'RESTORE' }`. Verifies managed backup, creates a pre-restore safety backup, imports the SQL with the MySQL/MariaDB client, appends a filesystem audit entry; returns `{ success: true, safetyBackup }`. A failed import may be partial and requires recovery from the safety backup. |
 
 The hourly Nitro plugin checks for a missing daily backup using Asia/Singapore dates while the app is running. `scripts/backup-database.mjs` is an independent scheduler entry point; see `docs/SETTINGS_BACKUP.md` for setup and recovery limits.
+
+Run `node --env-file=.env scripts/align-account-departments.mjs` to make the six approved account departments active and mark unassigned older names inactive. The script refuses to inactivate any department with assigned users.
 
 ## Payroll processing, finalization, and cancellation
 
@@ -68,7 +72,7 @@ Run `node --env-file=.env scripts/apply-payroll-adjustments.mjs` to apply the id
 | Method | Path | Tables used | Caller | Summary |
 | --- | --- | --- | --- | --- |
 | POST | `/api/auth/login` | `user`, `user_history` | `app/pages/loginscreen/index.vue` | Email/password sign-in; sets `pbs_session`. |
-| POST | `/api/auth/register` | `user`, `department` | `app/pages/signupscreen/index.vue` | Creates a local user and sends verification. |
+| POST | `/api/auth/register` | `user`, `department` | `app/pages/signupscreen/index.vue` | Creates a local user and sends verification. Optional `departmentId` must refer to an active saved department; arbitrary names cannot create departments. |
 | POST | `/api/auth/logout` | `user_history` | Authenticated pages | Clears `pbs_session`. |
 | GET | `/api/auth/me` | `user`, `department` | `app/pages/dashboard/index.vue` | Returns the current session user. |
 | POST | `/api/auth/forgot-password` | `user` | `app/pages/forgotpass` | Sends a password-reset link. |
@@ -77,7 +81,7 @@ Run `node --env-file=.env scripts/apply-payroll-adjustments.mjs` to apply the id
 | POST | `/api/auth/verify-email` | `user` | Verification UI | Verifies a submitted email code. |
 | GET | `/api/auth/verify-reset-token` | `user` | Password-reset page | Checks reset-token validity. |
 | POST | `/api/auth/resend-verification` | `user` | Signup/verification UI | Resends an email verification code. |
-| POST | `/api/auth/update-profile` | `user` | Profile UI | Updates the signed-in user's profile. |
+| POST | `/api/auth/update-profile` | `user`, `department` | `components/modals/editprofile.vue` | Updates the signed-in user's profile. Optional `departmentId` must refer to an active saved department. |
 | POST | `/api/auth/upload-avatar` | `user` | Profile UI | Uploads the signed-in user's avatar. |
 | GET | `/api/auth/departments` | `department` | Signup/profile UI | Lists active departments. |
 | POST | `/api/auth/google-code` | `user`, `user_history` | Login/signup pages | Google authorization-code flow; sets `pbs_session`. |
