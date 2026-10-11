@@ -116,6 +116,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernTimeField.vue`
 - API calls and handlers:
   - `DELETE /api/organization/shift-code` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/shift-code` → `server/api/organization/[resource].get.ts`
@@ -170,6 +171,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
   - `components/ModernDateField.vue`
+  - `components/ModernTimeField.vue`
   - `components/OrganizationCrud.vue`
   - `components/RateCrud.vue`
   - `components/RateMoneyFields.vue`
