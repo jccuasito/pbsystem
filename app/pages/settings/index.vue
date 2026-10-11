@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import EditProfile from '../../../components/modals/editprofile.vue'
+import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
 
 type Permission = { canView: boolean; canEdit: boolean }
 type User = { id: number; name: string; email: string; image: string | null; departmentId: number | null; role: string; status: string; access: Record<string, Permission> }
@@ -229,10 +230,7 @@ onMounted(() => { isDark.value = localStorage.getItem('dja-theme') === 'dark'; l
 
     <div v-if="error" class="notice error page-notice" role="alert"><span>{{ error }}</span><button type="button" aria-label="Dismiss error" @click="error = ''">×</button></div>
     <div v-if="success" class="notice success page-notice" role="status"><span>{{ success }}</span><button type="button" aria-label="Dismiss message" @click="success = ''">×</button></div>
-    <div v-if="loading" class="settings-loading" role="status" aria-live="polite">
-      <span>Loading settings...</span>
-      <div class="settings-loading__track" aria-hidden="true"><span></span></div>
-    </div>
+    <WorkspaceLoading v-if="loading" label="Loading settings..." />
     <template v-else>
       <div class="settings-shell">
         <nav class="section-nav" aria-label="Settings sections">
@@ -386,9 +384,4 @@ onMounted(() => { isDark.value = localStorage.getItem('dja-theme') === 'dark'; l
 .danger-outline{border:1px solid #edc1c1;background:var(--surface);color:#a62828}.user-department-label{display:grid;gap:7px;font-size:.88rem;font-weight:700}.user-department-label select{width:100%;min-height:44px;border:1px solid #cbdaf5;border-radius:10px;background:var(--surface);color:var(--ink);padding:0 12px;font:inherit}.field-hint{margin:7px 0 0!important;color:var(--muted);font-size:.8rem}.user-delete-button{margin-right:auto}@media(max-width:540px){.user-dialog-footer{flex-wrap:wrap}.user-delete-button{width:100%;margin-right:0}}
 .avatar img,.member-avatar img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
 .department-user-previews{display:flex;align-items:center;flex:none;margin-left:auto;padding-right:5px}.department-user-previews img{width:30px;height:30px;border:2px solid var(--surface);border-radius:50%;object-fit:cover;background:#e9f0ff}.department-user-previews img+img{margin-left:-8px}.department-user-previews+.directory-chevron{margin-left:0}
-.settings-loading{width:min(100%,360px);margin:52px auto;color:var(--muted);text-align:center;font-size:.9rem}
-.settings-loading__track{height:4px;margin-top:14px;overflow:hidden;border-radius:999px;background:rgba(40,98,233,.12)}
-.settings-loading__track span{display:block;width:38%;height:100%;border-radius:inherit;background:#2862e9;animation:settings-loading-slide 1.2s ease-in-out infinite}
-@keyframes settings-loading-slide{from{transform:translateX(-110%)}to{transform:translateX(275%)}}
-@media(prefers-reduced-motion:reduce){.settings-loading__track span{animation-duration:3s}}
 </style>

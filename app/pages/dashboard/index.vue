@@ -26,6 +26,7 @@ import PayrollProcessingPage from '../payroll/processing/index.vue'
 import PayslipPage from '../payroll/payslip/index.vue'
 import PayrollHistoryPage from '../payroll/history/index.vue'
 import SettingsPage from '../settings/index.vue'
+import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -216,6 +217,12 @@ const navGroups = [
   { label: 'Reports', to: '/reports', icon: 'chart-bar', view: 'reports' },
   { label: 'Settings', to: '/settings', icon: 'settings', view: 'settings' }
 ]
+const activeWorkspaceLabel = computed(() => {
+  const view = activeWorkspaceView.value
+  if (!view) return 'Dashboard'
+  const item = navGroups.flatMap((group: any) => group.children || [group]).find((entry: any) => entry.view === view)
+  return item?.label || view.replace(/-/g, ' ')
+})
 
 function viewModule(view: string) {
   if (view === 'settings') return 'settings'
@@ -545,9 +552,7 @@ onBeforeUnmount(() => {
             <component v-if="activePageComponent" :key="activeWorkspaceView" :is="activePageComponent" class="dash-workspace-page" @navigate="openWorkspaceView" />
           </KeepAlive>
 
-          <section v-if="activeWorkspaceView && !moduleAccess && activeWorkspaceView !== 'settings'" class="workspace-placeholder">
-            <p>LOADING</p><h1>Checking access…</h1>
-          </section>
+          <WorkspaceLoading v-if="activeWorkspaceView && !moduleAccess && activeWorkspaceView !== 'settings'" :label="`Loading ${activeWorkspaceLabel}...`" />
           <section v-else-if="activeWorkspaceView && !canViewWorkspace(activeWorkspaceView)" class="workspace-placeholder">
             <p>ACCESS RESTRICTED</p><h1>You do not have access to this module</h1><span>Ask an administrator to update your module permissions.</span>
           </section>
@@ -557,6 +562,7 @@ onBeforeUnmount(() => {
             <span>This section now stays inside the dashboard workspace. Its full screen will appear here once it is added to the system.</span>
           </section>
 
+          <WorkspaceLoading v-if="!activeWorkspaceView && !moduleAccess" label="Loading dashboard..." />
           <template v-if="!activeWorkspaceView && moduleAccess?.dashboard?.canView">
           <div class="dash-header-row">
             <div class="dash-header">

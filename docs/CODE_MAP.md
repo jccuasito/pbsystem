@@ -179,6 +179,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/RateMoneyFields.vue`
   - `components/SearchableSelect.vue`
   - `components/SiteRateCrud.vue`
+  - `components/WorkspaceLoading.vue`
   - `shared/utils/deployment.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
@@ -872,6 +873,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `components/modals/editprofile.vue`
+  - `components/WorkspaceLoading.vue`
 - API calls and handlers:
   - `DELETE /api/auth/account` → `server/api/auth/account.delete.ts`
   - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
