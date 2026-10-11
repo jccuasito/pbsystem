@@ -22,12 +22,16 @@ function addLine(lines: Map<string, any>, section: string, label: string, amount
 
 export function payslipGroups(payrolls: any[], details: any[], deductions: any[], transactions: any[]) {
   const grouped = new Map<string, any>()
-  const payrollById = new Map(payrolls.map(item => [Number(item.PayrollID), item]))
+  const groupByPayrollId = new Map<number, any>()
   const loanTransactions = new Set(transactions.filter(item => item.EntryType === 'Loan').map(item => Number(item.PayrollID)))
   for (const payroll of payrolls) {
-    const key = `${payroll.PeriodStart}:${payroll.PeriodEnd}`
+    const isReliever = payroll.AssignmentType === 'Reliever'
+    const siteId = Number(payroll.SiteID || 0)
+    const key = `${payroll.PeriodStart}:${payroll.PeriodEnd}:${isReliever ? `reliever:${siteId || `payroll:${payroll.PayrollID}`}` : 'regular'}`
     const group = grouped.get(key) || {
-      periodStart: payroll.PeriodStart, periodEnd: payroll.PeriodEnd, status: 'Released',
+      key, periodStart: payroll.PeriodStart, periodEnd: payroll.PeriodEnd, status: 'Released',
+      assignmentType: isReliever ? 'Reliever' : 'Regular',
+      siteName: isReliever ? payroll.SiteName || 'Unassigned site' : null,
       payrollIds: [], sources: [], grossCents: 0, deductionCents: 0, netCents: 0,
       lines: new Map<string, any>(),
     }
@@ -40,11 +44,9 @@ export function payslipGroups(payrolls: any[], details: any[], deductions: any[]
     group.netCents += cents(payroll.NetPay)
     if (payroll.Status !== 'Released') group.status = 'Approved'
     grouped.set(key, group)
+    groupByPayrollId.set(Number(payroll.PayrollID), group)
   }
-  const groupFor = (payrollId: number) => {
-    const payroll = payrollById.get(Number(payrollId))
-    return payroll ? grouped.get(`${payroll.PeriodStart}:${payroll.PeriodEnd}`) : null
-  }
+  const groupFor = (payrollId: number) => groupByPayrollId.get(Number(payrollId))
   for (const detail of details) {
     const group = groupFor(detail.PayrollID)
     if (!group) continue
@@ -88,12 +90,14 @@ export function payslipGroups(payrolls: any[], details: any[], deductions: any[]
     if (unitemizedDeductions > 0) addLine(group.lines, 'other', 'Other posted deductions', pesos(unitemizedDeductions))
   }
   return [...grouped.values()].map(group => ({
-    periodStart: group.periodStart, periodEnd: group.periodEnd, status: group.status,
+    key: group.key, periodStart: group.periodStart, periodEnd: group.periodEnd, status: group.status,
+    assignmentType: group.assignmentType, siteName: group.siteName,
     payrollIds: group.payrollIds, sources: group.sources,
     gross: pesos(group.grossCents), deductions: pesos(group.deductionCents), net: pesos(group.netCents),
     lines: [...group.lines.values()].map(line => ({ section: line.section, label: line.label,
       hours: Math.round(line.hours * 100) / 100, amount: pesos(line.amountCents) })),
-  })).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd) || b.periodStart.localeCompare(a.periodStart))
+  })).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd) || b.periodStart.localeCompare(a.periodStart)
+    || a.assignmentType.localeCompare(b.assignmentType) || (a.siteName || '').localeCompare(b.siteName || ''))
 }
 
 export async function listPayslips(event: any) {
@@ -117,12 +121,15 @@ export async function listPayslips(event: any) {
         DATE_FORMAT(py.StartDate, '%Y-%m-%d') AS PeriodStart,
         DATE_FORMAT(py.EndDate, '%Y-%m-%d') AS PeriodEnd,
         py.GrossPay, py.TotalDeduction, py.NetPay, pp.BatchID,
+        COALESCE(d.SiteID, ed.SiteID) AS SiteID,
+        COALESCE(de.AttendanceType, ed.DeploymentType, 'Regular') AS AssignmentType,
         COALESCE(dsite.SiteName, deploymentSite.SiteName) AS SiteName, client.ClientName
       FROM payroll py
       LEFT JOIN payroll_processing_posting pp ON pp.PayrollID = py.PayrollID AND pp.Status = 'Active'
       LEFT JOIN attendance_dtr d ON d.BatchID = pp.BatchID
       LEFT JOIN site dsite ON dsite.SiteID = d.SiteID
       LEFT JOIN client ON client.ClientID = d.ClientID
+      LEFT JOIN attendance_dtr_employee de ON de.BatchID = pp.BatchID AND de.EmployeeID = py.EmployeeID
       LEFT JOIN employee_deployment ed ON ed.DeploymentID = py.DeploymentID
       LEFT JOIN site deploymentSite ON deploymentSite.SiteID = ed.SiteID
       WHERE py.EmployeeID = ? AND py.Status IN ('Approved', 'Released')

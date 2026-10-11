@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const jiti = require('jiti')(__filename)
 const { payslipGroups } = jiti('../server/utils/payslipCrud.ts')
 
-test('one cutoff combines reliever site payrolls and totals like-kind adjustments', () => {
+test('regular payslips combine payroll sources in one cutoff and total like-kind adjustments', () => {
   const payrolls = [
     { PayrollID: 1, PeriodStart: '2026-09-16', PeriodEnd: '2026-09-30',
       Status: 'Approved', SiteName: 'Site A', GrossPay: 800, TotalDeduction: 100, NetPay: 700 },
@@ -31,6 +31,27 @@ test('one cutoff combines reliever site payrolls and totals like-kind adjustment
   assert.deepEqual(cutoff.lines.filter(line => line.section === 'government').map(line => line.label),
     ['Pag-ibig · Premium', 'SSS · Calamity Loan'])
   assert.equal(cutoff.lines.filter(line => line.label === 'Calamity Loan').length, 0)
+})
+
+test('reliever payslips stay separate by site within one cutoff', () => {
+  const payrolls = [
+    { PayrollID: 11, PeriodStart: '2026-10-01', PeriodEnd: '2026-10-15', Status: 'Approved',
+      AssignmentType: 'Reliever', SiteID: 1, SiteName: 'Site A', GrossPay: 800, TotalDeduction: 20, NetPay: 780 },
+    { PayrollID: 12, PeriodStart: '2026-10-01', PeriodEnd: '2026-10-15', Status: 'Approved',
+      AssignmentType: 'Reliever', SiteID: 2, SiteName: 'Site B', GrossPay: 900, TotalDeduction: 30, NetPay: 870 },
+    { PayrollID: 13, PeriodStart: '2026-10-01', PeriodEnd: '2026-10-15', Status: 'Approved',
+      AssignmentType: 'Reliever', SiteID: 1, SiteName: 'Site A', GrossPay: 100, TotalDeduction: 0, NetPay: 100 },
+    { PayrollID: 14, PeriodStart: '2026-10-01', PeriodEnd: '2026-10-15', Status: 'Approved',
+      AssignmentType: 'Regular', SiteID: 3, SiteName: 'Fixed Site', GrossPay: 1000, TotalDeduction: 40, NetPay: 960 },
+  ]
+  const groups = payslipGroups(payrolls, [], [], [])
+  assert.equal(groups.length, 3)
+  assert.deepEqual(groups.map(group => [group.assignmentType, group.siteName, group.payrollIds, group.net]), [
+    ['Regular', null, [14], 960],
+    ['Reliever', 'Site A', [11, 13], 880],
+    ['Reliever', 'Site B', [12], 870],
+  ])
+  assert.equal(new Set(groups.map(group => group.key)).size, 3)
 })
 
 test('posted late and undertime share one payslip line with actual amounts', () => {
