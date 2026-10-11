@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, ref } from 'vue'
 import PayrollProcessingDetailModal from '~/components/PayrollProcessingDetailModal.vue'
 
 type Cutoff = { start: string; end: string }
@@ -92,11 +92,14 @@ async function pausePlan(change: { entryType: string; recordId: number; startDat
   finally { busy.value = false }
 }
 onMounted(load)
+let wasDeactivated = false
+onDeactivated(() => { wasDeactivated = true })
+onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
 </script>
 
 <template>
   <section class="processing-page">
-    <header class="heading"><div><p class="eyebrow">PAYROLL</p><h1>Payroll Processing</h1><p>Review computed DTRs by site, then finalize payroll in the same screen.</p></div><button type="button" class="secondary refresh" :disabled="loading" @click="load">{{ loading?'Refreshing…':'Refresh' }}</button></header>
+    <header class="heading"><div><p class="eyebrow">PAYROLL</p><h1>Payroll Processing</h1><p>Review computed DTRs by site, then finalize payroll in the same screen.</p></div></header>
     <p class="workflow-note">Finalization posts employee payroll, eligible fixed-site installments, agency contributions, and approved prior-period adjustments. BTR reliever hours are a separate earning at the regular rate effective on each covered date. Payslip release is separate.</p>
     <div class="filters">
       <label class="search-field">Search site or employee<input v-model="search" type="search" placeholder="Search site, client, DTR, or employee"></label>

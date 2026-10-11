@@ -330,7 +330,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
-- Links to: `/loginscreen`, `/payroll/history`, `/userprofile/viewprofile`
+- Links to: `/loginscreen`, `/userprofile/viewprofile`
 
 ### `/deductions-loans/catalog`
 

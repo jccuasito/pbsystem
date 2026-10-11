@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, ref } from 'vue'
 
 type Employee = {
   EmployeeID: number; EmployeeNumber: string | null; EmployeeName: string; Status: string
@@ -102,11 +102,14 @@ function changeHistoryPage(next: number) {
   profileBody.value?.scrollTo({ top: 0 })
 }
 onMounted(load)
+let wasDeactivated = false
+onDeactivated(() => { wasDeactivated = true })
+onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
 </script>
 
 <template>
   <section class="payslip-page">
-    <header class="page-head"><div><p class="eyebrow">PAYROLL</p><h1>Payslips</h1><p>View each employee’s finalized payslips and cutoff history.</p></div><button type="button" class="secondary" :disabled="loading" @click="load">{{ loading ? 'Refreshing…' : 'Refresh' }}</button></header>
+    <header class="page-head"><div><p class="eyebrow">PAYROLL</p><h1>Payslips</h1><p>View each employee’s finalized payslips and cutoff history.</p></div></header>
     <div class="notice">Regular payroll is shown by cutoff. Reliever payroll has a separate payslip for each site in the same cutoff.</div>
     <form class="filters" @submit.prevent="applyFilters">
       <label>Search employee<input v-model="search" type="search" placeholder="Employee name or number"></label>

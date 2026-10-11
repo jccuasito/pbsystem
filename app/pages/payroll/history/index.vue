@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, ref } from 'vue'
 
 type Cutoff = { PeriodStart: string; PeriodEnd: string }
 type Agency = { AgencyID: number; AgencyName: string }
@@ -92,11 +92,14 @@ function closeDetail() { selectedBatchId.value = null; detail.value = null; deta
 function applyFilters() { page.value = 1; load() }
 function changePage(next: number) { page.value = next; load() }
 onMounted(load)
+let wasDeactivated = false
+onDeactivated(() => { wasDeactivated = true })
+onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
 </script>
 
 <template>
   <section class="history-page">
-    <header class="page-head"><div><p class="eyebrow">PAYROLL</p><h1>Payroll History</h1><p>Review finalized site payroll, employee totals, and cancellation history.</p></div><button type="button" class="secondary" :disabled="loading" @click="load">{{ loading ? 'Refreshing…' : 'Refresh' }}</button></header>
+    <header class="page-head"><div><p class="eyebrow">PAYROLL</p><h1>Payroll History</h1><p>Review finalized site payroll, employee totals, and cancellation history.</p></div></header>
     <div class="notice">Amounts come from posted payroll records. Cancelled payroll is kept for audit and excluded from current totals.</div>
 
     <form class="filters" @submit.prevent="applyFilters">

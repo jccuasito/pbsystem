@@ -586,7 +586,7 @@ onBeforeUnmount(() => {
             <div class="dash-panel">
               <div class="dash-panel__head">
                 <h2>Recent Payroll Runs</h2>
-                <NuxtLink to="/payroll/history">View all</NuxtLink>
+                <NuxtLink v-if="canViewWorkspace('payroll-history')" :to="{ path: '/dashboard', query: { view: 'payroll-history' } }">View all</NuxtLink>
               </div>
               <table class="dash-table">
                 <thead>

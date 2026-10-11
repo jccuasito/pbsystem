@@ -311,7 +311,7 @@ onMounted(()=>{dialog.value?.showModal();void load()})
           </div></details>
         </template>
       </div>
-      <footer class="btr-footer"><span>{{drafts.length?drafts.length+' pending change(s) · Save BTR to keep your edits.':'BTR is saved separately. Regular / OT totals are unchanged.'}}</span><div><button type="button" :disabled="loading||saving||reading" @click="load">Refresh</button><button type="button" :disabled="saving||reading" @click="close">Close</button><button v-if="editable" type="button" class="btr-primary" :disabled="!ready" @click="save">{{saving?'Saving…':'Save BTR'}}</button></div></footer>
+      <footer class="btr-footer"><span>{{drafts.length?drafts.length+' pending change(s) · Save BTR to keep your edits.':'BTR is saved separately. Regular / OT totals are unchanged.'}}</span><div><button type="button" :disabled="saving||reading" @click="close">Close</button><button v-if="editable" type="button" class="btr-primary" :disabled="!ready" @click="save">{{saving?'Saving…':'Save BTR'}}</button></div></footer>
       <dialog ref="cellDialog" class="btr-dialog btr-cell-dialog" aria-labelledby="btr-cell-title" @cancel.stop.prevent="closeCell" @click.stop="($event.target===cellDialog)&&closeCell()">
         <template v-if="selectedCell">
           <header class="btr-header"><div><p class="btr-eyebrow">BREAK TIME RELIEVER</p><h2 id="btr-cell-title">{{dateLabel(selectedCell.date)}}</h2><p><strong>{{selectedCell.employee.EmployeeName}}</strong><br>{{canonicalId(selectedCell.employee.EmployeeID)}}</p></div><button type="button" class="btr-close" aria-label="Close day editor" :disabled="saving||reading" @click="closeCell">×</button></header>
