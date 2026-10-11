@@ -140,7 +140,8 @@ function close() { if (!busy.value) emit('update:modelValue', false) }
           </div>
           <div class="edit-profile__field">
             <label for="edit-department">Department</label>
-            <select id="edit-department" v-model="form.departmentId"><option :value="null">No department</option><option v-for="department in departments" :key="department.DepartmentID" :value="department.DepartmentID">{{ department.DepartmentName }}</option></select>
+            <select id="edit-department" v-model="form.departmentId" :disabled="user?.userType !== 'Admin'"><option :value="null">No department</option><option v-for="department in departments" :key="department.DepartmentID" :value="department.DepartmentID">{{ department.DepartmentName }}</option></select>
+            <small v-if="user?.userType !== 'Admin'">Ask an admin to change your department.</small>
           </div>
           <p v-if="error" role="alert" class="edit-profile__error">{{ error }}</p>
           <div class="edit-profile__actions">

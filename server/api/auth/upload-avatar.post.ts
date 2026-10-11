@@ -4,12 +4,16 @@ import path from 'path'
 import crypto from 'crypto'
 import pool from '../../connection/dbconnect'
 import { requireSession } from '../../utils/auth'
+import { currentActor } from '../../utils/settingsAccess'
+import { currentActor } from '../../utils/settingsAccess'
 
 const ALLOWED: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
 const MAX_BYTES = 2 * 1024 * 1024 // 2MB
 
 export default defineEventHandler(async (event) => {
   const session = requireSession(event)
+  await currentActor(event)
+  await currentActor(event)
   const { image } = await readBody<{ image?: string }>(event)
   if (!image || !image.startsWith('data:')) throw createError({ statusCode: 400, statusMessage: 'No image provided.' })
 

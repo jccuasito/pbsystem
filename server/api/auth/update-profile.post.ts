@@ -23,6 +23,11 @@ export default defineEventHandler(async (event) => {
       const [departments] = await connection.execute<any[]>('SELECT DepartmentID FROM department WHERE DepartmentID = ? AND Status = \'Active\' LIMIT 1 FOR UPDATE', [departmentId])
       if (!departments.length) throw createError({ statusCode: 400, statusMessage: 'Select an available department.' })
     }
+    const [accounts] = await connection.execute<any[]>('SELECT DepartmentID, UserType, Status FROM `user` WHERE UserID = ? FOR UPDATE', [session.sub])
+    if (!accounts.length || accounts[0].Status !== 'Active') throw createError({ statusCode: 401, statusMessage: 'Please sign in again.' })
+    if (accounts[0].UserType !== 'Admin' && departmentId !== accounts[0].DepartmentID) {
+      throw createError({ statusCode: 403, statusMessage: 'Only an admin can change a department.' })
+    }
     await connection.execute('UPDATE `user` SET FirstName = ?, LastName = ?, Gender = ?, DepartmentID = ? WHERE UserID = ?', [firstName, lastName, gender, departmentId, session.sub])
     await connection.commit()
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }

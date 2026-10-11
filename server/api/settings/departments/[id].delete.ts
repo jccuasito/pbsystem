@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
     await connection.beginTransaction()
     const [departments] = await connection.execute<any[]>('SELECT DepartmentID, Status FROM department WHERE DepartmentID = ? LIMIT 1 FOR UPDATE', [id])
     if (!departments.length || departments[0].Status !== 'Active') throw createError({ statusCode: 404, statusMessage: 'Department not found.' })
-    const [assigned] = await connection.execute<any[]>('SELECT UserID FROM `user` WHERE DepartmentID = ? LIMIT 1', [id])
+    const [assigned] = await connection.execute<any[]>('SELECT UserID FROM `user` WHERE DepartmentID = ? AND Status = \'Active\' LIMIT 1', [id])
     if (assigned.length) throw createError({ statusCode: 409, statusMessage: 'Move or remove the assigned users before deleting this department.' })
     await connection.execute('UPDATE department SET Status = \'Inactive\' WHERE DepartmentID = ?', [id])
     await connection.commit()

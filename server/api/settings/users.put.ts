@@ -10,9 +10,11 @@ export default defineEventHandler(async (event) => {
   const userId = Number(body?.userId)
   const role = String(body?.role || '')
   const status = String(body?.status || '')
-  if (!Number.isSafeInteger(userId) || userId < 1 || !['Admin', 'Supervisor', 'Encoder', 'Viewer'].includes(role) || !['Active', 'Inactive'].includes(status)) {
+  const departmentId = body?.departmentId === null || body?.departmentId === '' ? null : Number(body?.departmentId)
+  if (!Number.isSafeInteger(userId) || userId < 1 || !['Admin', 'Supervisor', 'Encoder', 'Viewer'].includes(role) || status !== 'Active') {
     throw createError({ statusCode: 400, statusMessage: 'Invalid user, role, or status.' })
   }
+  if (departmentId !== null && (!Number.isSafeInteger(departmentId) || departmentId < 1)) throw createError({ statusCode: 400, statusMessage: 'Select an available department.' })
   if (!body?.access || typeof body.access !== 'object' || Object.keys(body.access).some(key => !MODULES.some(item => item.key === key))) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid module permissions.' })
   }
@@ -28,9 +30,13 @@ export default defineEventHandler(async (event) => {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [existing] = await connection.execute<any[]>('SELECT UserID FROM `user` WHERE UserID = ? FOR UPDATE', [userId])
+    if (departmentId !== null) {
+      const [department] = await connection.execute<any[]>('SELECT DepartmentID FROM department WHERE DepartmentID = ? AND Status = \'Active\' LIMIT 1 FOR UPDATE', [departmentId])
+      if (!department.length) throw createError({ statusCode: 400, statusMessage: 'Select an available department.' })
+    }
+    const [existing] = await connection.execute<any[]>('SELECT UserID, Status FROM `user` WHERE UserID = ? FOR UPDATE', [userId])
     if (!existing.length) throw createError({ statusCode: 404, statusMessage: 'User not found.' })
-    await connection.execute('UPDATE `user` SET UserType = ?, Status = ? WHERE UserID = ?', [role, status, userId])
+    await connection.execute('UPDATE `user` SET UserType = ?, Status = ?, DepartmentID = ? WHERE UserID = ?', [role, status, departmentId, userId])
     for (const module of MODULES) {
       const permission = body.access[module.key]
       await connection.execute(

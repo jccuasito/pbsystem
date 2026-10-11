@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import EditProfile from '../../../components/modals/editprofile.vue'
 
 type Permission = { canView: boolean; canEdit: boolean }
-type User = { id: number; name: string; email: string; departmentId: number | null; role: string; status: string; access: Record<string, Permission> }
+type User = { id: number; name: string; email: string; image: string | null; departmentId: number | null; role: string; status: string; access: Record<string, Permission> }
 type Department = { id: number; name: string; status: string }
 type Backup = { name: string; kind: string; createdAt: string; size: number }
 type Section = 'account' | 'users' | 'backups'
@@ -17,10 +18,17 @@ const automatic = ref(false)
 const selectedUserId = ref<number | null>(null)
 const draft = ref<User | null>(null)
 const userSearch = ref('')
+const showInactiveUsers = ref(false)
 const expandedGroups = ref<Record<string, boolean>>({})
 const newDepartmentName = ref('')
 const showAddDepartment = ref(false)
 const departmentToRemove = ref<Department | null>(null)
+const removeDepartmentAcknowledged = ref(false)
+const userToDelete = ref<User | null>(null)
+const showDeleteAccount = ref(false)
+const deletePhrase = ref('')
+const showEditProfile = ref(false)
+const isDark = ref(false)
 const restoreCandidate = ref<Backup | null>(null)
 const restoreAcknowledged = ref(false)
 const restorePhrase = ref('')
@@ -36,8 +44,9 @@ const success = ref('')
 
 const isAdmin = computed(() => access.value?.isAdmin === true)
 const departmentGroups = computed(() => {
-  const groups = departments.value.map(department => ({ key: `department-${department.id}`, id: department.id as number | null, name: department.name, status: department.status, users: users.value.filter(user => user.departmentId === department.id) }))
-  const unassigned = users.value.filter(user => !departments.value.some(department => department.id === user.departmentId))
+  const listedUsers = users.value.filter(user => showInactiveUsers.value || user.status === 'Active')
+  const groups = departments.value.map(department => ({ key: `department-${department.id}`, id: department.id as number | null, name: department.name, status: department.status, users: listedUsers.filter(user => user.departmentId === department.id) }))
+  const unassigned = listedUsers.filter(user => !departments.value.some(department => department.id === user.departmentId))
   if (unassigned.length) groups.push({ key: 'unassigned', id: null, name: 'Unassigned users', status: '', users: unassigned })
   const query = userSearch.value.toLowerCase().trim()
   if (!query) return groups
@@ -46,7 +55,7 @@ const departmentGroups = computed(() => {
     : { ...group, users: group.users.filter(user => `${user.name} ${user.email} ${user.role} ${user.status}`.toLowerCase().includes(query)) }
   ).filter(group => group.name.toLowerCase().includes(query) || group.users.length)
 })
-const adminCount = computed(() => users.value.filter(user => user.role === 'Admin').length)
+const adminCount = computed(() => users.value.filter(user => user.role === 'Admin' && user.status === 'Active').length)
 const latestBackup = computed(() => backups.value[0] || null)
 const visibleBackups = computed(() => backups.value.slice(0, backupLimit.value))
 const visibleModules = computed(() => (access.value?.modules || []).filter((item: any) => access.value?.access?.[item.key]?.canView))
@@ -60,6 +69,7 @@ function cloneUser(user: User) { return JSON.parse(JSON.stringify(user)) as User
 function selectUser(user: User) { selectedUserId.value = user.id; draft.value = cloneUser(user); error.value = ''; success.value = '' }
 function closeUser() { selectedUserId.value = null; draft.value = null; error.value = '' }
 function initials(name: string) { return name.split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() }
+function photoUsers(groupUsers: User[]) { return groupUsers.filter(user => Boolean(user.image)).slice(0, 3) }
 function formatDate(value: string) { return new Date(value).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Singapore' }) }
 function formatSize(value: number) { return value < 1024 * 1024 ? `${Math.max(1, Math.round(value / 1024))} KB` : `${(value / (1024 * 1024)).toFixed(1)} MB` }
 function backupLabel(kind: string) { return kind === 'daily' ? 'Automatic' : kind === 'manual' ? 'Created manually' : kind === 'before-restore' ? 'Safety copy' : 'Uploaded' }
@@ -67,6 +77,12 @@ function chooseSection(next: Section) { section.value = next; error.value = ''; 
 function isGroupExpanded(key: string) { return expandedGroups.value[key] ?? Boolean(userSearch.value.trim()) }
 function toggleGroup(key: string) { expandedGroups.value = { ...expandedGroups.value, [key]: !isGroupExpanded(key) } }
 function closeAddDepartment() { if (!busy.value) { showAddDepartment.value = false; newDepartmentName.value = ''; error.value = '' } }
+function askRemoveDepartment(group: { id: number | null }) { departmentToRemove.value = departments.value.find(item => item.id === group.id) || null; removeDepartmentAcknowledged.value = false; error.value = '' }
+function askDeleteUser() { if (!draft.value || draft.value.id === account.value?.id) return; userToDelete.value = cloneUser(draft.value); deletePhrase.value = ''; error.value = ''; draft.value = null }
+function closeDeleteUser() { if (!busy.value) { userToDelete.value = null; deletePhrase.value = ''; error.value = '' } }
+function closeDeleteAccount() { if (!busy.value) { showDeleteAccount.value = false; deletePhrase.value = ''; error.value = '' } }
+function openEditProfile() { isDark.value = document.querySelector('.dash-page')?.getAttribute('data-theme') === 'dark'; showEditProfile.value = true }
+async function onProfileSaved() { account.value = (await $fetch<any>('/api/auth/me')).user; success.value = 'Profile updated.'; if (isAdmin.value) await refreshDirectory() }
 async function refreshDirectory() {
   const result = await $fetch<{ users: User[]; departments: Department[] }>('/api/settings/users')
   users.value = result.users
@@ -99,7 +115,7 @@ async function saveUser() {
   if (!draft.value) return
   busy.value = true; error.value = ''; success.value = ''
   try {
-    await $fetch('/api/settings/users', { method: 'PUT', body: { userId: draft.value.id, role: draft.value.role, status: draft.value.status, access: draft.value.access } })
+    await $fetch('/api/settings/users', { method: 'PUT', body: { userId: draft.value.id, role: draft.value.role, status: draft.value.status, departmentId: draft.value.departmentId, access: draft.value.access } })
     await refreshDirectory()
     const updated = users.value.find(user => user.id === draft.value?.id)
     success.value = `Access settings saved for ${updated?.name || draft.value.name}.`
@@ -107,6 +123,7 @@ async function saveUser() {
   } catch (cause) { error.value = errorMessage(cause) }
   finally { busy.value = false }
 }
+async function reactivateUser() { if (!draft.value) return; draft.value.status = 'Active'; await saveUser(); if (draft.value) draft.value.status = 'Inactive' }
 
 async function createDepartment() {
   const name = newDepartmentName.value.trim()
@@ -123,7 +140,7 @@ async function createDepartment() {
 }
 
 async function removeDepartment() {
-  if (!departmentToRemove.value) return
+  if (!departmentToRemove.value || !removeDepartmentAcknowledged.value) return
   const department = departmentToRemove.value
   busy.value = true; error.value = ''; success.value = ''
   try {
@@ -133,6 +150,28 @@ async function removeDepartment() {
     success.value = `${department.name} was removed from active departments.`
   } catch (cause) { error.value = errorMessage(cause) }
   finally { busy.value = false }
+}
+
+async function deleteUser() {
+  if (!userToDelete.value || deletePhrase.value !== 'DELETE') return
+  const user = userToDelete.value
+  busy.value = true; error.value = ''; success.value = ''
+  try {
+    await $fetch(`/api/settings/users/${user.id}`, { method: 'DELETE', body: { confirmation: deletePhrase.value } })
+    await refreshDirectory()
+    userToDelete.value = null; deletePhrase.value = ''
+    success.value = `${user.name}'s account was deleted. Their historical records remain available.`
+  } catch (cause) { error.value = errorMessage(cause) }
+  finally { busy.value = false }
+}
+
+async function deleteAccount() {
+  if (deletePhrase.value !== 'DELETE') return
+  busy.value = true; error.value = ''
+  try {
+    await $fetch('/api/auth/account', { method: 'DELETE', body: { confirmation: deletePhrase.value } })
+    window.location.assign('/loginscreen')
+  } catch (cause) { error.value = errorMessage(cause); busy.value = false }
 }
 
 async function createBackup() {
@@ -177,7 +216,7 @@ async function importBackup() {
   finally { busy.value = false }
 }
 
-onMounted(loadSettings)
+onMounted(() => { isDark.value = localStorage.getItem('dja-theme') === 'dark'; loadSettings() })
 </script>
 
 <template>
@@ -203,30 +242,33 @@ onMounted(loadSettings)
       <div v-if="section === 'account'" class="section-stack">
         <div class="section-intro"><span class="panel-kicker">PERSONAL SETTINGS</span><h2>My account</h2><p>Review your profile and workspace access.</p></div>
         <article class="panel settings-list">
-          <div class="list-title"><h3>Profile</h3><NuxtLink class="button secondary" to="/userprofile/viewprofile">Edit profile</NuxtLink></div>
-          <div class="profile-list-identity"><span class="avatar">{{ account?.firstName?.[0] }}{{ account?.lastName?.[0] }}</span><div><strong>{{ account?.firstName }} {{ account?.lastName }}</strong><span>{{ account?.email }}</span></div></div>
+          <div class="list-title"><h3>Profile</h3><button class="button secondary" type="button" @click="openEditProfile">Edit profile</button></div>
+          <div class="profile-list-identity"><span class="avatar"><img v-if="account?.image" :src="account.image" alt="" /><template v-else>{{ account?.firstName?.[0] }}{{ account?.lastName?.[0] }}</template></span><div><strong>{{ account?.firstName }} {{ account?.lastName }}</strong><span>{{ account?.email }}</span></div></div>
           <dl class="setting-facts"><div><dt>Role</dt><dd>{{ account?.userType }}</dd></div><div><dt>Department</dt><dd>{{ account?.departmentName || 'Not assigned' }}</dd></div><div><dt>Email status</dt><dd>{{ account?.emailVerified ? 'Verified' : 'Not verified' }}</dd></div></dl>
         </article>
         <article class="panel settings-list">
           <div class="list-title"><div><h3>Workspace access</h3><p>{{ visibleModules.length }} sections available · {{ editableModuleCount }} editable</p></div><button v-if="!isAdmin" class="button secondary" type="button" :aria-expanded="showAccessDetails" @click="showAccessDetails = !showAccessDetails">{{ showAccessDetails ? 'Hide details' : 'View details' }}</button><span v-else class="role-badge role-admin">Full access</span></div>
           <div v-if="!isAdmin && showAccessDetails" class="access-list"><div v-for="module in visibleModules" :key="module.key"><span>{{ module.label }}</span><span class="access-tag">{{ access?.access?.[module.key]?.canEdit ? 'Can edit' : 'View only' }}</span></div></div>
         </article>
+        <article class="panel settings-list">
+          <div class="list-title"><div><h3>Delete account</h3><p>Disable your sign-in while keeping payroll and audit history.</p></div><button class="button danger-outline" type="button" @click="showDeleteAccount = true; deletePhrase = ''; error = ''">Delete account</button></div>
+        </article>
       </div>
 
       <div v-else-if="section === 'users' && isAdmin" class="section-stack">
         <div class="section-intro section-intro-actions"><div><span class="panel-kicker">ACCESS MANAGEMENT</span><h2>Departments &amp; users</h2><p>Manage departments and account permissions in one list.</p></div><button class="button primary" type="button" @click="showAddDepartment = true; error = ''; success = ''">Add department</button></div>
-        <div class="directory-summary">{{ departments.length }} departments <span>·</span> {{ users.length }} user accounts <span>·</span> {{ adminCount }} admins</div>
-        <div class="list-toolbar"><label class="sr-only" for="team-search">Search departments or users</label><input id="team-search" v-model="userSearch" class="search" placeholder="Search department, name, or role" /><span>Select a department to view its users.</span></div>
+        <div class="directory-summary">{{ departments.length }} departments <span>·</span> {{ users.filter(user => user.status === 'Active').length }} active accounts <span>·</span> {{ adminCount }} admins</div>
+        <div class="list-toolbar"><label class="sr-only" for="team-search">Search departments or users</label><input id="team-search" v-model="userSearch" class="search" placeholder="Search department, name, or role" /><label class="inactive-toggle"><input v-model="showInactiveUsers" type="checkbox" /> Show inactive accounts</label></div>
         <div class="panel directory-list">
           <div class="directory-columns"><span>Department / user</span><span>Role</span><span>Status</span><span>Action</span></div>
           <div v-if="!departmentGroups.length" class="empty">No matching departments or users.</div>
           <section v-for="group in departmentGroups" :key="group.key" class="directory-group" :aria-label="group.name">
             <div class="directory-group-head">
-              <button v-if="group.users.length" class="directory-expand" type="button" :aria-expanded="isGroupExpanded(group.key)" :aria-controls="`members-${group.key}`" @click="toggleGroup(group.key)"><span class="department-icon" aria-hidden="true">{{ group.id === null ? 'U' : group.name.slice(0, 1).toUpperCase() }}</span><strong>{{ group.name }}</strong><span class="member-count">{{ group.users.length }} {{ group.users.length === 1 ? 'user' : 'users' }}</span><svg class="directory-chevron" :class="{ open: isGroupExpanded(group.key) }" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 5 5-5" /></svg></button>
+              <button v-if="group.users.length" class="directory-expand" type="button" :aria-expanded="isGroupExpanded(group.key)" :aria-controls="`members-${group.key}`" @click="toggleGroup(group.key)"><span class="department-icon" aria-hidden="true">{{ group.id === null ? 'U' : group.name.slice(0, 1).toUpperCase() }}</span><strong>{{ group.name }}</strong><span class="member-count">{{ group.users.length }} {{ group.users.length === 1 ? 'user' : 'users' }}</span><span v-if="photoUsers(group.users).length" class="department-user-previews" aria-hidden="true"><img v-for="user in photoUsers(group.users)" :key="user.id" :src="user.image || undefined" alt="" /></span><svg class="directory-chevron" :class="{ open: isGroupExpanded(group.key) }" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7 5 5 5-5" /></svg></button>
               <div v-else class="directory-name"><span class="department-icon" aria-hidden="true">{{ group.name.slice(0, 1).toUpperCase() }}</span><strong>{{ group.name }}</strong><span class="member-count">0 users</span></div>
-              <button v-if="group.id !== null && !group.users.length" class="department-remove" type="button" :disabled="busy" :aria-label="`Remove ${group.name}`" @click="departmentToRemove = departments.find(item => item.id === group.id) || null">Remove</button>
+              <button v-if="group.id !== null && !group.users.length" class="department-remove" type="button" :disabled="busy" :aria-label="`Remove ${group.name}`" @click="askRemoveDepartment(group)">Remove</button>
             </div>
-            <div v-if="group.users.length" v-show="isGroupExpanded(group.key)" :id="`members-${group.key}`" class="directory-members"><div v-for="user in group.users" :key="user.id" class="directory-user-row"><div class="member-identity"><span class="member-avatar">{{ initials(user.name) }}</span><span><strong>{{ user.name }}</strong><small>{{ user.email }}</small></span></div><span class="role-badge" :class="{ 'role-admin': user.role === 'Admin' }">{{ user.role }}</span><span class="mini-status" :class="{ inactive: user.status !== 'Active' }">{{ user.status }}</span><button class="button secondary" type="button" @click="selectUser(user)">Manage</button></div></div>
+            <div v-if="group.users.length" v-show="isGroupExpanded(group.key)" :id="`members-${group.key}`" class="directory-members"><div v-for="user in group.users" :key="user.id" class="directory-user-row"><div class="member-identity"><span class="member-avatar"><img v-if="user.image" :src="user.image" alt="" /><template v-else>{{ initials(user.name) }}</template></span><span><strong>{{ user.name }}</strong><small>{{ user.email }}</small></span></div><span class="role-badge" :class="{ 'role-admin': user.role === 'Admin' }">{{ user.role }}</span><span class="mini-status" :class="{ inactive: user.status !== 'Active' }">{{ user.status }}</span><button class="button secondary" type="button" @click="selectUser(user)">Manage</button></div></div>
           </section>
         </div>
       </div>
@@ -256,8 +298,51 @@ onMounted(loadSettings)
 
     <div v-if="restoreCandidate" class="modal-backdrop" role="presentation" @click.self="!busy && closeRestore()"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="restore-title" aria-describedby="restore-warning"><div class="panel-kicker">RESTORE BACKUP</div><h2 id="restore-title">Restore this saved copy?</h2><p id="restore-warning" class="restore-warning">This will replace the current database with the copy saved on <strong>{{ formatDate(restoreCandidate.createdAt) }}</strong>. Changes made after that time may be lost. A safety backup will be created first.</p><label class="confirm-check"><input v-model="restoreAcknowledged" type="checkbox" /><span>I understand that newer changes may be replaced.</span></label><label class="restore-phrase">Type RESTORE to confirm<input v-model.trim="restorePhrase" type="text" autocomplete="off" spellcheck="false" placeholder="RESTORE" /></label><div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeRestore">Cancel</button><button class="button danger" type="button" :disabled="busy || !restoreAcknowledged || restorePhrase !== 'RESTORE'" @click="restoreBackup">{{ busy ? 'Restoring...' : 'Restore this backup' }}</button></div></section></div>
     <div v-if="showAddDepartment" class="modal-backdrop" role="presentation" @click.self="closeAddDepartment"><form class="confirm-dialog department-form-dialog" role="dialog" aria-modal="true" aria-labelledby="department-form-title" @submit.prevent="createDepartment"><div class="panel-kicker">DEPARTMENT MANAGEMENT</div><h2 id="department-form-title">Add department</h2><p>It will appear in account department choices once saved.</p><div v-if="error" class="notice error" role="alert">{{ error }}</div><label for="new-department" class="department-form-label">Department name</label><input id="new-department" v-model="newDepartmentName" maxlength="100" placeholder="e.g. Operations Department" autocomplete="off" autofocus /><div class="dialog-actions department-dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeAddDepartment">Cancel</button><button class="button primary" type="submit" :disabled="busy || !newDepartmentName.trim()">{{ busy ? 'Saving...' : 'Add department' }}</button></div></form></div>
-    <div v-if="departmentToRemove" class="modal-backdrop" role="presentation" @click.self="!busy && (departmentToRemove = null)"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="department-remove-title"><span class="panel-kicker">REMOVE DEPARTMENT</span><h2 id="department-remove-title">Remove {{ departmentToRemove.name }}?</h2><p>It will no longer appear in account department choices. You can add it again later if needed.</p><div v-if="error" class="notice error" role="alert">{{ error }}</div><div class="dialog-actions department-dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="departmentToRemove = null">Cancel</button><button class="button danger" type="button" :disabled="busy" @click="removeDepartment">{{ busy ? 'Removing...' : 'Remove department' }}</button></div></section></div>
-    <div v-if="draft" class="modal-backdrop" role="presentation" @click.self="!busy && closeUser()"><section class="user-dialog" role="dialog" aria-modal="true" aria-labelledby="user-dialog-title"><header class="user-dialog-head"><div><span class="panel-kicker">ACCOUNT ACCESS</span><h2 id="user-dialog-title">{{ draft.name }}</h2><p>{{ draft.email }}</p></div><button class="dialog-close" type="button" aria-label="Close user settings" :disabled="busy" @click="closeUser">×</button></header><div class="user-dialog-body"><div v-if="error" class="notice error" role="alert">{{ error }}</div><div class="form-pair"><label>Account role<select v-model="draft.role"><option>Admin</option><option>Supervisor</option><option>Encoder</option><option>Viewer</option></select></label><label>Account status<select v-model="draft.status"><option>Active</option><option>Inactive</option></select></label></div><p v-if="draft.role === 'Admin'" class="info-note">Admins can view and change all sections.</p><div class="permissions-title"><h3>Section access</h3><p>Choose the sections this person can open and update.</p></div><div class="permission-head"><strong>Section</strong><strong>Can view</strong><strong>Can edit</strong></div><div v-for="module in access?.modules" :key="module.key" class="permission-row"><span>{{ module.label }}</span><label><input v-model="draft.access[module.key].canView" type="checkbox" :disabled="draft.role === 'Admin'" @change="!draft!.access[module.key].canView && (draft!.access[module.key].canEdit = false)" /><span class="sr-only">Can view {{ module.label }}</span></label><label><input v-model="draft.access[module.key].canEdit" type="checkbox" :disabled="draft.role === 'Admin' || !draft.access[module.key].canView" /><span class="sr-only">Can edit {{ module.label }}</span></label></div></div><footer class="user-dialog-footer"><button class="button secondary" type="button" :disabled="busy" @click="closeUser">Cancel</button><button class="button primary" type="button" :disabled="busy" @click="saveUser">{{ busy ? 'Saving...' : 'Save changes' }}</button></footer></section></div>
+    <EditProfile v-model="showEditProfile" :user="account" :dark="isDark" @saved="onProfileSaved" />
+    <div v-if="departmentToRemove" class="modal-backdrop" role="presentation" @click.self="!busy && (departmentToRemove = null)">
+      <section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="department-remove-title">
+        <span class="panel-kicker">REMOVE DEPARTMENT</span>
+        <h2 id="department-remove-title">Remove {{ departmentToRemove.name }}?</h2>
+        <p>This department will disappear from account choices. Existing account and payroll history will remain.</p>
+        <label class="confirm-check"><input v-model="removeDepartmentAcknowledged" type="checkbox" /><span>Yes, remove this empty department.</span></label>
+        <div v-if="error" class="notice error" role="alert">{{ error }}</div>
+        <div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="departmentToRemove = null">Cancel</button><button class="button danger" type="button" :disabled="busy || !removeDepartmentAcknowledged" @click="removeDepartment">{{ busy ? 'Removing...' : 'Remove department' }}</button></div>
+      </section>
+    </div>
+    <div v-if="draft" class="modal-backdrop" role="presentation" @click.self="!busy && closeUser()">
+      <section class="user-dialog" role="dialog" aria-modal="true" aria-labelledby="user-dialog-title">
+        <header class="user-dialog-head"><div><span class="panel-kicker">ACCOUNT ACCESS</span><h2 id="user-dialog-title">{{ draft.name }}</h2><p>{{ draft.email }}</p></div><button class="dialog-close" type="button" aria-label="Close user settings" :disabled="busy" @click="closeUser">&times;</button></header>
+        <div class="user-dialog-body">
+          <div v-if="error" class="notice error" role="alert">{{ error }}</div>
+          <div class="form-pair"><label>Account role<select v-model="draft.role"><option>Admin</option><option>Supervisor</option><option>Encoder</option><option>Viewer</option></select></label><div class="status-field"><span>Account status</span><strong class="mini-status" :class="{ inactive: draft.status !== 'Active' }">{{ draft.status }}</strong></div></div>
+          <label class="user-department-label">Department<select v-model="draft.departmentId"><option :value="null">Unassigned</option><option v-for="department in departments" :key="department.id" :value="department.id">{{ department.name }}</option></select></label>
+          <p class="field-hint">Moving a user changes their department in the account directory.</p>
+          <p v-if="draft.role === 'Admin'" class="info-note">Admins can view and change all sections.</p>
+          <div class="permissions-title"><h3>Section access</h3><p>Choose the sections this person can open and update.</p></div>
+          <div class="permission-head"><strong>Section</strong><strong>Can view</strong><strong>Can edit</strong></div>
+          <div v-for="module in access?.modules" :key="module.key" class="permission-row"><span>{{ module.label }}</span><label><input v-model="draft.access[module.key].canView" type="checkbox" :disabled="draft.role === 'Admin'" @change="!draft!.access[module.key].canView && (draft!.access[module.key].canEdit = false)" /><span class="sr-only">Can view {{ module.label }}</span></label><label><input v-model="draft.access[module.key].canEdit" type="checkbox" :disabled="draft.role === 'Admin' || !draft.access[module.key].canView" /><span class="sr-only">Can edit {{ module.label }}</span></label></div>
+        </div>
+        <footer class="user-dialog-footer"><button v-if="draft.id !== account?.id && draft.status === 'Active'" class="button danger-outline user-delete-button" type="button" :disabled="busy" @click="askDeleteUser">Delete user</button><button class="button secondary" type="button" :disabled="busy" @click="closeUser">Cancel</button><button v-if="draft.status === 'Active'" class="button primary" type="button" :disabled="busy" @click="saveUser">{{ busy ? 'Saving...' : 'Save changes' }}</button><button v-else class="button primary" type="button" :disabled="busy" @click="reactivateUser">{{ busy ? 'Saving...' : 'Reactivate account' }}</button></footer>
+      </section>
+    </div>
+    <div v-if="userToDelete" class="modal-backdrop" role="presentation" @click.self="closeDeleteUser">
+      <section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-user-title">
+        <span class="panel-kicker">DELETE USER</span><h2 id="delete-user-title">Delete {{ userToDelete.name }}?</h2>
+        <p>This account will lose sign-in access. Payroll and audit records will be preserved.</p>
+        <div v-if="error" class="notice error" role="alert">{{ error }}</div>
+        <label class="restore-phrase">Type DELETE to confirm<input v-model.trim="deletePhrase" autocomplete="off" spellcheck="false" placeholder="DELETE" /></label>
+        <div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeDeleteUser">Cancel</button><button class="button danger" type="button" :disabled="busy || deletePhrase !== 'DELETE'" @click="deleteUser">{{ busy ? 'Deleting...' : 'Delete user' }}</button></div>
+      </section>
+    </div>
+    <div v-if="showDeleteAccount" class="modal-backdrop" role="presentation" @click.self="closeDeleteAccount">
+      <section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-account-title">
+        <span class="panel-kicker">DELETE ACCOUNT</span><h2 id="delete-account-title">Delete your account?</h2>
+        <p>You will be signed out and will no longer be able to sign in. Payroll and audit history will be preserved. If you are the last active admin, first assign another admin.</p>
+        <div v-if="error" class="notice error" role="alert">{{ error }}</div>
+        <label class="restore-phrase">Type DELETE to confirm<input v-model.trim="deletePhrase" autocomplete="off" spellcheck="false" placeholder="DELETE" /></label>
+        <div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeDeleteAccount">Cancel</button><button class="button danger" type="button" :disabled="busy || deletePhrase !== 'DELETE'" @click="deleteAccount">{{ busy ? 'Deleting...' : 'Delete account' }}</button></div>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -293,5 +378,9 @@ onMounted(loadSettings)
 @media(max-width:560px){.settings-page{padding-top:22px}.section-nav{gap:18px;overflow-x:auto}.section-nav button{white-space:nowrap;font-size:.83rem}.section-intro-actions{align-items:stretch;flex-direction:column}.section-intro-actions .button{align-self:flex-start}.directory-summary{flex-wrap:wrap}.directory-name{flex-wrap:wrap}.directory-name .member-count{width:100%;padding-left:43px}.directory-user-row{padding-left:17px}.directory-empty{padding-left:17px}.setting-row,.setting-facts>div{align-items:flex-start}.setting-row-action{align-items:flex-end;flex-direction:column;gap:8px}.list-title{padding:17px}.profile-list-identity{padding:17px}.setting-facts>div,.setting-row{padding:14px 17px}}
 .directory-expand{display:flex;align-items:center;gap:11px;min-width:0;flex:1;border:0;background:transparent;color:var(--ink);padding:0;text-align:left;font:inherit;cursor:pointer}.directory-expand strong{font-size:.88rem}.directory-expand:hover strong{color:#235bc9}.directory-expand:focus-visible{outline:3px solid #96b6fa;outline-offset:5px;border-radius:6px}.directory-chevron{width:18px;height:18px;margin-left:auto;flex:none;fill:none;stroke:#607da9;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .16s}.directory-chevron.open{transform:rotate(180deg)}.directory-group-head:has(.directory-expand):hover{background:#f3f7ff}.directory-members{background:var(--surface)}
 .directory-group-head{min-height:60px}.directory-group-head .department-icon{width:32px;height:32px;flex:0 0 32px;border-radius:9px;font-size:.78rem;line-height:1}
+.inactive-toggle{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.8rem;cursor:pointer}.inactive-toggle input{width:17px;height:17px;accent-color:#2862e9}.status-field{display:grid;gap:7px;font-size:.88rem;font-weight:700}.status-field .mini-status{justify-self:start}
 @media(max-width:560px){.directory-expand{flex-wrap:wrap}.directory-expand .member-count{width:100%;padding-left:43px}.directory-expand .directory-chevron{position:absolute;right:17px}.directory-group-head{position:relative}}
+.danger-outline{border:1px solid #edc1c1;background:var(--surface);color:#a62828}.user-department-label{display:grid;gap:7px;font-size:.88rem;font-weight:700}.user-department-label select{width:100%;min-height:44px;border:1px solid #cbdaf5;border-radius:10px;background:var(--surface);color:var(--ink);padding:0 12px;font:inherit}.field-hint{margin:7px 0 0!important;color:var(--muted);font-size:.8rem}.user-delete-button{margin-right:auto}@media(max-width:540px){.user-dialog-footer{flex-wrap:wrap}.user-delete-button{width:100%;margin-right:0}}
+.avatar img,.member-avatar img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.department-user-previews{display:flex;align-items:center;flex:none;margin-left:auto;padding-right:5px}.department-user-previews img{width:30px;height:30px;border:2px solid var(--surface);border-radius:50%;object-fit:cover;background:#e9f0ff}.department-user-previews img+img{margin-left:-8px}.department-user-previews+.directory-chevron{margin-left:0}
 </style>

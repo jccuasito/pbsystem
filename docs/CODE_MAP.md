@@ -171,6 +171,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/logoutalert.vue`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
+  - `components/modals/editprofile.vue`
   - `components/ModernDateField.vue`
   - `components/ModernTimeField.vue`
   - `components/OrganizationCrud.vue`
@@ -207,8 +208,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/attendance/holidays` → `server/api/attendance/holidays/index.get.ts`
   - `POST /api/attendance/holidays` → `server/api/attendance/holidays/index.post.ts`
   - `PUT /api/attendance/holidays` → `server/api/attendance/holidays/index.put.ts`
+  - `DELETE /api/auth/account` → `server/api/auth/account.delete.ts`
+  - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
   - `POST /api/auth/logout` → `server/api/auth/logout.post.ts`
   - `GET /api/auth/me` → `server/api/auth/me.get.ts`
+  - `POST /api/auth/update-profile` → `server/api/auth/update-profile.post.ts`
+  - `POST /api/auth/upload-avatar` → `server/api/auth/upload-avatar.post.ts`
   - `GET /api/dashboard/recent-activity` → `server/api/dashboard/recent-activity.get.ts`
   - `GET /api/dashboard/recent-payroll` → `server/api/dashboard/recent-payroll.get.ts`
   - `GET /api/dashboard/stats` → `server/api/dashboard/stats.get.ts`
@@ -288,6 +293,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `DELETE /api/settings/departments/[param]` → `server/api/settings/departments/[id].delete.ts`
   - `GET /api/settings/users` → `server/api/settings/users.get.ts`
   - `PUT /api/settings/users` → `server/api/settings/users.put.ts`
+  - `DELETE /api/settings/users/[param]` → `server/api/settings/users/[id].delete.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
@@ -865,9 +871,13 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/settings/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `components/modals/editprofile.vue`
 - API calls and handlers:
+  - `DELETE /api/auth/account` → `server/api/auth/account.delete.ts`
+  - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
   - `GET /api/auth/me` → `server/api/auth/me.get.ts`
+  - `POST /api/auth/update-profile` → `server/api/auth/update-profile.post.ts`
+  - `POST /api/auth/upload-avatar` → `server/api/auth/upload-avatar.post.ts`
   - `GET /api/settings/access` → `server/api/settings/access.get.ts`
   - `GET /api/settings/backups` → `server/api/settings/backups/index.get.ts`
   - `POST /api/settings/backups` → `server/api/settings/backups/index.post.ts`
@@ -877,6 +887,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `DELETE /api/settings/departments/[param]` → `server/api/settings/departments/[id].delete.ts`
   - `GET /api/settings/users` → `server/api/settings/users.get.ts`
   - `PUT /api/settings/users` → `server/api/settings/users.put.ts`
+  - `DELETE /api/settings/users/[param]` → `server/api/settings/users/[id].delete.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
@@ -885,7 +896,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/settingsAccess.ts`
 - Static assets:
   - None detected.
-- Links to: `/userprofile/viewprofile`
+- Links to: none detected.
 
 ### `/signupscreen`
 
@@ -923,6 +934,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/settingsAccess.ts`
 - Static assets:
   - None detected.
 - Links to: `/dashboard`, `/loginscreen`
