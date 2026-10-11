@@ -2,7 +2,7 @@ import { getQuery, getRouterParam, readBody, createError } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
-import { componentAmountCents, fixedDeductionBatchByEmployee, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction } from '../../shared/utils/payrollPreview'
+import { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction } from '../../shared/utils/payrollPreview'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { postEmployeeAccountTransaction } from './employeeAccountTransactionCrud'
 
@@ -60,7 +60,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     LEFT JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     WHERE at.BatchID IN (${ids.map(() => '?').join(', ')})
     ORDER BY at.BatchID, at.EmployeeID, at.AttendanceDate`, ids)
-  const [btrRows] = await connection.execute<any[]>(`SELECT b.BatchID, b.RelieverEmployeeID AS EmployeeID,
+  const [btrRows] = await connection.execute<any[]>(`SELECT b.BatchID, b.RelieverEmployeeID AS EmployeeID, b.ReplacedEmployeeID,
       DATE_FORMAT(b.AttendanceDate, '%Y-%m-%d') AS WorkDate, b.Hours,
       pr.PayrollRateID, DATE_FORMAT(pr.EffectiveDate, '%Y-%m-%d') AS BaseEffectiveDate, pr.RegularRate
     FROM attendance_dtr_btr b
@@ -78,20 +78,23 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
   const employeeIds = [...new Set(roster.map(row => Number(row.EmployeeID)))]
   const [accounts] = employeeIds.length ? await connection.execute<any[]>(`SELECT 'Loan' AS EntryType, el.EmployeeID,
       el.LoanID AS RecordID, lt.LoanName AS ItemName, el.RemainingBalance,
-      NULL AS AccountTypeID,
+      NULL AS AccountTypeID, c.ClassificationName,
       el.MonthlyDeduction AS InstallmentAmount, DATE_FORMAT(el.RepaymentStartDate, '%Y-%m-%d') AS RepaymentStartDate,
       DATE_FORMAT(el.EndDate, '%Y-%m-%d') AS EndDate, el.RepaymentCutoff, el.IsPaused,
       DATE_FORMAT(el.PauseStartDate, '%Y-%m-%d') AS PauseStartDate,
       DATE_FORMAT(el.ResumeDate, '%Y-%m-%d') AS ResumeDate, el.Status
     FROM employee_loan el INNER JOIN loan_type lt ON lt.LoanTypeID = el.LoanTypeID
+    INNER JOIN deduction_loan_classification c ON c.ClassificationID = lt.ClassificationID
     WHERE el.EmployeeID IN (${employeeIds.map(() => '?').join(', ')})
     UNION ALL
     SELECT 'Deduction', ed.EmployeeID, ed.EmployeeDeductionID, dt.DeductionName,
-      ed.RemainingBalance, ed.DeductionTypeID, ed.InstallmentAmount, DATE_FORMAT(ed.RepaymentStartDate, '%Y-%m-%d'),
+      ed.RemainingBalance, ed.DeductionTypeID, c.ClassificationName,
+      ed.InstallmentAmount, DATE_FORMAT(ed.RepaymentStartDate, '%Y-%m-%d'),
       DATE_FORMAT(ed.EndDate, '%Y-%m-%d'), ed.RepaymentCutoff, ed.IsPaused,
       DATE_FORMAT(ed.PauseStartDate, '%Y-%m-%d'),
       DATE_FORMAT(ed.ResumeDate, '%Y-%m-%d'), ed.Status
     FROM employee_deduction ed INNER JOIN deduction_type dt ON dt.DeductionTypeID = ed.DeductionTypeID
+    INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
     WHERE ed.EmployeeID IN (${employeeIds.map(() => '?').join(', ')})`, [...employeeIds, ...employeeIds]) : [[]]
   const [recurring] = employeeIds.length ? await connection.execute<any[]>(`SELECT r.RecurringDeductionID AS RecordID,
     r.EmployeeID, r.DeductionTypeID AS AccountTypeID, dt.DeductionName AS ItemName,
@@ -129,6 +132,19 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     const id = Number(version.AgencyContributionID)
     contributionVersions.set(id, [...(contributionVersions.get(id) || []), version])
   }
+  const [contributionTypes] = await connection.execute<any[]>(`SELECT dt.DeductionTypeID, c.ClassificationName
+    FROM deduction_type dt
+    INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
+    WHERE c.AppliesTo = 'Contribution'`)
+  const contributionClassifications = new Map(contributionTypes.map(row => [Number(row.DeductionTypeID), row.ClassificationName]))
+  const accountClassifications = new Map(accounts.map(row => [`${row.EntryType}:${row.RecordID}`, row.ClassificationName]))
+  const withCatalogClassification = (item: any) => {
+    const classificationName = item.classificationName
+      || (item.entryType === 'AgencyContribution' || item.catalogKind === 'Contribution'
+        ? contributionClassifications.get(Number(item.accountTypeId))
+        : accountClassifications.get(`${item.entryType}:${item.recordId}`))
+    return classificationName ? { ...item, classificationName } : item
+  }
   const [overrides] = await connection.execute<any[]>(`SELECT o.OverrideID, o.BatchID, o.EmployeeID, o.EntryType,
     o.SourceRecordID, o.Reason, DATE_FORMAT(o.CreatedAt, '%Y-%m-%d %H:%i:%s') AS CreatedAt,
     DATE_FORMAT(o.RemovedAt, '%Y-%m-%d %H:%i:%s') AS RemovedAt,
@@ -156,10 +172,15 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     rowsByEmployee.get(key)!.push(row)
   }
   const btrByEmployee = new Map<string, any[]>()
+  const btrRestByEmployee = new Map<string, Map<string, number>>()
   for (const row of btrRows) {
     const key = `${row.BatchID}:${row.EmployeeID}`
     if (!btrByEmployee.has(key)) btrByEmployee.set(key, [])
     btrByEmployee.get(key)!.push(row)
+    const restKey = `${row.BatchID}:${row.ReplacedEmployeeID}`
+    if (!btrRestByEmployee.has(restKey)) btrRestByEmployee.set(restKey, new Map())
+    const byDate = btrRestByEmployee.get(restKey)!
+    byDate.set(row.WorkDate, (byDate.get(row.WorkDate) || 0) + Number(row.Hours || 0))
   }
   const accountsByEmployee = new Map<number, any[]>()
   for (const account of accounts) {
@@ -191,6 +212,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       const components = new Map<string, any>()
       const warnings: string[] = []
       let grossCents = 0; let timeDeductionCents = 0
+      const remainingRestCoverage = new Map(btrRestByEmployee.get(`${batch.BatchID}:${person.EmployeeID}`) || [])
       for (const day of rowsByEmployee.get(`${batch.BatchID}:${person.EmployeeID}`) || []) {
         const hasHours = hours.some(column => Number(day[column] || 0) > 0)
         if (!day.PayrollRateID || (hasHours && day.BaseEffectiveDate > day.WorkDate)) {
@@ -202,7 +224,12 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
           warnings.push('Rest-day holiday hours use the configured holiday rate; review the combined premium before approval.')
         }
         for (const [hourField, rateField, label] of payrollHourComponents) {
-          const quantity = Number(day[hourField] || 0)
+          let quantity = Number(day[hourField] || 0)
+          if (hourField === 'RegularHours') {
+            const allocation = btrRegularAllocation(quantity, remainingRestCoverage.get(day.WorkDate) || 0)
+            quantity = allocation.remainingHours
+            remainingRestCoverage.set(day.WorkDate, allocation.uncoveredHours)
+          }
           if (!quantity) continue
           const amountCents = componentAmountCents(quantity, rate[rateField])
           const previous = components.get(hourField) || { code: hourField, label, hours: 0, amountCents: 0, direction: 'Earning' }
@@ -219,6 +246,9 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         }
         if (Number(rate.Allowance || 0)) warnings.push('Configured allowance is excluded until its payout rule is defined.')
       }
+      for (const [date, uncovered] of remainingRestCoverage) {
+        if (uncovered > 0) warnings.push(`${date}: BTR REST coverage exceeds the employee's regular hours by ${uncovered.toFixed(2)} h. Review attendance or BTR before finalizing.`)
+      }
       for (const coverage of btrByEmployee.get(`${batch.BatchID}:${person.EmployeeID}`) || []) {
         if (!coverage.PayrollRateID || coverage.BaseEffectiveDate > coverage.WorkDate) {
           warnings.push(`${coverage.WorkDate}: BTR has no linked payroll regular rate effective on this date.`)
@@ -231,9 +261,9 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         }
         const quantity = Number(coverage.Hours || 0)
         const amountCents = componentAmountCents(quantity, rate.RegularRate)
-        const previous = components.get('BTRHours') || { code: 'BTRHours', label: 'BTR (regular rate)', hours: 0, amountCents: 0, direction: 'Earning' }
+        const previous = components.get('RegularHours') || { code: 'RegularHours', label: 'Regular', hours: 0, amountCents: 0, direction: 'Earning' }
         previous.hours += quantity; previous.amountCents += amountCents
-        components.set('BTRHours', previous); grossCents += amountCents
+        components.set('RegularHours', previous); grossCents += amountCents
       }
       const adjustmentRowsForPerson = adjustmentsByPerson.get(`${batch.BatchID}:${person.EmployeeID}`) || []
       if (adjustmentRowsForPerson.some(row => row.Status === 'Draft' || row.Status === 'For Approval')) {
@@ -256,7 +286,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         : []
       const dueAccounts = accountPlans.map(account => ({
         entryType: account.EntryType, recordId: account.RecordID, name: account.ItemName,
-        accountTypeId: account.AccountTypeID,
+        accountTypeId: account.AccountTypeID, classificationName: account.ClassificationName,
         remainingBalance: Number(account.RemainingBalance || 0),
         amount: pesos(previewInstallment(account, batch.PeriodStart, batch.PeriodEnd)),
       })).filter(account => account.amount > 0)
@@ -294,6 +324,8 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         ? ['A prior-period adjustment belongs to an employee no longer enrolled in this DTR.'] : []),
       ...(btrRows.some(row => Number(row.BatchID) === Number(batch.BatchID) && !rosterIds.has(Number(row.EmployeeID)))
         ? ['A BTR reliever is not enrolled in this DTR. Add the reliever before finalizing payroll.'] : []),
+      ...(btrRows.some(row => Number(row.BatchID) === Number(batch.BatchID) && !rosterIds.has(Number(row.ReplacedEmployeeID)))
+        ? ['A BTR REST employee is not enrolled in this DTR. Review the BTR entries before finalizing payroll.'] : []),
     ]
     const deductionHistory = overrides.filter(item => Number(item.BatchID) === Number(batch.BatchID)).map(item => ({
       ...item,
@@ -327,7 +359,11 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     const stored = batch?.IsFinalized || ['Rejected', 'Cancelled'].includes(batch?.ReviewStatus)
       ? parseSnapshot(batch.SnapshotJson) : null
     const { SnapshotJson, ...metadata } = batch || {}
-    return { ...site, ...(stored || {}), ...metadata,
+    const employees = (stored?.employees || site.employees).map((person: any) => ({ ...person,
+      deductions: (person.deductions || []).map(withCatalogClassification),
+      dueDeductions: (person.dueDeductions || []).map(withCatalogClassification),
+    }))
+    return { ...site, ...(stored || {}), ...metadata, employees,
       ReviewStatus: batch?.ReviewStatus === 'Approved' && !batch.IsFinalized ? 'Pending' : batch?.ReviewStatus || 'Pending',
       history: historyByBatch.get(Number(site.BatchID)) || [] }
   }) }

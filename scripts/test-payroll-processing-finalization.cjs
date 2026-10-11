@@ -1,7 +1,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 
-test('post BTR earnings, cancel and restore deductions/adjustments, then finalize again', {
+test('transfer BTR regular hours, cancel and restore deductions/adjustments, then finalize again', {
   skip: process.env.PAYROLL_FINALIZATION_TEST_DATABASE !== '1',
 }, async () => {
   const mysql = require('mysql2/promise')
@@ -200,14 +200,21 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
     const [[restWorker]] = await connection.execute(`SELECT ed.EmployeeID, ed.DeploymentID
       FROM employee_deployment ed INNER JOIN employee e ON e.EmployeeID = ed.EmployeeID
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+      INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+      INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
       WHERE ed.SiteID = ? AND ed.EmployeeID <> ? AND ap.AgencyID = ?
-        AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?) LIMIT 1`,
-    [worker.SiteID, worker.EmployeeID, worker.AgencyID, start, start])
+        AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
+        AND pr.EffectiveDate <= ? AND COALESCE(pr.Allowance, 0) = 0 LIMIT 1`,
+    [worker.SiteID, worker.EmployeeID, worker.AgencyID, start, start, start])
     assert.ok(restWorker, 'A second same-site worker is needed to verify BTR payroll earnings')
     {
       await connection.execute(`INSERT INTO attendance_dtr_employee
         (BatchID, EmployeeID, DeploymentID, AttendanceType, IsPermanentSite, CreatedBy)
         VALUES (?, ?, ?, 'Regular', 1, ?)`, [batchId, restWorker.EmployeeID, restWorker.DeploymentID, owner.UserID])
+      await connection.execute(`INSERT INTO attendance
+        (EmployeeID, DeploymentID, BatchID, AttendanceDate, AttendanceStatus, AttendanceType, RegularHours, CreatedBy)
+        VALUES (?, ?, ?, ?, 'Present', 'Regular', 8, ?)`,
+      [restWorker.EmployeeID, restWorker.DeploymentID, batchId, start, owner.UserID])
       await connection.execute(`INSERT INTO attendance_dtr_btr
         (BatchID, AttendanceDate, ReplacedEmployeeID, RelieverEmployeeID, Hours, CreatedBy)
         VALUES (?, ?, ?, ?, 2, ?)`, [batchId, start, restWorker.EmployeeID, worker.EmployeeID, owner.UserID])
@@ -215,11 +222,14 @@ test('post BTR earnings, cancel and restore deductions/adjustments, then finaliz
       const btrData = await btrResponse.json()
       assert.equal(btrResponse.status, 200, btrData.statusMessage || JSON.stringify(btrData))
       const btrSite = btrData.sites.find(item => Number(item.BatchID) === batchId)
-      const btrLine = btrSite.employees.find(item => Number(item.EmployeeID) === Number(worker.EmployeeID))
-        .components.find(item => item.code === 'BTRHours')
-      assert.equal(btrLine.hours, 2)
-      assert.ok(btrLine.amount > 0)
+      const reliever = btrSite.employees.find(item => Number(item.EmployeeID) === Number(worker.EmployeeID))
+      const resting = btrSite.employees.find(item => Number(item.EmployeeID) === Number(restWorker.EmployeeID))
+      assert.equal(reliever.components.find(item => item.code === 'RegularHours').hours, 10)
+      assert.equal(resting.components.find(item => item.code === 'RegularHours').hours, 6)
+      assert.equal(reliever.components.some(item => item.code === 'BTRHours'), false)
+      assert.equal(btrSite.warningCount, 0)
       await connection.execute('DELETE FROM attendance_dtr_btr WHERE BatchID = ?', [batchId])
+      await connection.execute('DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?', [batchId, restWorker.EmployeeID])
       await connection.execute('DELETE FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [batchId, restWorker.EmployeeID])
     }
     const get = await fetch(`${base}/api/payroll/processing?periodStart=${start}&periodEnd=${end}`, { headers: { cookie } })

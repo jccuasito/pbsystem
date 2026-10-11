@@ -30,6 +30,14 @@ export function componentAmountCents(hours: unknown, rate: unknown) {
   return Math.round(Number(hours || 0) * Number(rate || 0) * 100)
 }
 
+export function btrRegularAllocation(regularHours: unknown, coveredHours: unknown) {
+  const regularUnits = Math.round(Number(regularHours || 0) * 100)
+  const coveredUnits = Math.round(Number(coveredHours || 0) * 100)
+  const transferredUnits = Math.min(regularUnits, coveredUnits)
+  return { remainingHours: (regularUnits - transferredUnits) / 100,
+    uncoveredHours: (coveredUnits - transferredUnits) / 100 }
+}
+
 export function fixedDeductionBatchByEmployee(roster: any[], attendance: any[]) {
   const counts = new Map<string, number>()
   for (const row of attendance) {

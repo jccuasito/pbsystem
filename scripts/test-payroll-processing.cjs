@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction } = require('../shared/utils/payrollPreview.ts')
+const { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction } = require('../shared/utils/payrollPreview.ts')
 
 test('daily components use their configured amount and keep cent precision', () => {
   const days = [
@@ -9,6 +9,15 @@ test('daily components use their configured amount and keep cent precision', () 
   ]
   assert.equal(days.reduce((sum, day) => sum + componentAmountCents(day.hours, day.rate), 0), 116000)
   assert.equal(componentAmountCents(1.25, 72.5), 9063)
+})
+
+test('BTR coverage reduces only available REST regular hours and reports excess', () => {
+  const firstRestDay = btrRegularAllocation(8, 1)
+  const secondRestDay = btrRegularAllocation(8, 1)
+  assert.equal(firstRestDay.remainingHours + secondRestDay.remainingHours, 14)
+  assert.equal(firstRestDay.uncoveredHours, 0)
+  assert.deepEqual(btrRegularAllocation(0, 1), { remainingHours: 0, uncoveredHours: 1 })
+  assert.deepEqual(btrRegularAllocation(0.75, 1), { remainingHours: 0, uncoveredHours: 0.25 })
 })
 
 test('loan and deduction plans follow only the fixed-site DTR', () => {
