@@ -159,6 +159,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/organization/region/index.vue`
   - `app/pages/organization/site/index.vue`
   - `app/pages/payroll/adjustments/index.vue`
+  - `app/pages/payroll/history/index.vue`
   - `app/pages/payroll/payslip/index.vue`
   - `app/pages/payroll/processing/index.vue`
   - `app/pages/rates/billing/index.vue`
@@ -260,6 +261,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/payroll/adjustments` → `server/api/payroll/adjustments/index.get.ts`
   - `POST /api/payroll/adjustments` → `server/api/payroll/adjustments/index.post.ts`
   - `PUT /api/payroll/adjustments` → `server/api/payroll/adjustments/index.put.ts`
+  - `GET /api/payroll/history` → `server/api/payroll/history.get.ts`
+  - `GET /api/payroll/history/[param]` → `server/api/payroll/history/[id].get.ts`
   - `GET /api/payroll/payslips` → `server/api/payroll/payslips.get.ts`
   - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
@@ -291,6 +294,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/payrollDeductionOverrideCrud.ts`
+  - `server/utils/payrollHistoryCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/payslipCrud.ts`
   - `server/utils/positionAssignmentCrud.ts`
@@ -670,6 +674,24 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - None detected.
 - Related backend utilities:
   - None detected.
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/payroll/history`
+
+- Page: `app/pages/payroll/history/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - None detected.
+- API calls and handlers:
+  - `GET /api/payroll/history` → `server/api/payroll/history.get.ts`
+  - `GET /api/payroll/history/[param]` → `server/api/payroll/history/[id].get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/payrollHistoryCrud.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.

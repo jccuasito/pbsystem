@@ -24,6 +24,7 @@ import EmployeeAccountTransactionsPage from '../deductions-loans/transactions/in
 import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 import PayrollProcessingPage from '../payroll/processing/index.vue'
 import PayslipPage from '../payroll/payslip/index.vue'
+import PayrollHistoryPage from '../payroll/history/index.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -256,6 +257,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'payroll-adjustments': PayrollAdjustmentsPage,
   'payroll-processing': PayrollProcessingPage,
   'payslip': PayslipPage,
+  'payroll-history': PayrollHistoryPage,
   'employee-loans-deductions': EmployeeLoanDeductionPage,
   'deductions-loans-contributions': AgencyContributionsPage,
   'deductions-loans-transactions': EmployeeAccountTransactionsPage,
