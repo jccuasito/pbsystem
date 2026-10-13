@@ -85,27 +85,80 @@ const selectedEmployee = ref<EmployeeRow | null>(null)
 const profileEmployee = ref<any>(null)
 const profileRecords = ref<RecordItem[]>([])
 const contributionReceipts = ref<ContributionReceipt[]>([])
-const contributionTotal = ref(0)
 const profileOpen = ref(false)
 const issuanceOpen = ref(false)
 const pauseOpen = ref(false)
 const pauseRecord = ref<RecordItem | null>(null)
 const planOpen = ref(false)
 const planRecord = ref<RecordItem | null>(null)
-const historyScope = ref<'Active' | 'Archive'>('Active')
+const historyScope = ref<'All' | 'Active' | 'Archive'>('All')
 const historyType = ref<'All' | 'Loan' | 'Deduction' | 'Contribution'>('All')
+const historyYear = ref('')
+const historyFrom = ref('')
+const historyTo = ref('')
+const historySearch = ref('')
+const historyPage = ref(1)
+const historyPageSize = 5
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const form = reactive({ EntryType: 'Loan' as 'Loan' | 'Deduction', CatalogItemID: '', IssuanceNumber: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: 'Second' as RepaymentCutoff, Remarks: '' })
 const pauseForm = reactive({ PauseStartDate: today(), ResumeDate: '', PauseReason: '' })
 
-const scopedHistory = computed(() => profileRecords.value.filter(item => historyScope.value === 'Active' ? item.Status === 'Active' : item.Status !== 'Active'))
+const historyYears = computed(() => [...new Set([
+  ...profileRecords.value.map(item => item.IssuanceDate?.slice(0, 4)),
+  ...contributionReceipts.value.map(item => item.PeriodEnd?.slice(0, 4)),
+].filter((year): year is string => Boolean(year && /^\d{4}$/.test(year))))].sort((a, b) => b.localeCompare(a)))
+const invalidHistoryRange = computed(() => Boolean(historyFrom.value && historyTo.value && historyFrom.value > historyTo.value))
+const searchTerm = computed(() => historySearch.value.trim().toLocaleLowerCase())
+function matchesHistoryDate(value: string | null) {
+  const dateValue = value?.slice(0, 10) || ''
+  return !invalidHistoryRange.value && (!historyYear.value || dateValue.startsWith(historyYear.value))
+    && (!historyFrom.value || dateValue >= historyFrom.value) && (!historyTo.value || dateValue <= historyTo.value)
+}
+const datedHistory = computed(() => profileRecords.value.filter(item => matchesHistoryDate(item.IssuanceDate)
+  && (!searchTerm.value || `${item.ItemName} ${item.ClassificationName || ''} ${item.AccountReference || ''} ${item.IssuanceCode || ''}`.toLocaleLowerCase().includes(searchTerm.value))))
+const scopedHistory = computed(() => datedHistory.value.filter(item => historyScope.value === 'All' || (historyScope.value === 'Active' ? item.Status === 'Active' : item.Status !== 'Active')))
 const filteredHistory = computed(() => historyType.value === 'All' ? scopedHistory.value : scopedHistory.value.filter(item => item.EntryType === historyType.value))
+const filteredContributionReceipts = computed(() => contributionReceipts.value.filter(receipt => {
+  const start = receipt.PeriodStart?.slice(0, 10) || ''
+  const end = receipt.PeriodEnd?.slice(0, 10) || ''
+  return !invalidHistoryRange.value && (!historyYear.value || end.startsWith(historyYear.value))
+    && (!historyFrom.value || end >= historyFrom.value) && (!historyTo.value || start <= historyTo.value)
+    && (!searchTerm.value || `${receipt.DeductionName} ${receipt.ClassificationName} ${receipt.AgencyName} ${receipt.PayrollID}`.toLocaleLowerCase().includes(searchTerm.value))
+}))
+const visibleContributionTotal = computed(() => filteredContributionReceipts.value.reduce((total, receipt) => total + Number(receipt.Amount || 0), 0))
+const historyTotal = computed(() => historyType.value === 'Contribution' ? filteredContributionReceipts.value.length : filteredHistory.value.length)
+const historyPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize)))
+const pageStart = computed(() => (historyPage.value - 1) * historyPageSize)
+const pagedHistory = computed(() => filteredHistory.value.slice(pageStart.value, pageStart.value + historyPageSize))
+const pagedContributions = computed(() => filteredContributionReceipts.value.slice(pageStart.value, pageStart.value + historyPageSize))
+watch([historyScope, historyType, historyYear, historyFrom, historyTo, historySearch], () => { historyPage.value = 1 })
+watch(historyPages, pages => { if (historyPage.value > pages) historyPage.value = pages })
+function clearHistoryFilters() {
+  historyYear.value = ''
+  historyFrom.value = ''
+  historyTo.value = ''
+  historySearch.value = ''
+  historyPage.value = 1
+}
+const contributionGroups = computed(() => {
+  const groups = new Map<string, { name: string; item: string; total: number; count: number }>()
+  for (const receipt of filteredContributionReceipts.value) {
+    const name = receipt.ClassificationName?.trim() || 'Other contribution'
+    const item = receipt.DeductionName?.trim() || 'Contribution'
+    const key = `${name.toLocaleLowerCase()}\u0000${item.toLocaleLowerCase()}`
+    const group = groups.get(key) || { name, item, total: 0, count: 0 }
+    group.total += Number(receipt.Amount || 0)
+    group.count += 1
+    groups.set(key, group)
+  }
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name) || a.item.localeCompare(b.item))
+})
 function historyCount(kind: 'All' | 'Loan' | 'Deduction' | 'Contribution') {
-  if (kind === 'Contribution') return contributionReceipts.value.length
+  if (kind === 'Contribution') return filteredContributionReceipts.value.length
   return kind === 'All' ? scopedHistory.value.length : scopedHistory.value.filter(item => item.EntryType === kind).length
 }
-function historyScopeCount(scope: 'Active' | 'Archive') {
-  return profileRecords.value.filter(item => scope === 'Active' ? item.Status === 'Active' : item.Status !== 'Active').length
+function historyScopeCount(scope: 'All' | 'Active' | 'Archive') {
+  return datedHistory.value.filter(item => scope === 'All' || (scope === 'Active' ? item.Status === 'Active' : item.Status !== 'Active')).length
 }
 const availableCatalog = computed(() => catalogItems.value.filter(item => item.EntryType === form.EntryType && item.CatalogKind === form.EntryType))
 const selectedCatalog = computed(() => availableCatalog.value.find(item => String(item.CatalogItemID) === form.CatalogItemID))
@@ -263,7 +316,6 @@ async function loadProfile(employee: EmployeeRow | { EmployeeID: number }) {
     profileEmployee.value = response.employee
     profileRecords.value = response.records || []
     contributionReceipts.value = contributionResponse.items || []
-    contributionTotal.value = Number(contributionResponse.total || 0)
     catalogItems.value = response.catalogItems || catalogItems.value
   } catch (cause: any) {
     profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to load this employee history.'
@@ -277,9 +329,9 @@ async function openProfile(employee: EmployeeRow) {
   profileEmployee.value = employee
   profileRecords.value = []
   contributionReceipts.value = []
-  contributionTotal.value = 0
-  historyScope.value = 'Active'
+  historyScope.value = 'All'
   historyType.value = 'All'
+  clearHistoryFilters()
   profileOpen.value = true
   await loadProfile(employee)
 }
@@ -478,12 +530,6 @@ onMounted(load)
           <button class="primary" @click="openIssuance(profileEmployee || selectedEmployee)">+ Add issuance</button>
         </header>
         <div class="summary-cards"><div><span>Lifetime issued</span><strong>{{ money(profileTotals.issued) }}</strong></div><div><span>Outstanding balance</span><strong>{{ money(profileTotals.balance) }}</strong></div><div><span>Active plans</span><strong>{{ profileTotals.active }}</strong></div></div>
-        <section class="contribution-section">
-          <div class="contribution-heading"><div><h3>Contributions</h3><p>Amounts deducted in finalized payroll. Cancelled payroll is excluded.</p></div><div class="contribution-total"><span>Total contributed</span><strong>{{ money(contributionTotal) }}</strong></div></div>
-          <p v-if="profileLoading" class="contribution-empty">Loading contributions…</p>
-          <p v-else-if="!contributionReceipts.length" class="contribution-empty">No posted contributions yet.</p>
-          <div v-else class="contribution-list"><article v-for="receipt in contributionReceipts" :key="receipt.PayrollDeductionID" class="contribution-card"><div><strong>{{ receipt.DeductionName }}</strong><small>{{ receipt.ClassificationName }} · {{ receipt.AgencyName }}</small><small>{{ date(receipt.PeriodStart) }} – {{ date(receipt.PeriodEnd) }} · Payroll #{{ receipt.PayrollID }}</small></div><strong>{{ money(receipt.Amount) }}</strong></article></div>
-        </section>
         <div class="history-heading">
           <div><h3>Account history</h3><p>Review issuances and contributions posted in finalized payroll.</p></div>
         </div>
@@ -491,7 +537,7 @@ onMounted(load)
           <div v-if="historyType !== 'Contribution'" class="filter-group">
             <span class="filter-label">Status</span>
             <div class="scope-tabs" role="tablist" aria-label="Choose issuance status">
-              <button v-for="scope in (['Active','Archive'] as const)" :key="scope" type="button" role="tab" class="scope-filter" :class="[`scope-${scope.toLowerCase()}`,{active:historyScope===scope}]" :aria-selected="historyScope===scope" @click="historyScope=scope; historyType='All'"><span class="filter-icon">{{ scope === 'Active' ? '●' : '▣' }}</span><span>{{ scope }}</span><small>{{ historyScopeCount(scope) }}</small></button>
+              <button v-for="scope in (['All','Active','Archive'] as const)" :key="scope" type="button" role="tab" class="scope-filter" :class="[`scope-${scope.toLowerCase()}`,{active:historyScope===scope}]" :aria-selected="historyScope===scope" @click="historyScope=scope"><span class="filter-icon">{{ scope === 'All' ? '▦' : scope === 'Active' ? '●' : '▣' }}</span><span>{{ scope }}</span><small>{{ historyScopeCount(scope) }}</small></button>
             </div>
           </div>
           <div class="filter-group filter-group-type">
@@ -501,19 +547,33 @@ onMounted(load)
             </div>
           </div>
         </div>
-        <p class="history-result">{{ historyType === 'Contribution' ? `Showing ${contributionReceipts.length} posted contribution${contributionReceipts.length === 1 ? '' : 's'}` : `Showing ${historyCount(historyType)} ${historyScope.toLowerCase()} ${historyType === 'All' ? 'issuances' : `${historyType.toLowerCase()} record${historyCount(historyType) === 1 ? '' : 's'}`}` }}</p>
+        <div class="history-date-filters">
+          <label class="history-filter-field">Search history<input v-model="historySearch" type="search" placeholder="Name, account code, or payroll #"></label>
+          <label class="history-filter-field">Year<select v-model="historyYear"><option value="">All years</option><option v-for="year in historyYears" :key="year" :value="year">{{ year }}</option></select></label>
+          <ModernDateField v-model="historyFrom" label="From date" placeholder="Any date" :max="historyTo || undefined" />
+          <ModernDateField v-model="historyTo" label="To date" placeholder="Any date" :min="historyFrom || undefined" align="end" />
+          <button type="button" class="clear-history" @click="clearHistoryFilters">Clear</button>
+        </div>
+        <p class="history-date-help">Loans and deductions use the issuance date. Contributions use the payroll cutoff dates.</p>
+        <p v-if="invalidHistoryRange" class="history-date-error" role="alert">From date must be on or before To date.</p>
+        <p class="history-result">{{ historyTotal }} {{ historyType === 'Contribution' ? 'posted contributions' : 'issuance records' }} found</p>
         <p v-if="profileError" class="error">{{ profileError }}</p>
+        <section v-if="historyType === 'Contribution' && !profileLoading" class="contribution-overview" aria-label="Contribution totals">
+          <header><div><h4>Contribution summary</h4><p>Totals for the selected period. Cancelled payroll is excluded.</p></div><div class="contribution-total"><span>Total contributed</span><strong>{{ money(visibleContributionTotal) }}</strong></div></header>
+          <div v-if="contributionGroups.length" class="contribution-groups"><article v-for="group in contributionGroups" :key="`${group.name}-${group.item}`" class="contribution-group"><div><strong>{{ group.name }}</strong><small v-if="group.item.toLowerCase() !== group.name.toLowerCase()">{{ group.item }}</small><small>{{ group.count }} posted {{ group.count === 1 ? 'payment' : 'payments' }}</small></div><strong>{{ money(group.total) }}</strong></article></div>
+          <p v-else class="contribution-empty">No contributions match these filters.</p>
+        </section>
+        <div v-if="historyType === 'Contribution' && !profileLoading && filteredContributionReceipts.length" class="contribution-history-heading"><h4>Posted history</h4><span>{{ filteredContributionReceipts.length }} {{ filteredContributionReceipts.length === 1 ? 'entry' : 'entries' }}</span></div>
         <div class="record-list">
           <p v-if="profileLoading" class="empty">Loading history…</p>
           <template v-else-if="historyType === 'Contribution'">
-            <p v-if="!contributionReceipts.length" class="empty">No posted contributions yet.</p>
-            <article v-for="receipt in contributionReceipts" :key="receipt.PayrollDeductionID" class="record-card contribution-record">
+            <article v-for="receipt in pagedContributions" :key="receipt.PayrollDeductionID" class="record-card contribution-record">
               <header><div class="record-heading"><span class="kind contribution">Contribution</span><div><strong>{{ receipt.DeductionName }}</strong><small>{{ receipt.ClassificationName }} · {{ receipt.AgencyName }}</small><small>{{ date(receipt.PeriodStart) }} – {{ date(receipt.PeriodEnd) }} · Payroll #{{ receipt.PayrollID }}</small></div></div><span class="status status-active">Posted</span></header>
               <div class="record-details"><div><span>Amount contributed</span><strong>{{ money(receipt.Amount) }}</strong><small>Deducted from finalized payroll</small></div></div>
             </article>
           </template>
-          <p v-else-if="!filteredHistory.length" class="empty">{{ historyScope === 'Active' ? 'No active loans or deductions.' : 'No archived issuance records.' }}</p>
-          <article v-for="record in historyType === 'Contribution' ? [] : filteredHistory" v-else :key="`${record.EntryType}-${record.RecordID}`" class="record-card">
+          <p v-else-if="!filteredHistory.length" class="empty">No loans or deductions match these filters.</p>
+          <article v-for="record in historyType === 'Contribution' ? [] : pagedHistory" v-else :key="`${record.EntryType}-${record.RecordID}`" class="record-card">
             <header>
               <div class="record-heading"><span class="kind" :class="record.EntryType.toLowerCase()">{{ record.EntryType }}</span><div><strong>{{ record.ItemName }}</strong><small>{{ record.ClassificationName || 'Unclassified' }} · Account {{ record.AccountReference || 'Legacy' }} · Issuance {{ record.IssuanceCode || 'Legacy record' }}</small><small v-if="record.Transactions.length" class="posted-transaction">Latest transaction {{ record.Transactions[0]?.TransactionID }} · {{ record.Transactions.length }} receipt{{ record.Transactions.length === 1 ? '' : 's' }}</small><small v-else>No approved payroll deduction receipts yet</small></div></div>
               <span class="status" :class="{ 'status-active': record.Status === 'Active' && statusLabel(record) !== 'Paused', 'status-paused': statusLabel(record) === 'Paused', 'status-paid': record.Status === 'Paid', 'status-completed': record.Status === 'Completed', 'status-cancelled': record.Status === 'Cancelled', 'status-inactive': record.Status === 'Inactive' }">{{ statusLabel(record) }}</span>
@@ -534,6 +594,7 @@ onMounted(load)
             </footer>
           </article>
         </div>
+        <footer v-if="!profileLoading && historyTotal > historyPageSize" class="history-pagination"><span>Showing {{ pageStart + 1 }}–{{ Math.min(pageStart + historyPageSize, historyTotal) }} of {{ historyTotal }}</span><div><button type="button" :disabled="historyPage === 1" @click="historyPage--">Previous</button><span>Page {{ historyPage }} of {{ historyPages }}</span><button type="button" :disabled="historyPage === historyPages" @click="historyPage++">Next</button></div></footer>
       </section>
     </div>
 
@@ -623,9 +684,12 @@ onMounted(load)
 @media(max-width:800px){.history-controls{align-items:stretch;flex-direction:column;gap:10px}.filter-group,.filter-group-type{display:grid;grid-template-columns:54px 1fr;align-items:center;margin-left:0}.scope-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.type-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.profile-modal .scope-filter,.profile-modal .history-filter{width:100%;padding-inline:7px}}
 @media(max-width:480px){.history-controls{padding:10px}.filter-group,.filter-group-type{grid-template-columns:1fr;gap:6px}.filter-label{padding-left:2px}.profile-modal .scope-filter,.profile-modal .history-filter{font-size:.68rem}.profile-modal .filter-icon{display:none}}
 @media(max-width:650px){.issuance-transactions li{grid-template-columns:1fr 1fr}.issuance-transactions code,.issuance-transactions small{grid-column:1/-1}}
-.contribution-section{margin:0 0 22px;padding:17px;border:1px solid #d7e3f4;border-radius:12px;background:#f8faff}.contribution-heading{display:flex;justify-content:space-between;align-items:center;gap:15px}.contribution-heading h3{margin:0 0 5px;font-size:1rem}.contribution-heading p,.contribution-empty{margin:0;color:#64748b;font-size:.73rem}.contribution-total{display:grid;gap:3px;text-align:right}.contribution-total span{color:#64748b;font-size:.7rem}.contribution-total strong{font-size:1rem}.contribution-list{display:grid;gap:8px;margin-top:14px;max-height:275px;overflow:auto}.contribution-card{display:flex;justify-content:space-between;gap:15px;padding:11px 13px;border:1px solid #dce5f1;border-radius:9px;background:#fff;font-size:.77rem}.contribution-card>div{display:grid;gap:4px}.contribution-card small{color:#64748b}.contribution-empty{margin-top:14px}@media(max-width:700px){.contribution-heading{align-items:flex-start;flex-direction:column}.contribution-total{text-align:left}.contribution-card{flex-direction:column}}
+.contribution-overview{margin:0 0 20px;padding:18px;border:1px solid #cfe5da;border-radius:12px;background:#f7fcf9}.contribution-overview>header{display:flex;align-items:center;justify-content:space-between;gap:16px}.contribution-overview h4,.contribution-history-heading h4{margin:0 0 4px;font-size:.9rem}.contribution-overview header p,.contribution-empty{margin:0;color:#64748b;font-size:.73rem}.contribution-total{display:grid;gap:3px;text-align:right;white-space:nowrap}.contribution-total span{color:#64748b;font-size:.7rem}.contribution-total strong{color:#087146;font-size:1.1rem}.contribution-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:16px}.contribution-group{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;padding:13px;border:1px solid #d7e9df;border-radius:9px;background:#fff;font-size:.75rem}.contribution-group>div{display:grid;min-width:0;gap:4px}.contribution-group>div>strong{overflow-wrap:anywhere}.contribution-group small{color:#64748b}.contribution-group>strong{color:#087146;white-space:nowrap}.contribution-empty{margin-top:14px}.contribution-history-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 2px 11px}.contribution-history-heading span{color:#64748b;font-size:.72rem}@media(max-width:700px){.contribution-overview>header{align-items:flex-start;flex-direction:column}.contribution-total{text-align:left}.contribution-group{flex-wrap:wrap}}
 .issuance-code-field{display:flex;align-items:center;min-height:48px;border:1px solid #cbd8ea;border-radius:9px;background:#fff;overflow:hidden}.issuance-code-field:focus-within{border-color:#2867e8;box-shadow:0 0 0 3px rgba(40,103,232,.12)}.issuance-code-field span{padding:0 12px;color:#28548c;font-size:.82rem;font-weight:800;white-space:nowrap}.form-grid .issuance-code-field input{flex:1;min-width:0;min-height:46px;border:0;border-left:1px solid #e2e8f0;border-radius:0;padding:0 12px;outline:0}.form-grid .issuance-code-field input:disabled{background:#f8faff}.kind.contribution{background:#e5f8ee;color:#087146}.profile-modal button.filter-contribution.active{border-color:#087146;background:#087146;color:#fff}.contribution-record .record-details{display:block}.contribution-record .record-details>div{border-right:0}
 @media(max-width:800px){.type-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:480px){.type-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.history-date-filters{display:grid;grid-template-columns:minmax(190px,1.5fr) minmax(110px,.7fr) minmax(150px,1fr) minmax(150px,1fr) auto;align-items:end;gap:10px;margin:14px 0 7px}.history-filter-field{display:grid;min-width:0;gap:6px;color:#475569;font-size:.8rem;font-weight:700}.history-filter-field input,.history-filter-field select{box-sizing:border-box;width:100%;min-height:44px;border:1px solid #cfd8e6;border-radius:10px;background:#fff;padding:9px 12px;color:#172033;font:inherit}.history-filter-field input:focus-visible,.history-filter-field select:focus-visible{outline:2px solid #2867e8;outline-offset:2px}.profile-modal .history-date-filters .clear-history{min-height:44px;padding:8px 13px}.history-date-help{margin:0 2px 9px;color:#657792;font-size:.7rem}.history-date-error{margin:0 2px 9px;color:#b42318;font-size:.72rem;font-weight:700}.history-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;color:#657792;font-size:.73rem}.history-pagination>div{display:flex;align-items:center;gap:8px}.profile-modal .history-pagination button{min-height:36px;border:1px solid #cbd8ea;border-radius:8px;background:#fff;padding:6px 12px;color:#254975;font:inherit;font-weight:800}.profile-modal .history-pagination button:disabled{opacity:.45;cursor:not-allowed}@media(max-width:1000px){.history-date-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.history-date-filters .clear-history{justify-self:start}}@media(max-width:600px){.history-date-filters{grid-template-columns:1fr}.history-pagination{align-items:stretch;flex-direction:column}.history-pagination>div{justify-content:space-between}}
+.profile-modal button.scope-all.active{border-color:#2867e8;background:#2867e8;color:#fff}
+@media(max-width:650px){.profile-modal .scope-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .period-status.skipped{background:#fff3e5;color:#a6530b}
 </style>
