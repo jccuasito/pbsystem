@@ -6,6 +6,7 @@ import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceSt
 import { assertDtrBtrReady } from './dtrBtrCrud'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/alertmessage/messages'
 import { attachPendingEmployeeStatuses, employeeStatusAttendanceStatuses } from './employeeStatusCrud.ts'
+import { attendanceStatuses } from '../../shared/utils/attendanceStatuses'
 import { effectiveAmountSql } from './rateVersions'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 
@@ -279,7 +280,6 @@ const ordinaryWorkedHourColumns = hourColumns.filter(column => ![...holidayHourC
 // Saved zero-hour placeholders (for example Absent, Rest Day, and Reliever)
 // belong in the audit trail, but are not days actually worked.
 const workedHourColumns = hourColumns.filter(column => !['LateHours', 'UndertimeHours', 'BreakHours'].includes(column))
-const attendanceStatuses = ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Vacation Leave', 'Holiday', 'Rest Day', 'Reliever', 'Sick Leave'] as const
 const noWorkAttendanceStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
 const employeeStatusLeaveStatuses = new Set<string>(employeeStatusAttendanceStatuses)
 

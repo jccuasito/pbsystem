@@ -45,6 +45,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
+  - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
@@ -83,6 +84,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/rateVersions.ts`
+  - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/rateFields.ts`
@@ -180,6 +182,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/SearchableSelect.vue`
   - `components/SiteRateCrud.vue`
   - `components/WorkspaceLoading.vue`
+  - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/deployment.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
@@ -323,6 +326,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`
   - `server/utils/settingsAccess.ts`
+  - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/issuanceCode.ts`
@@ -509,6 +513,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
+  - `shared/utils/attendanceStatuses.ts`
 - API calls and handlers:
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
   - `GET /api/employees/status/[param]/summary` → `server/api/employees/status/[id]/summary.get.ts`
@@ -518,6 +523,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/employeeStatusCrud.ts`
   - `server/utils/jwt.ts`
+  - `shared/utils/attendanceStatuses.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.

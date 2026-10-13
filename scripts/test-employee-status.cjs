@@ -33,9 +33,14 @@ test('employee status leave sheet and DTR workspace compile with synchronized st
   assert.doesNotMatch(page, /â|Ã|Â/)
   assert.doesNotMatch(page, /Transfer to site|Site transfer/)
   const dtr = fs.readFileSync('app/components/DtrAttendanceWorkspace.vue', 'utf8')
-  for (const status of ['Absent', 'Late', 'Half-Day', 'On-Leave', 'Vacation Leave', 'Holiday', 'Rest Day', 'Reliever', 'Sick Leave']) assert.match(dtr, new RegExp(status))
+  assert.match(dtr, /import \{ attendanceStatuses \} from/)
   const statusCrud = fs.readFileSync('server/utils/employeeStatusCrud.ts', 'utf8')
   assert.match(statusCrud, /\['On-Leave', 'Vacation Leave', 'Sick Leave'\]/)
+  assert.match(statusCrud, /reasonRequiredAttendanceStatuses\.has\(attendanceStatus\)/)
+  assert.match(page, /reasonRequired \? 'Reason \(required\)' : 'Notes \(optional\)'/)
+  const statusRules = evaluate(fs.readFileSync('shared/utils/attendanceStatuses.ts', 'utf8'))
+  assert.deepEqual([...statusRules.attendanceStatuses], ['Present', 'Absent', 'Late', 'Half-Day', 'On-Leave', 'Vacation Leave', 'Holiday', 'Rest Day', 'Reliever', 'Sick Leave'])
+  assert.deepEqual([...statusRules.reasonRequiredAttendanceStatuses], ['Absent', 'Half-Day', 'On-Leave', 'Vacation Leave', 'Sick Leave'])
   assert.match(statusCrud, /export async function getEmployeeStatusSummary/)
   assert.match(statusCrud, /at\.EmployeeID = \? AND at\.AttendanceDate BETWEEN \? AND \?/)
   assert.match(dtr, /dateWithinDeployment/)
@@ -54,10 +59,10 @@ test('employee status leave sheet and DTR workspace compile with synchronized st
   assert.match(dtr, /importResult\.preservedEmployeeStatusDays/)
   assert.match(dtr, /HR-approved leave dates will remain/)
   assert.match(dtrCrud, /SELECT COUNT\(\*\) FROM attendance_dtr_employee roster WHERE roster\.BatchID = d\.BatchID/)
-  const statusRules = evaluate(fs.readFileSync('shared/utils/dtrAttendanceStatus.ts', 'utf8'))
-  assert.equal(statusRules.automaticDtrAttendanceStatus({ AttendanceStatus: 'Late' }, 8), 'Late')
-  assert.equal(statusRules.automaticDtrAttendanceStatus({ AttendanceStatus: 'Half-Day' }, 8), 'Half-Day')
-  assert.equal(statusRules.automaticDtrAttendanceStatus({ AttendanceStatus: 'Vacation Leave' }, 8), 'Vacation Leave')
+  const dtrStatusRules = evaluate(fs.readFileSync('shared/utils/dtrAttendanceStatus.ts', 'utf8'))
+  assert.equal(dtrStatusRules.automaticDtrAttendanceStatus({ AttendanceStatus: 'Late' }, 8), 'Late')
+  assert.equal(dtrStatusRules.automaticDtrAttendanceStatus({ AttendanceStatus: 'Half-Day' }, 8), 'Half-Day')
+  assert.equal(dtrStatusRules.automaticDtrAttendanceStatus({ AttendanceStatus: 'Vacation Leave' }, 8), 'Vacation Leave')
 })
 
 test('status can be saved before a DTR, attaches later, and never duplicates a date', { skip: process.env.EMPLOYEE_STATUS_TEST_DATABASE !== '1' }, async () => {
@@ -98,7 +103,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
       getQuery: event => event.query || {},
       getRouterParam: (event, key) => event.params?.[key],
       createError: details => Object.assign(new Error(details.statusMessage), details),
-    } : name.includes('dbconnect') ? pool : name === './auth' ? { requireSession: () => ({ sub: 14 }) } : {} })
+    } : name.includes('dbconnect') ? pool : name === './auth' ? { requireSession: () => ({ sub: 14 }) } : name.includes('attendanceStatuses') ? evaluate(fs.readFileSync('shared/utils/attendanceStatuses.ts', 'utf8')) : {} })
 
     const range = { EmployeeID: 8, AttendanceStatus: 'Sick Leave', StartDate: '2026-09-24', EndDate: '2026-09-26', Remarks: 'Medical certificate to follow' }
     const first = await api.updateEmployeeDailyStatus({ body: range })
@@ -118,7 +123,8 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal(second.updated, 3)
     assert.equal((await c.query('SELECT COUNT(*) count FROM attendance'))[0][0].count, 3)
     assert.ok((await c.query('SELECT AttendanceStatus FROM attendance'))[0].every(row => row.AttendanceStatus === 'Vacation Leave'))
-    await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Present' } }), /Select a valid attendance status/)
+    await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Half-Day', Remarks: '' } }), /A reason is required for Half-Day/)
+    await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Unknown' } }), /Select a valid attendance status/)
     await c.query("UPDATE attendance SET AttendanceStatus='Late' WHERE EmployeeID=8 AND AttendanceDate='2026-09-26'")
     const listed = await api.listEmployeeStatus({})
     assert.equal(listed.employees.length, 1)
@@ -134,6 +140,18 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal(summary.history.length, 3)
     assert.equal(summary.history[0].AttendanceStatus, 'Late')
     await assert.rejects(() => api.getEmployeeStatusSummary({ params: { id: '8' }, query: { year: 'bad' } }), /Year must be between/)
+    const present = await api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Present', StartDate: '2026-09-24', EndDate: '2026-09-24', Remarks: '' } })
+    assert.equal(present.updated, 1)
+    assert.equal((await c.query("SELECT AttendanceStatus FROM attendance WHERE AttendanceDate='2026-09-24'"))[0][0].AttendanceStatus, 'Present')
+    await c.query("UPDATE attendance SET RegularHours=8, TimeIn='2026-09-24 07:00:00', TimeOut='2026-09-24 15:00:00' WHERE AttendanceDate='2026-09-24'")
+    await c.query("INSERT INTO attendance_duty (AttendanceID) SELECT AttendanceID FROM attendance WHERE AttendanceDate='2026-09-24'")
+    await api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Absent', StartDate: '2026-09-24', EndDate: '2026-09-24', Remarks: 'Approved absence' } })
+    const [absentRows] = await c.query("SELECT AttendanceStatus, RegularHours, TimeIn, Remarks FROM attendance WHERE AttendanceDate='2026-09-24'")
+    assert.equal(absentRows[0].AttendanceStatus, 'Absent')
+    assert.equal(Number(absentRows[0].RegularHours), 0)
+    assert.equal(absentRows[0].TimeIn, null)
+    assert.equal(absentRows[0].Remarks, 'Approved absence')
+    assert.equal((await c.query('SELECT COUNT(*) count FROM attendance_duty'))[0][0].count, 0)
   } finally {
     await c.end()
   }

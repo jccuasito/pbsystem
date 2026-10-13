@@ -1,10 +1,10 @@
 import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { attendanceStatuses, reasonRequiredAttendanceStatuses } from '../../shared/utils/attendanceStatuses'
 
 export const employeeStatusAttendanceStatuses = ['On-Leave', 'Vacation Leave', 'Sick Leave'] as const
-const attendanceStatuses = employeeStatusAttendanceStatuses
-const noWorkStatuses = new Set(attendanceStatuses)
+const noWorkStatuses = new Set<string>(['Absent', 'Rest Day', ...employeeStatusAttendanceStatuses, 'Reliever'])
 const hourColumns = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours', 'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours', 'LateHours', 'UndertimeHours', 'BreakHours'] as const
 
 function positiveId(value: unknown, label: string) {
@@ -197,6 +197,9 @@ export async function updateEmployeeDailyStatus(event: any) {
   const attendanceStatus = String(body.AttendanceStatus || '').trim()
   if (!(attendanceStatuses as readonly string[]).includes(attendanceStatus)) throw createError({ statusCode: 400, statusMessage: 'Select a valid attendance status.' })
   const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim().slice(0, 255) || null : null
+  if (reasonRequiredAttendanceStatuses.has(attendanceStatus) && !remarks) {
+    throw createError({ statusCode: 400, statusMessage: `A reason is required for ${attendanceStatus}.` })
+  }
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
