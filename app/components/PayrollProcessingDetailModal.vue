@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatEmployeeId } from '~/utils/employee'
 import { combinedLateUndertimeLines, payrollHourComponents, payrollTimeDeductions } from '~~/shared/utils/payrollPreview'
 
@@ -16,6 +16,10 @@ const activeTab = ref<'amounts' | 'employees' | 'history'>('amounts')
 const selectedEmployeeId = ref<number | null>(null)
 const requestedAction = ref<'approve' | 'reject' | 'cancel' | null>(null)
 const rejectionReason = ref('')
+const actionDialog = ref<HTMLElement | null>(null)
+const approveTrigger = ref<HTMLButtonElement | null>(null)
+const rejectTrigger = ref<HTMLButtonElement | null>(null)
+const cancelTrigger = ref<HTMLButtonElement | null>(null)
 const skipKey = ref('')
 const skipReason = ref('')
 const pauseReason = ref('')
@@ -62,9 +66,37 @@ const historyCycles = computed(() => {
 })
 const returnedCount = computed(() => (props.site.history || []).filter((event: any) => event.Action === 'Reject Payroll').length)
 const approvedCount = computed(() => (props.site.history || []).filter((event: any) => event.Action === 'Approve Payroll').length)
-function onKeydown(event: KeyboardEvent) { if (event.key === 'Escape') emit('close') }
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || props.busy) return
+  if (requestedAction.value) closeAction()
+  else emit('close')
+}
 onMounted(() => { previouslyOverflow.value = document.body.style.overflow; document.body.style.overflow = 'hidden'; window.addEventListener('keydown', onKeydown) })
 onBeforeUnmount(() => { document.body.style.overflow = previouslyOverflow.value; window.removeEventListener('keydown', onKeydown) })
+async function openAction(action: 'approve' | 'reject' | 'cancel') {
+  requestedAction.value = action
+  rejectionReason.value = ''
+  await nextTick()
+  const reasonField = actionDialog.value?.querySelector<HTMLElement>('textarea')
+  if (reasonField) reasonField.focus()
+  else actionDialog.value?.focus()
+}
+async function closeAction() {
+  if (props.busy) return
+  const action = requestedAction.value
+  requestedAction.value = null
+  await nextTick()
+  if (action === 'approve') approveTrigger.value?.focus()
+  if (action === 'reject') rejectTrigger.value?.focus()
+  if (action === 'cancel') cancelTrigger.value?.focus()
+}
+function onActionKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Tab' || !actionDialog.value) return
+  const focusable = [...actionDialog.value.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled)')]
+  const first = focusable[0], last = focusable[focusable.length - 1]
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === actionDialog.value)) { event.preventDefault(); last?.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+}
 function submitAction() {
   if (requestedAction.value === 'approve') emit('approve')
   if (requestedAction.value === 'reject' && rejectionReason.value.trim().length >= 5) emit('reject', rejectionReason.value.trim())
@@ -84,8 +116,8 @@ function pausePlan(item: any) {
 
 <template>
   <Teleport to="body">
-    <div class="payroll-modal-backdrop" @click.self="emit('close')">
-      <section class="payroll-modal" role="dialog" aria-modal="true" aria-labelledby="payroll-modal-title">
+    <div class="payroll-modal-backdrop" @click.self="!requestedAction && !busy && emit('close')">
+      <section class="payroll-modal" role="dialog" :aria-modal="requestedAction ? undefined : 'true'" :aria-hidden="requestedAction ? 'true' : undefined" :inert="!!requestedAction" aria-labelledby="payroll-modal-title">
         <header class="modal-header">
           <div><p class="eyebrow">PAYROLL PROCESSING · DTR-{{ String(site.BatchID).padStart(4, '0') }}</p><h2 id="payroll-modal-title">{{ site.SiteName }}</h2><p>{{ site.ClientName }} · {{ site.AgencyName }} · {{ day(site.PeriodStart) }}–{{ day(site.PeriodEnd) }}</p></div>
           <button type="button" class="close-button" aria-label="Close payroll details" @click="emit('close')">×</button>
@@ -172,16 +204,22 @@ function pausePlan(item: any) {
             </div>
             <p v-else class="muted">This DTR was computed before workflow history tracking started. The original actor and time are unavailable.</p>
           </div>
-          <div v-if="requestedAction" class="action-confirmation">
-            <template v-if="requestedAction==='approve'"><strong>Finalize this DTR payroll?</strong><p>This posts employee payroll records, eligible account installments, and approved adjustments with your name and time. This does not release payslips.</p></template>
-            <template v-else-if="requestedAction==='cancel'"><strong>Cancel this finalized payroll?</strong><p>Approved payroll records and deduction receipts will be voided, installment balances restored, and applied adjustments reopened. The DTR returns to Draft. Released or subsequently changed payroll cannot be cancelled here.</p><label>Reason for cancellation<textarea v-model="rejectionReason" rows="3" maxlength="500" placeholder="Explain why this finalization must be cancelled"></textarea></label></template>
-            <template v-else><strong>Return this DTR to Draft?</strong><p>Payroll approval and billing compute status, if any, will be invalidated. The history remains visible.</p><label>Reason for rejection<textarea v-model="rejectionReason" rows="3" maxlength="500" placeholder="Explain what needs correction"></textarea></label></template>
-            <p v-if="error" class="error" role="alert">{{ error }}</p>
-            <div class="confirm-actions"><button type="button" class="secondary" :disabled="busy" @click="requestedAction=null">{{ requestedAction==='cancel'?'Keep payroll':'Back' }}</button><button type="button" :class="requestedAction==='approve'?'primary':'danger'" :disabled="busy || (requestedAction!=='approve' && rejectionReason.trim().length<5)" @click="submitAction">{{ busy?'Saving…':requestedAction==='approve'?'Finalize payroll':requestedAction==='cancel'?'Cancel finalization':'Reject and return to Draft' }}</button></div>
-          </div>
         </div>
-        <footer class="modal-footer"><button type="button" class="secondary" @click="emit('close')">Close</button><button v-if="canReview && site.ReviewStatus==='Approved'" type="button" class="danger-outline" :disabled="busy" @click="requestedAction='cancel';rejectionReason='';activeTab='amounts'">Cancel finalization</button><template v-if="canReview && site.ReviewStatus==='Pending'"><button type="button" class="danger-outline" :disabled="busy" @click="requestedAction='reject';rejectionReason='';activeTab='amounts'">Reject</button><button type="button" class="primary" :disabled="busy || !!site.warningCount" @click="requestedAction='approve'">Finalize payroll</button></template></footer>
+        <footer class="modal-footer"><button type="button" class="secondary" :disabled="busy" @click="emit('close')">Close</button><button v-if="canReview && site.ReviewStatus==='Approved'" ref="cancelTrigger" type="button" class="danger-outline" :disabled="busy" @click="openAction('cancel')">Cancel finalization</button><template v-if="canReview && site.ReviewStatus==='Pending'"><button ref="rejectTrigger" type="button" class="danger-outline" :disabled="busy" @click="openAction('reject')">Reject</button><button ref="approveTrigger" type="button" class="primary" :disabled="busy || !!site.warningCount" @click="openAction('approve')">Finalize payroll</button></template></footer>
       </section>
+      <div v-if="requestedAction" class="action-dialog-backdrop" @click.self="closeAction">
+        <section ref="actionDialog" class="action-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="action-dialog-title" aria-describedby="action-dialog-description" tabindex="-1" @keydown="onActionKeydown">
+          <div class="action-dialog-heading"><span class="eyebrow">PAYROLL CONFIRMATION</span><button type="button" class="action-dialog-close" :disabled="busy" aria-label="Close confirmation" @click="closeAction">×</button></div>
+          <h3 id="action-dialog-title">{{ requestedAction==='approve' ? 'Finalize this DTR payroll?' : requestedAction==='cancel' ? 'Cancel this finalized payroll?' : 'Return this DTR to Draft?' }}</h3>
+          <p class="action-dialog-context">{{ site.SiteName }} · DTR-{{ String(site.BatchID).padStart(4, '0') }} · {{ day(site.PeriodStart) }}–{{ day(site.PeriodEnd) }}</p>
+          <p v-if="requestedAction==='approve'" id="action-dialog-description">This posts employee payroll records, eligible account installments, and approved adjustments with your name and time. This does not release payslips.</p>
+          <p v-else-if="requestedAction==='cancel'" id="action-dialog-description">Approved payroll records and deduction receipts will be voided, installment balances restored, and applied adjustments reopened. The DTR returns to Draft. Released or subsequently changed payroll cannot be cancelled here.</p>
+          <p v-else id="action-dialog-description">Payroll approval and billing compute status, if any, will be invalidated. The history remains visible.</p>
+          <label v-if="requestedAction!=='approve'">{{ requestedAction==='cancel' ? 'Reason for cancellation' : 'Reason for rejection' }}<textarea v-model="rejectionReason" rows="3" maxlength="500" :placeholder="requestedAction==='cancel' ? 'Explain why this finalization must be cancelled' : 'Explain what needs correction'"></textarea></label>
+          <p v-if="error" class="error" role="alert">{{ error }}</p>
+          <div class="confirm-actions"><button type="button" class="secondary" :disabled="busy" @click="closeAction">{{ requestedAction==='cancel'?'Keep payroll':'Back' }}</button><button type="button" :class="requestedAction==='approve'?'primary':'danger'" :disabled="busy || (requestedAction!=='approve' && rejectionReason.trim().length<5)" @click="submitAction">{{ busy?'Saving…':requestedAction==='approve'?'Finalize payroll':requestedAction==='cancel'?'Cancel finalization':'Reject and return to Draft' }}</button></div>
+        </section>
+      </div>
     </div>
   </Teleport>
 </template>
