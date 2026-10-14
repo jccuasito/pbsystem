@@ -38,12 +38,14 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
 
   const ids = selected.map(batch => Number(batch.BatchID))
   const [roster] = await connection.execute<any[]>(`SELECT de.BatchID, de.EmployeeID, de.DeploymentID, de.IsPermanentSite, de.AttendanceType,
-      ed.SiteRateID, e.EmployeeNumber,
+      ed.SiteRateID, assignmentRate.AgencyPositionID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
       p.PositionName
     FROM attendance_dtr_employee de
     INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
     LEFT JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+    LEFT JOIN site_rate assignmentSiteRate ON assignmentSiteRate.SiteRateID = ed.SiteRateID
+    LEFT JOIN payroll_rate assignmentRate ON assignmentRate.PayrollRateID = assignmentSiteRate.PayrollRateID
     LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
     LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
     WHERE de.BatchID IN (${ids.map(() => '?').join(', ')})
@@ -108,16 +110,15 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     WHERE r.EmployeeID IN (${employeeIds.map(() => '?').join(', ')})`, employeeIds) : [[]]
   const agencyIds = [...new Set(selected.map(batch => Number(batch.AgencyID)))]
   const [agencyContributions] = await connection.execute<any[]>(`SELECT plan.AgencyContributionID AS RecordID,
-    plan.AgencyID, plan.SiteRateID, sr.SiteID, plan.DeductionTypeID AS AccountTypeID, dt.DeductionName AS ItemName,
+    plan.AgencyID, plan.AgencyPositionID, plan.DeductionTypeID AS AccountTypeID, dt.DeductionName AS ItemName,
     plan.AmountPerCutoff, plan.DeductOn,
     DATE_FORMAT(plan.EffectiveStartDate, '%Y-%m-%d') AS EffectiveStartDate,
     DATE_FORMAT(plan.EffectiveEndDate, '%Y-%m-%d') AS EffectiveEndDate, plan.Status
     FROM agency_contribution_plan plan
-    INNER JOIN site_rate sr ON sr.SiteRateID = plan.SiteRateID
     INNER JOIN deduction_type dt ON dt.DeductionTypeID = plan.DeductionTypeID
     INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
     WHERE plan.AgencyID IN (${agencyIds.map(() => '?').join(', ')})
-      AND plan.Status = 'Active' AND sr.Status = 'Active' AND dt.Status = 'Active' AND c.Status = 'Active'
+      AND plan.Status = 'Active' AND dt.Status = 'Active' AND c.Status = 'Active'
       AND c.AppliesTo = 'Contribution'`, agencyIds)
   const contributionIds = agencyContributions.map(plan => Number(plan.RecordID))
   const [contributionVersionRows] = contributionIds.length
@@ -159,10 +160,10 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     const id = Number(plan.EmployeeID)
     recurringByEmployee.set(id, [...(recurringByEmployee.get(id) || []), plan])
   }
-  const contributionsBySiteRate = new Map<number, any[]>()
+  const contributionsByPosition = new Map<number, any[]>()
   for (const plan of agencyContributions) {
-    const id = Number(plan.SiteRateID)
-    contributionsBySiteRate.set(id, [...(contributionsBySiteRate.get(id) || []), plan])
+    const id = Number(plan.AgencyPositionID)
+    contributionsByPosition.set(id, [...(contributionsByPosition.get(id) || []), plan])
   }
 
   const rowsByEmployee = new Map<string, any[]>()
@@ -281,8 +282,8 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       const accountPlans = fixedSite ? accountsByEmployee.get(Number(person.EmployeeID)) || [] : []
       const recurringPlans = fixedSite ? recurringByEmployee.get(Number(person.EmployeeID)) || [] : []
       const contributionPlans = fixedSite
-        ? (contributionsBySiteRate.get(Number(person.SiteRateID)) || []).filter(plan =>
-            Number(plan.SiteID) === Number(batch.SiteID) && Number(plan.AgencyID) === Number(batch.AgencyID))
+        ? (contributionsByPosition.get(Number(person.AgencyPositionID)) || []).filter(plan =>
+            Number(plan.AgencyID) === Number(batch.AgencyID))
         : []
       const dueAccounts = accountPlans.map(account => ({
         entryType: account.EntryType, recordId: account.RecordID, name: account.ItemName,

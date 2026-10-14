@@ -50,31 +50,27 @@ function updateReason(value: unknown) {
   return reason
 }
 
-async function assertPlanSelection(connection: any, agencyId: number, siteRateId: number, typeId: number) {
-  // Lock site rate so concurrent single and bulk writes serialize for this assignment.
-  const [[siteRate]] = await connection.execute<any[]>(`SELECT sr.SiteRateID FROM site_rate sr
-    INNER JOIN site s ON s.SiteID = sr.SiteID
-    INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
-    INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+async function assertPlanSelection(connection: any, agencyId: number, agencyPositionId: number, typeId: number) {
+  // Serialize writes for the agency position, regardless of site.
+  const [[position]] = await connection.execute<any[]>(`SELECT ap.AgencyPositionID FROM agency_position ap
     INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
     INNER JOIN agency a ON a.AgencyID = ap.AgencyID
-    WHERE sr.SiteRateID = ? AND ap.AgencyID = ? AND sr.Status = 'Active'
-      AND s.Status = 'Active' AND pr.Status = 'Active' AND ap.Status = 'Active'
-      AND p.Status = 'Active' AND a.Status = 'Active' FOR UPDATE`, [siteRateId, agencyId])
+    WHERE ap.AgencyPositionID = ? AND ap.AgencyID = ? AND ap.Status = 'Active'
+      AND p.Status = 'Active' AND a.Status = 'Active' FOR UPDATE`, [agencyPositionId, agencyId])
   const [[catalog]] = await connection.execute<any[]>(`SELECT dt.DeductionTypeID FROM deduction_type dt
     INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
     WHERE dt.DeductionTypeID = ? AND dt.Status = 'Active' AND c.Status = 'Active'
       AND c.AppliesTo = 'Contribution'`, [typeId])
-  if (!siteRate || !catalog) {
-    throw createError({ statusCode: 400, statusMessage: 'Select an active agency, site position/rate, and contribution.' })
+  if (!position || !catalog) {
+    throw createError({ statusCode: 400, statusMessage: 'Select an active agency position and contribution.' })
   }
 }
 
-async function activePlanForKey(connection: any, siteRateId: number, typeId: number, start: string, exceptId = 0) {
+async function activePlanForKey(connection: any, agencyPositionId: number, typeId: number, start: string, exceptId = 0) {
   const [plans] = await connection.execute<any[]>(`SELECT * FROM agency_contribution_plan
-    WHERE SiteRateID = ? AND DeductionTypeID = ? AND Status = 'Active'
+    WHERE AgencyPositionID = ? AND DeductionTypeID = ? AND Status = 'Active'
       AND AgencyContributionID <> ? AND (EffectiveEndDate IS NULL OR EffectiveEndDate >= ?)
-    ORDER BY EffectiveStartDate DESC FOR UPDATE`, [siteRateId, typeId, exceptId, start])
+    ORDER BY EffectiveStartDate DESC FOR UPDATE`, [agencyPositionId, typeId, exceptId, start])
   return plans
 }
 
@@ -104,9 +100,9 @@ async function applyDatedUpdate(connection: any, plan: any, effectiveDate: strin
   if (latest && effectiveDate <= sqlDate(latest.EffectiveDate)) {
     throw createError({ statusCode: 409, statusMessage: `Choose an effective date after the latest saved update (${sqlDate(latest.EffectiveDate)}).` })
   }
-  const otherPlans = await activePlanForKey(connection, Number(plan.SiteRateID), Number(plan.DeductionTypeID), effectiveDate,
+  const otherPlans = await activePlanForKey(connection, Number(plan.AgencyPositionID), Number(plan.DeductionTypeID), effectiveDate,
     Number(plan.AgencyContributionID))
-  if (otherPlans.length) throw createError({ statusCode: 409, statusMessage: 'Another active plan covers this site position and contribution.' })
+  if (otherPlans.length) throw createError({ statusCode: 409, statusMessage: 'Another active plan covers this agency position and contribution.' })
   if (!dryRun) await connection.execute(`INSERT INTO agency_contribution_plan_version
     (AgencyContributionID, EffectiveDate, AmountPerCutoff, DeductOn, Reason, CreatedBy)
     VALUES (?, ?, ?, ?, ?, ?)`, [plan.AgencyContributionID, effectiveDate, amount, deductOn, reason, userId])
@@ -123,11 +119,10 @@ async function correctOriginalPlan(id: number, body: Record<string, unknown>, us
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[existing]] = await connection.execute<any[]>(`SELECT SiteRateID FROM agency_contribution_plan
+    const [[existing]] = await connection.execute<any[]>(`SELECT AgencyPositionID FROM agency_contribution_plan
       WHERE AgencyContributionID = ?`, [id])
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Contribution plan not found.' })
-    // Use the same site-rate lock order as single and bulk creation.
-    await connection.execute(`SELECT SiteRateID FROM site_rate WHERE SiteRateID = ? FOR UPDATE`, [existing.SiteRateID])
+    await connection.execute(`SELECT AgencyPositionID FROM agency_position WHERE AgencyPositionID = ? FOR UPDATE`, [existing.AgencyPositionID])
     const [[plan]] = await connection.execute<any[]>(`SELECT * FROM agency_contribution_plan
       WHERE AgencyContributionID = ? FOR UPDATE`, [id])
     if (!plan || plan.Status !== 'Active') {
@@ -149,11 +144,11 @@ async function correctOriginalPlan(id: number, body: Record<string, unknown>, us
       throw createError({ statusCode: 409, statusMessage: 'The original plan can be edited only before a dated update or payroll posting. Use Update for a new effective amount.' })
     }
     const [overlap] = await connection.execute<any[]>(`SELECT AgencyContributionID FROM agency_contribution_plan
-      WHERE SiteRateID = ? AND DeductionTypeID = ? AND AgencyContributionID <> ? AND Status = 'Active'
+      WHERE AgencyPositionID = ? AND DeductionTypeID = ? AND AgencyContributionID <> ? AND Status = 'Active'
         AND EffectiveStartDate <= COALESCE(?, '9999-12-31')
         AND (EffectiveEndDate IS NULL OR EffectiveEndDate >= ?)
-      LIMIT 1 FOR UPDATE`, [plan.SiteRateID, plan.DeductionTypeID, id, end, start])
-    if (overlap.length) throw createError({ statusCode: 409, statusMessage: 'The corrected dates overlap another active contribution plan for this site position.' })
+      LIMIT 1 FOR UPDATE`, [plan.AgencyPositionID, plan.DeductionTypeID, id, end, start])
+    if (overlap.length) throw createError({ statusCode: 409, statusMessage: 'The corrected dates overlap another active contribution plan for this agency position.' })
     await connection.execute(`UPDATE agency_contribution_plan SET EffectiveStartDate = ?, EffectiveEndDate = ?,
       AmountPerCutoff = ?, DeductOn = ?, UpdatedBy = ? WHERE AgencyContributionID = ?`,
     [start, end, amount, deductOn, userId, id])
@@ -180,10 +175,10 @@ async function correctLatestVersion(id: number, body: Record<string, unknown>, u
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[existing]] = await connection.execute<any[]>(`SELECT SiteRateID FROM agency_contribution_plan
+    const [[existing]] = await connection.execute<any[]>(`SELECT AgencyPositionID FROM agency_contribution_plan
       WHERE AgencyContributionID = ?`, [id])
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Contribution plan not found.' })
-    await connection.execute(`SELECT SiteRateID FROM site_rate WHERE SiteRateID = ? FOR UPDATE`, [existing.SiteRateID])
+    await connection.execute(`SELECT AgencyPositionID FROM agency_position WHERE AgencyPositionID = ? FOR UPDATE`, [existing.AgencyPositionID])
     const [[plan]] = await connection.execute<any[]>(`SELECT * FROM agency_contribution_plan
       WHERE AgencyContributionID = ? FOR UPDATE`, [id])
     if (!plan || plan.Status !== 'Active') {
@@ -208,10 +203,10 @@ async function correctLatestVersion(id: number, body: Record<string, unknown>, u
       await connection.commit()
       return { success: true, id, action: 'unchanged' }
     }
-    const otherPlans = await activePlanForKey(connection, Number(plan.SiteRateID), Number(plan.DeductionTypeID),
+    const otherPlans = await activePlanForKey(connection, Number(plan.AgencyPositionID), Number(plan.DeductionTypeID),
       effectiveDate, id)
     if (otherPlans.length) {
-      throw createError({ statusCode: 409, statusMessage: 'Another active plan covers this site position and contribution.' })
+      throw createError({ statusCode: 409, statusMessage: 'Another active plan covers this agency position and contribution.' })
     }
     await connection.execute(`UPDATE agency_contribution_plan_version SET EffectiveDate = ?, AmountPerCutoff = ?,
       DeductOn = ? WHERE AgencyContributionVersionID = ?`,
@@ -237,7 +232,7 @@ export async function listAgencyContributions(event: any) {
   const session = requireSession(event)
   void session.sub
   const [items] = await pool.execute<any[]>(`SELECT plan.AgencyContributionID, plan.AgencyID, agency.AgencyName,
-    plan.SiteRateID, sr.SiteID, s.SiteName, p.PositionName, pr.RegularRate,
+    plan.AgencyPositionID, p.PositionName,
     plan.DeductionTypeID, dt.DeductionName, c.ClassificationName,
     plan.AmountPerCutoff, plan.DeductOn,
     DATE_FORMAT(plan.EffectiveStartDate, '%Y-%m-%d') AS EffectiveStartDate,
@@ -251,10 +246,7 @@ export async function listAgencyContributions(event: any) {
     CONCAT_WS(' ', creator.FirstName, creator.LastName) AS CreatedByName
     FROM agency_contribution_plan plan
     INNER JOIN agency ON agency.AgencyID = plan.AgencyID
-    LEFT JOIN site_rate sr ON sr.SiteRateID = plan.SiteRateID
-    LEFT JOIN site s ON s.SiteID = sr.SiteID
-    LEFT JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
-    LEFT JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+    LEFT JOIN agency_position ap ON ap.AgencyPositionID = plan.AgencyPositionID
     LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
     INNER JOIN deduction_type dt ON dt.DeductionTypeID = plan.DeductionTypeID
     INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
@@ -299,21 +291,16 @@ export async function listAgencyContributions(event: any) {
       NextEffectiveDate: versions.find(version => version.EffectiveDate > today)?.EffectiveDate || null }
   })
   const [agencies] = await pool.execute<any[]>("SELECT AgencyID, AgencyName FROM agency WHERE Status = 'Active' ORDER BY AgencyName")
-  const [siteRates] = await pool.execute<any[]>(`SELECT sr.SiteRateID, sr.SiteID, s.SiteName,
-    ap.AgencyID, p.PositionName, pr.RegularRate
-    FROM site_rate sr
-    INNER JOIN site s ON s.SiteID = sr.SiteID
-    INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
-    INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+  const [positions] = await pool.execute<any[]>(`SELECT ap.AgencyPositionID, ap.AgencyID, p.PositionName
+    FROM agency_position ap
     INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
-    WHERE sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active'
-      AND ap.Status = 'Active' AND p.Status = 'Active'
-    ORDER BY s.SiteName, p.PositionName, pr.RegularRate`)
+    WHERE ap.Status = 'Active' AND p.Status = 'Active'
+    ORDER BY ap.AgencyID, p.PositionName`)
   const [catalogItems] = await pool.execute<any[]>(`SELECT dt.DeductionTypeID, dt.DeductionName, c.ClassificationName
     FROM deduction_type dt INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
     WHERE dt.Status = 'Active' AND c.Status = 'Active' AND c.AppliesTo = 'Contribution'
     ORDER BY c.ClassificationName, dt.DeductionName`)
-  return { items: enriched, agencies, siteRates, catalogItems }
+  return { items: enriched, agencies, positions, catalogItems }
 }
 
 export async function saveAgencyContribution(event: any) {
@@ -346,7 +333,7 @@ export async function saveAgencyContribution(event: any) {
   }
 
   const agencyId = positiveId(body.AgencyID, 'agency')
-  const siteRateId = positiveId(body.SiteRateID, 'site position/rate')
+  const agencyPositionId = positiveId(body.AgencyPositionID, 'agency position')
   const typeId = positiveId(body.DeductionTypeID, 'contribution')
   const amount = contributionAmount(body.AmountPerCutoff)
   const deductOn = contributionCutoff(body.DeductOn)
@@ -359,18 +346,18 @@ export async function saveAgencyContribution(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    await assertPlanSelection(connection, agencyId, siteRateId, typeId)
+    await assertPlanSelection(connection, agencyId, agencyPositionId, typeId)
     if (status === 'Active') {
       const [overlap] = await connection.execute<any[]>(`SELECT AgencyContributionID FROM agency_contribution_plan
-        WHERE SiteRateID = ? AND DeductionTypeID = ? AND Status = 'Active'
+        WHERE AgencyPositionID = ? AND DeductionTypeID = ? AND Status = 'Active'
           AND EffectiveStartDate <= COALESCE(?, '9999-12-31')
           AND (EffectiveEndDate IS NULL OR EffectiveEndDate >= ?)
-        LIMIT 1`, [siteRateId, typeId, end, start])
-      if (overlap.length) throw createError({ statusCode: 409, statusMessage: 'An active site-position plan already covers this contribution and date range. Add a dated update instead.' })
+        LIMIT 1`, [agencyPositionId, typeId, end, start])
+      if (overlap.length) throw createError({ statusCode: 409, statusMessage: 'An active agency-position plan already covers this contribution and date range. Add a dated update instead.' })
     }
     const [result] = await connection.execute<any>(`INSERT INTO agency_contribution_plan
-      (AgencyID, SiteRateID, DeductionTypeID, AmountPerCutoff, DeductOn, EffectiveStartDate, EffectiveEndDate, Status, CreatedBy)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [agencyId, siteRateId, typeId, amount, deductOn, start, end, status, session.sub])
+      (AgencyID, AgencyPositionID, DeductionTypeID, AmountPerCutoff, DeductOn, EffectiveStartDate, EffectiveEndDate, Status, CreatedBy)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [agencyId, agencyPositionId, typeId, amount, deductOn, start, end, status, session.sub])
     await connection.commit()
     return { success: true, id: Number(result.insertId), action: 'create' }
   } catch (error) {
@@ -388,17 +375,17 @@ export async function bulkSaveAgencyContributions(event: any) {
   const effectiveDate = dateOnly(body.EffectiveDate, 'effective date')!
   const dryRun = body.DryRun === true
   if (!Array.isArray(body.Rows) || !body.Rows.length || body.Rows.length > 1000) {
-    throw createError({ statusCode: 400, statusMessage: 'Select 1 to 1,000 site-position contributions.' })
+    throw createError({ statusCode: 400, statusMessage: 'Select 1 to 1,000 agency-position contributions.' })
   }
   const rows = body.Rows.map((row: any) => ({
-    SiteRateID: positiveId(row?.SiteRateID, 'site position/rate'),
+    AgencyPositionID: positiveId(row?.AgencyPositionID, 'agency position'),
     DeductionTypeID: positiveId(row?.DeductionTypeID, 'contribution'),
     AmountPerCutoff: contributionAmount(row?.AmountPerCutoff),
     DeductOn: contributionCutoff(row?.DeductOn),
-  })).sort((left, right) => left.SiteRateID - right.SiteRateID || left.DeductionTypeID - right.DeductionTypeID)
-  const keys = rows.map(row => `${row.SiteRateID}:${row.DeductionTypeID}`)
+  })).sort((left, right) => left.AgencyPositionID - right.AgencyPositionID || left.DeductionTypeID - right.DeductionTypeID)
+  const keys = rows.map(row => `${row.AgencyPositionID}:${row.DeductionTypeID}`)
   if (new Set(keys).size !== keys.length) {
-    throw createError({ statusCode: 400, statusMessage: 'A site position and contribution appears more than once.' })
+    throw createError({ statusCode: 400, statusMessage: 'An agency position and contribution appears more than once.' })
   }
 
   const connection = await pool.getConnection()
@@ -406,16 +393,16 @@ export async function bulkSaveAgencyContributions(event: any) {
     await connection.beginTransaction()
     const results: any[] = []
     for (const row of rows) {
-      await assertPlanSelection(connection, agencyId, row.SiteRateID, row.DeductionTypeID)
-      const matches = await activePlanForKey(connection, row.SiteRateID, row.DeductionTypeID, effectiveDate)
+      await assertPlanSelection(connection, agencyId, row.AgencyPositionID, row.DeductionTypeID)
+      const matches = await activePlanForKey(connection, row.AgencyPositionID, row.DeductionTypeID, effectiveDate)
       if (matches.length) {
         results.push({ ...row, AgencyContributionID: Number(matches[0].AgencyContributionID), action: 'duplicate' })
       } else {
         if (!dryRun) {
           const [insert] = await connection.execute<any>(`INSERT INTO agency_contribution_plan
-            (AgencyID, SiteRateID, DeductionTypeID, AmountPerCutoff, DeductOn, EffectiveStartDate, Status, CreatedBy)
+            (AgencyID, AgencyPositionID, DeductionTypeID, AmountPerCutoff, DeductOn, EffectiveStartDate, Status, CreatedBy)
             VALUES (?, ?, ?, ?, ?, ?, 'Active', ?)`,
-          [agencyId, row.SiteRateID, row.DeductionTypeID, row.AmountPerCutoff, row.DeductOn, effectiveDate, session.sub])
+          [agencyId, row.AgencyPositionID, row.DeductionTypeID, row.AmountPerCutoff, row.DeductOn, effectiveDate, session.sub])
           results.push({ ...row, AgencyContributionID: Number(insert.insertId), action: 'create' })
         } else results.push({ ...row, action: 'create' })
       }

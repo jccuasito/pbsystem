@@ -5,17 +5,17 @@ import ModernDateField from '~~/components/ModernDateField.vue'
 type Cutoff = 'First' | 'Second' | 'Both'
 type Version = { AgencyContributionVersionID: number; EffectiveDate: string; AmountPerCutoff: number; DeductOn: Cutoff; Reason: string; CreatedAt: string; CreatedByName: string }
 type DateCorrection = { AgencyContributionDateCorrectionID: number; AgencyContributionVersionID: number | null; CorrectionKind: 'Original' | 'Version'; PreviousStartDate: string; PreviousEndDate: string | null; NewStartDate: string; NewEndDate: string | null; PreviousAmountPerCutoff: number | null; NewAmountPerCutoff: number | null; PreviousDeductOn: Cutoff | null; NewDeductOn: Cutoff | null; Reason: string; CreatedAt: string; CreatedByName: string }
-type Plan = { AgencyContributionID: number; AgencyID: number; AgencyName: string; SiteRateID: number; SiteID: number; SiteName: string; PositionName: string; RegularRate: number; DeductionTypeID: number; DeductionName: string; ClassificationName: string; AmountPerCutoff: number; DeductOn: Cutoff; EffectiveStartDate: string; EffectiveEndDate: string | null; Status: 'Active' | 'Inactive'; CreatedAt: string; CreatedByName: string; Versions: Version[]; DateCorrections: DateCorrection[]; PayrollLinkCount: number; OverrideLinkCount: number; CurrentAmountPerCutoff: number; CurrentDeductOn: Cutoff; NextEffectiveDate: string | null }
+type Plan = { AgencyContributionID: number; AgencyID: number; AgencyName: string; AgencyPositionID: number; PositionName: string; DeductionTypeID: number; DeductionName: string; ClassificationName: string; AmountPerCutoff: number; DeductOn: Cutoff; EffectiveStartDate: string; EffectiveEndDate: string | null; Status: 'Active' | 'Inactive'; CreatedAt: string; CreatedByName: string; Versions: Version[]; DateCorrections: DateCorrection[]; PayrollLinkCount: number; OverrideLinkCount: number; CurrentAmountPerCutoff: number; CurrentDeductOn: Cutoff; NextEffectiveDate: string | null }
 type Agency = { AgencyID: number; AgencyName: string }
-type SiteRate = { SiteRateID: number; SiteID: number; SiteName: string; AgencyID: number; PositionName: string; RegularRate: number }
+type PositionChoice = { AgencyPositionID: number; AgencyID: number; PositionName: string }
 type Catalog = { DeductionTypeID: number; DeductionName: string; ClassificationName: string }
-type BulkRow = SiteRate & { selected: boolean; amounts: Record<number, string> }
-type BulkResult = { SiteRateID: number; DeductionTypeID: number; AmountPerCutoff: number; DeductOn: Cutoff; action: 'create' | 'duplicate' }
+type BulkRow = PositionChoice & { selected: boolean; amounts: Record<number, string> }
+type BulkResult = { AgencyPositionID: number; DeductionTypeID: number; AmountPerCutoff: number; DeductOn: Cutoff; action: 'create' | 'duplicate' }
 type BulkPreview = { counts: { create: number; duplicate: number }; results: BulkResult[] }
 
 const plans = ref<Plan[]>([])
 const agencies = ref<Agency[]>([])
-const siteRates = ref<SiteRate[]>([])
+const positions = ref<PositionChoice[]>([])
 const catalog = ref<Catalog[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -36,11 +36,10 @@ function isConflict(cause: any) {
 const modalError = ref('')
 const search = ref('')
 const agencyFilter = ref('')
-const siteFilter = ref('')
 const statusFilter = ref('Active')
 
 const createOpen = ref(false)
-const createForm = reactive({ AgencyID: '', SiteID: '', SiteRateID: '', DeductionTypeID: '', AmountPerCutoff: '', DeductOn: 'Second' as Cutoff, EffectiveStartDate: '', EffectiveEndDate: '' })
+const createForm = reactive({ AgencyID: '', AgencyPositionID: '', DeductionTypeID: '', AmountPerCutoff: '', DeductOn: 'Second' as Cutoff, EffectiveStartDate: '', EffectiveEndDate: '' })
 const editTarget = ref<Plan | null>(null)
 const editingVersion = computed(() => !!editTarget.value?.Versions?.length)
 const editForm = reactive({ EffectiveStartDate: '', EffectiveEndDate: '', AmountPerCutoff: '', DeductOn: 'Second' as Cutoff, Reason: '' })
@@ -67,14 +66,11 @@ const cutoffLabel = (value: Cutoff) => value === 'First' ? '1st cutoff' : value 
 const contributionLabel = (item: Catalog) => `${item.ClassificationName} · ${item.DeductionName}`
 const planLabel = (item: Plan) => `${item.ClassificationName} · ${item.DeductionName}`
 
-const filterSites = computed(() => [...new Map(siteRates.value.filter(rate => !agencyFilter.value || String(rate.AgencyID) === agencyFilter.value).map(rate => [rate.SiteID, rate.SiteName])).entries()].map(([id, name]) => ({ id, name })))
-const createSites = computed(() => [...new Map(siteRates.value.filter(rate => String(rate.AgencyID) === createForm.AgencyID).map(rate => [rate.SiteID, rate.SiteName])).entries()].map(([id, name]) => ({ id, name })))
-const createRates = computed(() => siteRates.value.filter(rate => String(rate.AgencyID) === createForm.AgencyID && String(rate.SiteID) === createForm.SiteID))
+const createPositions = computed(() => positions.value.filter(position => String(position.AgencyID) === createForm.AgencyID))
 const visible = computed(() => plans.value.filter(item =>
   (!agencyFilter.value || String(item.AgencyID) === agencyFilter.value) &&
-  (!siteFilter.value || String(item.SiteID) === siteFilter.value) &&
   (!statusFilter.value || item.Status === statusFilter.value) &&
-  (!search.value.trim() || `${item.AgencyName} ${item.SiteName || ''} ${item.PositionName || ''} ${planLabel(item)}`.toLowerCase().includes(search.value.trim().toLowerCase()))
+  (!search.value.trim() || `${item.AgencyName} ${item.PositionName || ''} ${planLabel(item)}`.toLowerCase().includes(search.value.trim().toLowerCase()))
 ))
 const selectedCatalog = computed(() => catalog.value.filter(item => bulkTypes.value.includes(Number(item.DeductionTypeID))))
 const updateMinDate = computed(() => updateTarget.value ? nextDate(updateTarget.value.Versions?.at(-1)?.EffectiveDate || updateTarget.value.EffectiveStartDate) : '')
@@ -96,10 +92,10 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const response = await $fetch<{ items: Plan[]; agencies: Agency[]; siteRates: SiteRate[]; catalogItems: Catalog[] }>('/api/deductions-loans/agency-contributions')
+    const response = await $fetch<{ items: Plan[]; agencies: Agency[]; positions: PositionChoice[]; catalogItems: Catalog[] }>('/api/deductions-loans/agency-contributions')
     plans.value = response.items || []
     agencies.value = response.agencies || []
-    siteRates.value = response.siteRates || []
+    positions.value = response.positions || []
     catalog.value = response.catalogItems || []
   } catch (cause: any) {
     error.value = cause?.data?.statusMessage || 'Unable to load contributions.'
@@ -107,21 +103,20 @@ async function load() {
 }
 
 function openCreate() {
-  Object.assign(createForm, { AgencyID: agencyFilter.value || '', SiteID: siteFilter.value || '', SiteRateID: '',
+  Object.assign(createForm, { AgencyID: agencyFilter.value || '', AgencyPositionID: '',
     DeductionTypeID: '', AmountPerCutoff: '', DeductOn: 'Second', EffectiveStartDate: today(), EffectiveEndDate: '' })
   modalError.value = ''
   createOpen.value = true
 }
-function createAgencyChanged() { createForm.SiteID = ''; createForm.SiteRateID = '' }
-function createSiteChanged() { createForm.SiteRateID = '' }
+function createAgencyChanged() { createForm.AgencyPositionID = '' }
 async function saveCreate() {
   if (saving.value) return
-  if (!createRates.value.some(rate => String(rate.SiteRateID) === createForm.SiteRateID)) { modalError.value = 'Select a valid site and position/rate.'; return }
+  if (!createPositions.value.some(position => String(position.AgencyPositionID) === createForm.AgencyPositionID)) { modalError.value = 'Select a valid agency position.'; return }
   if (createForm.EffectiveEndDate && createForm.EffectiveEndDate < createForm.EffectiveStartDate) { modalError.value = 'End date must be on or after the start date.'; return }
   saving.value = true; modalError.value = ''
   try {
     await $fetch('/api/deductions-loans/agency-contributions', { method: 'POST', body: {
-      AgencyID: Number(createForm.AgencyID), SiteRateID: Number(createForm.SiteRateID),
+      AgencyID: Number(createForm.AgencyID), AgencyPositionID: Number(createForm.AgencyPositionID),
       DeductionTypeID: Number(createForm.DeductionTypeID), AmountPerCutoff: Number(createForm.AmountPerCutoff),
       DeductOn: createForm.DeductOn, EffectiveStartDate: createForm.EffectiveStartDate,
       EffectiveEndDate: createForm.EffectiveEndDate || null, Status: 'Active',
@@ -129,7 +124,7 @@ async function saveCreate() {
     createOpen.value = false; showToast('Contribution plan added.'); await load()
   } catch (cause: any) {
     modalError.value = isConflict(cause)
-      ? 'This site position already has a contribution plan for these dates. Use Update to change the amount or cutoff.'
+      ? 'This agency position already has a contribution plan for these dates. Use Update to change the amount or cutoff.'
       : cause?.data?.statusMessage || 'Unable to save contribution.'
     if (isConflict(cause)) showToast(modalError.value, 'warning')
   }
@@ -196,7 +191,7 @@ async function saveUpdate() {
 }
 
 async function deactivate(item: Plan) {
-  if (!window.confirm(`Deactivate ${planLabel(item)} at ${item.SiteName} / ${item.PositionName}?`)) return
+  if (!window.confirm(`Deactivate ${planLabel(item)} for ${item.AgencyName} / ${item.PositionName}?`)) return
   error.value = ''
   try {
     await $fetch('/api/deductions-loans/agency-contributions', { method: 'DELETE', body: { AgencyContributionID: item.AgencyContributionID, action: 'deactivate' } })
@@ -226,8 +221,8 @@ async function deletePlan() {
 }
 
 function resetBulkRows() {
-  bulkRows.value = siteRates.value.filter(rate => String(rate.AgencyID) === bulkAgencyId.value)
-    .map(rate => ({ ...rate, selected: true, amounts: {} }))
+  bulkRows.value = positions.value.filter(position => String(position.AgencyID) === bulkAgencyId.value)
+    .map(position => ({ ...position, selected: true, amounts: {} }))
   bulkPreview.value = null
 }
 function openBulk() {
@@ -248,12 +243,12 @@ function fillSelected(typeId: number) {
 }
 function selectAllRows(checked: boolean) { for (const row of bulkRows.value) row.selected = checked; invalidateBulk() }
 function bulkPayload(dryRun: boolean) {
-  const rows: { SiteRateID: number; DeductionTypeID: number; AmountPerCutoff: number; DeductOn: Cutoff }[] = []
+  const rows: { AgencyPositionID: number; DeductionTypeID: number; AmountPerCutoff: number; DeductOn: Cutoff }[] = []
   for (const row of bulkRows.value.filter(item => item.selected)) {
     for (const typeId of bulkTypes.value) {
       const raw = String(row.amounts[typeId] || '').trim()
       if (!raw) continue
-      rows.push({ SiteRateID: row.SiteRateID, DeductionTypeID: typeId,
+      rows.push({ AgencyPositionID: row.AgencyPositionID, DeductionTypeID: typeId,
         AmountPerCutoff: Number(raw), DeductOn: bulkCutoffs[typeId] || 'Second' })
     }
   }
@@ -290,7 +285,7 @@ async function saveBulk() {
   }
   finally { saving.value = false }
 }
-function bulkRate(id: number) { return bulkRows.value.find(row => row.SiteRateID === id) }
+function bulkPosition(id: number) { return bulkRows.value.find(row => row.AgencyPositionID === id) }
 function bulkCatalog(id: number) { return catalog.value.find(item => Number(item.DeductionTypeID) === id) }
 
 onMounted(load)
@@ -299,10 +294,10 @@ onMounted(load)
 <template>
   <section class="contributions-page">
     <header class="page-head">
-      <div><span class="eyebrow">DEDUCTIONS &amp; LOANS</span><h1>Contributions</h1><p>Manage contribution amounts by agency, site, and position.</p></div>
+      <div><span class="eyebrow">DEDUCTIONS &amp; LOANS</span><h1>Contributions</h1><p>Manage contribution amounts by agency and position.</p></div>
       <div class="head-actions"><button type="button" @click="openCreate">+ Single plan</button><button class="primary" type="button" @click="openBulk">+ Bulk setup</button></div>
     </header>
-    <div class="info">A plan applies to fixed employees on the selected site position/rate. Updates use their effective date on the payroll cutoff end; finalized payroll stays unchanged.</div>
+    <div class="info">A plan applies to fixed employees in the selected agency position across all sites. Updates use their effective date on the payroll cutoff end; finalized payroll stays unchanged.</div>
     <Transition name="snackbar">
       <div v-if="toast" :key="toast.id" class="snackbar" :class="`snackbar--${toast.kind}`" :role="toast.kind === 'warning' ? 'alert' : 'status'" :aria-live="toast.kind === 'warning' ? 'assertive' : 'polite'">
         <svg v-if="toast.kind === 'success'" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></svg>
@@ -312,28 +307,27 @@ onMounted(load)
       </div>
     </Transition>
     <div class="filters">
-      <label>Search<input v-model="search" type="search" placeholder="Search agency, site, position, or contribution"></label>
-      <label>Agency<select v-model="agencyFilter" @change="siteFilter = ''"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
-      <label>Site<select v-model="siteFilter"><option value="">All sites</option><option v-for="site in filterSites" :key="site.id" :value="String(site.id)">{{ site.name }}</option></select></label>
+      <label>Search<input v-model="search" type="search" placeholder="Search agency, position, or contribution"></label>
+      <label>Agency<select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
       <label>Status<select v-model="statusFilter"><option value="Active">Active</option><option value="Inactive">Inactive</option><option value="">All statuses</option></select></label>
     </div>
     <p class="list-count">Showing {{ visible.length }} contribution {{ visible.length === 1 ? 'plan' : 'plans' }}</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <div class="table-wrap"><table><thead><tr><th>Agency</th><th>Site / position</th><th>Contribution</th><th class="numeric">Current amount</th><th>Cutoff</th><th>Effective</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Agency</th><th>Position</th><th>Contribution</th><th class="numeric">Current amount</th><th>Cutoff</th><th>Effective</th><th>Status</th><th>Actions</th></tr></thead><tbody>
       <tr v-for="item in visible" :key="item.AgencyContributionID">
         <td><strong>{{ item.AgencyName }}</strong></td>
-        <td><strong>{{ item.SiteName || 'Unassigned' }}</strong><small>{{ item.PositionName || 'Select a site position' }}<template v-if="item.RegularRate !== null"> · {{ money(item.RegularRate) }} regular rate</template></small></td>
+        <td><strong>{{ item.PositionName || 'Unassigned position' }}</strong></td>
         <td><strong>{{ item.DeductionName }}</strong><small>{{ item.ClassificationName }}</small></td>
         <td class="numeric"><strong>{{ money(item.CurrentAmountPerCutoff) }}</strong></td>
         <td>{{ cutoffLabel(item.CurrentDeductOn) }}</td>
         <td>{{ dateLabel(item.Versions?.filter(version => version.EffectiveDate <= today()).at(-1)?.EffectiveDate || item.EffectiveStartDate) }}<small v-if="item.NextEffectiveDate">Next: {{ dateLabel(item.NextEffectiveDate) }}</small></td>
         <td><span class="status" :class="item.Status.toLowerCase()">{{ item.Status }}</span></td>
-        <td><div class="actions" role="group" :aria-label="`Actions for ${planLabel(item)} at ${item.SiteName || 'unassigned site'}`">
-          <button class="rate-icon-action" type="button" :disabled="item.Status !== 'Active' || !!Number(item.PayrollLinkCount)" :title="Number(item.PayrollLinkCount) ? 'Plan is locked after payroll posting' : 'Edit the latest amount, cutoff, and date'" :aria-label="`Edit contribution for ${planLabel(item)} at ${item.SiteName}`" @click="openEdit(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4L16.5 3.5Z" /></svg></button>
-          <button class="rate-icon-action" type="button" title="Update contribution with effective date" :aria-label="`Update ${planLabel(item)} at ${item.SiteName} with effective date`" :disabled="item.Status !== 'Active'" @click="openUpdate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 10h18M12 14v4M10 16h4" /></svg></button>
-          <button class="rate-icon-action" type="button" :title="`View contribution history (${(item.Versions || []).length + (item.DateCorrections || []).length + 1} entries)`" :aria-label="`View ${planLabel(item)} history at ${item.SiteName}`" @click="historyTarget = item"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg></button>
-          <button v-if="item.Status === 'Active'" class="rate-icon-action rate-icon-action--danger" type="button" title="Deactivate contribution" :aria-label="`Deactivate ${planLabel(item)} at ${item.SiteName}`" @click="deactivate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6 18.4 18.4" /></svg></button>
-          <button v-else class="rate-icon-action rate-icon-action--danger" type="button" :title="Number(item.PayrollLinkCount) || Number(item.OverrideLinkCount) ? 'Cannot delete: payroll or deduction review history exists' : 'Permanently delete unused contribution plan'" :aria-label="`Delete ${planLabel(item)} at ${item.SiteName}`" :disabled="!!Number(item.PayrollLinkCount) || !!Number(item.OverrideLinkCount)" @click="openDelete(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg></button>
+        <td><div class="actions" role="group" :aria-label="`Actions for ${planLabel(item)} / ${item.AgencyName} / ${item.PositionName}`">
+          <button class="rate-icon-action" type="button" :disabled="item.Status !== 'Active' || !!Number(item.PayrollLinkCount)" :title="Number(item.PayrollLinkCount) ? 'Plan is locked after payroll posting' : 'Edit the latest amount, cutoff, and date'" :aria-label="`Edit contribution for ${planLabel(item)} / ${item.PositionName}`" @click="openEdit(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4L16.5 3.5Z" /></svg></button>
+          <button class="rate-icon-action" type="button" title="Update contribution with effective date" :aria-label="`Update ${planLabel(item)} / ${item.PositionName} with effective date`" :disabled="item.Status !== 'Active'" @click="openUpdate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 10h18M12 14v4M10 16h4" /></svg></button>
+          <button class="rate-icon-action" type="button" :title="`View contribution history (${(item.Versions || []).length + (item.DateCorrections || []).length + 1} entries)`" :aria-label="`View ${planLabel(item)} history / ${item.PositionName}`" @click="historyTarget = item"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg></button>
+          <button v-if="item.Status === 'Active'" class="rate-icon-action rate-icon-action--danger" type="button" title="Deactivate contribution" :aria-label="`Deactivate ${planLabel(item)} / ${item.PositionName}`" @click="deactivate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6 18.4 18.4" /></svg></button>
+          <button v-else class="rate-icon-action rate-icon-action--danger" type="button" :title="Number(item.PayrollLinkCount) || Number(item.OverrideLinkCount) ? 'Cannot delete: payroll or deduction review history exists' : 'Permanently delete unused contribution plan'" :aria-label="`Delete ${planLabel(item)} / ${item.PositionName}`" :disabled="!!Number(item.PayrollLinkCount) || !!Number(item.OverrideLinkCount)" @click="openDelete(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg></button>
         </div></td>
       </tr>
       <tr v-if="!visible.length"><td colspan="8" class="empty">{{ loading ? 'Loading contribution plans...' : 'No contribution plans match the filters.' }}</td></tr>
@@ -342,11 +336,10 @@ onMounted(load)
     <div v-if="createOpen" class="modal-backdrop" @click.self="!saving && (createOpen = false)">
       <form class="modal small-modal" role="dialog" aria-modal="true" aria-label="Add contribution" @submit.prevent="saveCreate">
         <button class="close" type="button" aria-label="Close" :disabled="saving" @click="createOpen = false">×</button>
-        <header><span class="eyebrow">SITE CONTRIBUTION</span><h2>Add contribution</h2><p>Create the original amount for one site position.</p></header>
+        <header><span class="eyebrow">AGENCY POSITION CONTRIBUTION</span><h2>Add contribution</h2><p>Create one amount for this position across the agency's sites.</p></header>
         <div class="form-grid">
           <label>Agency<select v-model="createForm.AgencyID" required @change="createAgencyChanged"><option disabled value="">Select agency</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
-          <label>Site<select v-model="createForm.SiteID" required :disabled="!createForm.AgencyID" @change="createSiteChanged"><option disabled value="">Select site</option><option v-for="site in createSites" :key="site.id" :value="String(site.id)">{{ site.name }}</option></select></label>
-          <label>Position / site rate<select v-model="createForm.SiteRateID" required :disabled="!createForm.SiteID"><option disabled value="">Select position</option><option v-for="rate in createRates" :key="rate.SiteRateID" :value="String(rate.SiteRateID)">{{ rate.PositionName }} · {{ money(rate.RegularRate) }} regular rate</option></select></label>
+          <label>Position<select v-model="createForm.AgencyPositionID" required :disabled="!createForm.AgencyID"><option disabled value="">Select position</option><option v-for="position in createPositions" :key="position.AgencyPositionID" :value="String(position.AgencyPositionID)">{{ position.PositionName }}</option></select></label>
           <label>Contribution<select v-model="createForm.DeductionTypeID" required><option disabled value="">Select contribution</option><option v-for="item in catalog" :key="item.DeductionTypeID" :value="String(item.DeductionTypeID)">{{ contributionLabel(item) }}</option></select></label>
           <label>Amount per employee / cutoff<input v-model="createForm.AmountPerCutoff" type="number" min="0.01" max="99999999.99" step="0.01" required></label>
           <label>Deduct every<select v-model="createForm.DeductOn"><option value="First">1st cutoff</option><option value="Second">2nd cutoff</option><option value="Both">Both cutoffs</option></select></label>
@@ -361,7 +354,7 @@ onMounted(load)
     <div v-if="editTarget" class="modal-backdrop" @click.self="!saving && (editTarget = null)">
       <form class="modal small-modal" role="dialog" aria-modal="true" aria-label="Edit original contribution" @submit.prevent="saveEdit">
         <button class="close" type="button" aria-label="Close" :disabled="saving" @click="editTarget = null">×</button>
-        <header><span class="eyebrow">{{ editingVersion ? 'LATEST UPDATE CORRECTION' : 'ORIGINAL PLAN CORRECTION' }}</span><h2>Edit contribution</h2><p>{{ editTarget.AgencyName }} · {{ editTarget.SiteName }} / {{ editTarget.PositionName }}</p></header>
+        <header><span class="eyebrow">{{ editingVersion ? 'LATEST UPDATE CORRECTION' : 'ORIGINAL PLAN CORRECTION' }}</span><h2>Edit contribution</h2><p>{{ editTarget.AgencyName }} · {{ editTarget.PositionName }}</p></header>
         <div class="current-summary"><span>{{ planLabel(editTarget) }}</span><strong>{{ money(editingVersion ? editTarget.Versions.at(-1)?.AmountPerCutoff || 0 : editTarget.AmountPerCutoff) }} · {{ cutoffLabel(editingVersion ? editTarget.Versions.at(-1)?.DeductOn || editTarget.DeductOn : editTarget.DeductOn) }}</strong></div>
         <div class="form-grid">
           <label>Amount per employee / cutoff<input v-model="editForm.AmountPerCutoff" type="number" min="0.01" max="99999999.99" step="0.01" required></label>
@@ -379,7 +372,7 @@ onMounted(load)
     <div v-if="updateTarget" class="modal-backdrop" @click.self="!saving && (updateTarget = null)">
       <form class="modal small-modal" role="dialog" aria-modal="true" aria-label="Update contribution" @submit.prevent="saveUpdate">
         <button class="close" type="button" aria-label="Close" :disabled="saving" @click="updateTarget = null">×</button>
-        <header><span class="eyebrow">DATED UPDATE</span><h2>Update contribution</h2><p>{{ updateTarget.AgencyName }} · {{ updateTarget.SiteName }} / {{ updateTarget.PositionName }}</p></header>
+        <header><span class="eyebrow">DATED UPDATE</span><h2>Update contribution</h2><p>{{ updateTarget.AgencyName }} · {{ updateTarget.PositionName }}</p></header>
         <div class="current-summary"><span>{{ planLabel(updateTarget) }}</span><strong>{{ money(updateTarget.CurrentAmountPerCutoff) }} · {{ cutoffLabel(updateTarget.CurrentDeductOn) }}</strong></div>
         <div class="form-grid">
           <ModernDateField v-model="updateForm.EffectiveDate" label="New effective date" :min="updateMinDate" required />
@@ -396,7 +389,7 @@ onMounted(load)
     <div v-if="deleteTarget" class="modal-backdrop" @click.self="!saving && (deleteTarget = null)">
       <section class="modal small-modal" role="dialog" aria-modal="true" aria-label="Delete contribution plan">
         <button class="close" type="button" aria-label="Close" :disabled="saving" @click="deleteTarget = null">&times;</button>
-        <header><span class="eyebrow">PERMANENT DELETE</span><h2>Delete unused contribution plan?</h2><p>{{ deleteTarget.AgencyName }} · {{ deleteTarget.SiteName }} / {{ deleteTarget.PositionName }}</p></header>
+        <header><span class="eyebrow">PERMANENT DELETE</span><h2>Delete unused contribution plan?</h2><p>{{ deleteTarget.AgencyName }} · {{ deleteTarget.PositionName }}</p></header>
         <div class="current-summary"><span>{{ planLabel(deleteTarget) }}</span><strong>{{ money(deleteTarget.CurrentAmountPerCutoff) }} · {{ cutoffLabel(deleteTarget.CurrentDeductOn) }}</strong></div>
         <p class="hint">This permanently removes the inactive plan and its update and correction history. Plans linked to payroll or deduction review cannot be deleted.</p>
         <p v-if="modalError" class="error" role="alert">{{ modalError }}</p>
@@ -407,7 +400,7 @@ onMounted(load)
     <div v-if="historyTarget" class="modal-backdrop" @click.self="historyTarget = null">
       <section class="modal history-modal" role="dialog" aria-modal="true" aria-label="Contribution history">
         <button class="close" type="button" aria-label="Close" @click="historyTarget = null">×</button>
-        <header><span class="eyebrow">CONTRIBUTION HISTORY</span><h2>{{ planLabel(historyTarget) }}</h2><p>{{ historyTarget.AgencyName }} · {{ historyTarget.SiteName }} / {{ historyTarget.PositionName }}</p></header>
+        <header><span class="eyebrow">CONTRIBUTION HISTORY</span><h2>{{ planLabel(historyTarget) }}</h2><p>{{ historyTarget.AgencyName }} · {{ historyTarget.PositionName }}</p></header>
         <div class="history-scroll"><article v-for="entry in historyEntries" :key="entry.id" class="history-entry">
           <div class="history-head"><div><span class="eyebrow">{{ entry.original ? 'ORIGINAL PLAN' : 'DATED UPDATE' }}</span><h3>Effective {{ dateLabel(entry.EffectiveDate) }}</h3></div><span class="history-state" :class="entry.state.toLowerCase()">{{ entry.state }}</span></div>
           <div class="history-amount"><strong>{{ money(entry.AmountPerCutoff) }}</strong><span>{{ cutoffLabel(entry.DeductOn) }} · per employee</span></div>
@@ -430,13 +423,13 @@ onMounted(load)
     <div v-if="bulkOpen" class="modal-backdrop" @click.self="!saving && (bulkOpen = false)">
       <section class="modal bulk-modal" role="dialog" aria-modal="true" aria-label="Bulk contribution setup">
         <button class="close" type="button" aria-label="Close" :disabled="saving" @click="bulkOpen = false">×</button>
-        <header><span class="eyebrow">BULK SETUP</span><h2>Contributions by site and position</h2><p>Fill common amounts once, then adjust any site before saving.</p></header>
+        <header><span class="eyebrow">BULK SETUP</span><h2>Contributions by agency position</h2><p>Fill common amounts once, then adjust each position before saving.</p></header>
         <div class="bulk-scroll">
           <div class="bulk-settings">
             <label>Agency<select v-model="bulkAgencyId" @change="resetBulkRows"><option disabled value="">Select agency</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
             <ModernDateField v-model="bulkEffectiveDate" label="Effective date" required @update:model-value="invalidateBulk" />
           </div>
-          <p class="hint">Bulk setup adds new plans only. Existing site-position contributions are duplicates and block the whole batch. Use each plan's Update action for a future amount or cutoff change.</p>
+          <p class="hint">Bulk setup adds new plans only. Existing agency-position contributions are duplicates and block the whole batch. Use each plan's Update action for a future amount or cutoff change.</p>
           <div v-if="bulkAgencyId" class="bulk-stage">
             <h3>1. Choose contributions and common amounts</h3>
             <div class="type-picks"><label v-for="item in catalog" :key="item.DeductionTypeID"><input v-model="bulkTypes" type="checkbox" :value="Number(item.DeductionTypeID)" @change="invalidateBulk"><span>{{ contributionLabel(item) }}</span></label></div>
@@ -445,16 +438,16 @@ onMounted(load)
               <label>Deduct every<select v-model="bulkCutoffs[item.DeductionTypeID]" @change="invalidateBulk"><option value="First">1st cutoff</option><option value="Second">2nd cutoff</option><option value="Both">Both cutoffs</option></select></label>
               <div class="fill-action"><label>Common amount<input v-model="bulkFillAmounts[item.DeductionTypeID]" type="number" min="0.01" step="0.01" placeholder="0.00"></label><button type="button" @click="fillSelected(item.DeductionTypeID)">Fill selected</button></div>
             </div></div>
-            <h3>2. Review each site / position</h3>
-            <p class="list-count">{{ bulkSelectedCount }} of {{ bulkRows.length }} site positions selected · Blank amount cells are skipped.</p>
-            <div class="bulk-table-wrap"><table class="bulk-table"><thead><tr><th><label class="select-all"><input type="checkbox" :checked="bulkRows.length > 0 && bulkSelectedCount === bulkRows.length" @change="selectAllRows(($event.target as HTMLInputElement).checked)">Site / position</label></th><th v-for="item in selectedCatalog" :key="item.DeductionTypeID" class="numeric">{{ contributionLabel(item) }}</th></tr></thead><tbody>
-              <tr v-for="row in bulkRows" :key="row.SiteRateID"><td><label class="site-pick"><input v-model="row.selected" type="checkbox" @change="invalidateBulk"><span><strong>{{ row.SiteName }}</strong><small>{{ row.PositionName }} · {{ money(row.RegularRate) }} regular rate</small></span></label></td><td v-for="item in selectedCatalog" :key="item.DeductionTypeID"><input v-model="row.amounts[item.DeductionTypeID]" class="amount-input" type="number" min="0.01" step="0.01" placeholder="—" :disabled="!row.selected" :aria-label="`${contributionLabel(item)} for ${row.SiteName} ${row.PositionName}`" @input="invalidateBulk"></td></tr>
-              <tr v-if="!bulkRows.length"><td :colspan="selectedCatalog.length + 1" class="empty">No active site positions for this agency.</td></tr>
+            <h3>2. Review each position</h3>
+            <p class="list-count">{{ bulkSelectedCount }} of {{ bulkRows.length }} positions selected · Blank amount cells are skipped.</p>
+            <div class="bulk-table-wrap"><table class="bulk-table"><thead><tr><th><label class="select-all"><input type="checkbox" :checked="bulkRows.length > 0 && bulkSelectedCount === bulkRows.length" @change="selectAllRows(($event.target as HTMLInputElement).checked)">Position</label></th><th v-for="item in selectedCatalog" :key="item.DeductionTypeID" class="numeric">{{ contributionLabel(item) }}</th></tr></thead><tbody>
+              <tr v-for="row in bulkRows" :key="row.AgencyPositionID"><td><label class="site-pick"><input v-model="row.selected" type="checkbox" @change="invalidateBulk"><span><strong>{{ row.PositionName }}</strong></span></label></td><td v-for="item in selectedCatalog" :key="item.DeductionTypeID"><input v-model="row.amounts[item.DeductionTypeID]" class="amount-input" type="number" min="0.01" step="0.01" placeholder="—" :disabled="!row.selected" :aria-label="`${contributionLabel(item)} for ${row.PositionName}`" @input="invalidateBulk"></td></tr>
+              <tr v-if="!bulkRows.length"><td :colspan="selectedCatalog.length + 1" class="empty">No active positions for this agency.</td></tr>
             </tbody></table></div>
           </div>
           <div v-if="bulkPreview" class="preview-panel"><h3>3. Review plans before saving</h3><div class="preview-counts"><span>{{ bulkPreview.counts.create }} new plans</span><span :class="{ 'duplicate-count': bulkPreview.counts.duplicate }">{{ bulkPreview.counts.duplicate }} duplicates</span></div>
-            <p v-if="bulkPreview.counts.duplicate" class="error" role="alert">Remove duplicate site-position contributions from this batch before saving. No plans have been changed.</p>
-            <div class="preview-list"><div v-for="(result, index) in bulkPreview.results" :key="index"><span>{{ bulkRate(result.SiteRateID)?.SiteName }} / {{ bulkRate(result.SiteRateID)?.PositionName }} · {{ bulkCatalog(result.DeductionTypeID) ? contributionLabel(bulkCatalog(result.DeductionTypeID)!) : result.DeductionTypeID }}</span><strong>{{ money(result.AmountPerCutoff) }}</strong><em :class="{ 'duplicate-result': result.action === 'duplicate' }">{{ result.action }}</em></div></div>
+            <p v-if="bulkPreview.counts.duplicate" class="error" role="alert">Remove duplicate agency-position contributions from this batch before saving. No plans have been changed.</p>
+            <div class="preview-list"><div v-for="(result, index) in bulkPreview.results" :key="index"><span>{{ bulkPosition(result.AgencyPositionID)?.PositionName }} · {{ bulkCatalog(result.DeductionTypeID) ? contributionLabel(bulkCatalog(result.DeductionTypeID)!) : result.DeductionTypeID }}</span><strong>{{ money(result.AmountPerCutoff) }}</strong><em :class="{ 'duplicate-result': result.action === 'duplicate' }">{{ result.action }}</em></div></div>
           </div>
         </div>
         <p v-if="modalError" class="error" role="alert">{{ modalError }}</p>
@@ -487,6 +480,10 @@ td .actions .rate-icon-action:disabled{opacity:.45;cursor:not-allowed}
 .modal footer .danger{border-color:#b42318;background:#b42318;color:#fff}
 .modal footer .danger:hover:not(:disabled){background:#941d14}
 .snackbar-enter-from,.snackbar-leave-to{opacity:0;transform:translateY(12px)}
+.filters{grid-template-columns:minmax(260px,2fr) repeat(2,minmax(150px,1fr))}
+.bulk-settings{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:1000px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.filters,.bulk-settings{grid-template-columns:1fr}}
 @media(max-width:700px){.snackbar{right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}}
 @media(prefers-reduced-motion:reduce){.snackbar-enter-active,.snackbar-leave-active{transition:none}}
 </style>
