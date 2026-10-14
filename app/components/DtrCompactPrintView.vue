@@ -195,10 +195,6 @@ function printDtr() {
             </div>
           </div>
           <h2 class="document-title">Summary Daily Time Record</h2>
-          <div class="compact-legend" aria-label="Attendance color legend">
-            <span v-for="[label, tone] in colorLegend" :key="tone"><i :class="tone" aria-hidden="true"></i>{{ label }}</span>
-          </div>
-
           <div class="print-table-wrap">
             <table class="compact-table">
               <thead>
@@ -247,7 +243,12 @@ function printDtr() {
             <div><strong>Checked by:</strong><span></span><small>Signature over printed name / date</small></div>
             <div><strong>Noted by:</strong><span></span><small>Signature over printed name / date</small></div>
           </footer>
-          <p class="document-reference">DTR-{{ String(batch.BatchID).padStart(4, '0') }} · Generated {{ new Date().toLocaleString('en-PH') }}</p>
+          <div class="document-footer">
+            <div class="compact-legend" aria-label="Attendance color legend">
+              <span v-for="[label, tone] in colorLegend" :key="tone"><i :class="tone" aria-hidden="true"></i>{{ label }}</span>
+            </div>
+            <p class="document-reference">DTR-{{ String(batch.BatchID).padStart(4, '0') }} · Generated {{ new Date().toLocaleString('en-PH') }}</p>
+          </div>
         </article>
       </div>
     </section>
@@ -279,19 +280,20 @@ function printDtr() {
 .compact-dtr-print-root .document-status{position:absolute;top:6px;right:0;padding:0 3px 2px;border-bottom:1px solid #111;text-transform:capitalize;font-size:12px;font-style:italic}
 .document-meta{display:grid;grid-template-columns:1fr 1fr;align-items:start;gap:80px;margin-top:4px;font-size:11px}
 .document-meta .period-meta,.document-meta .site-meta{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:8px}
-.document-meta .period-meta>span,.document-meta .site-meta>span{padding-top:2px;white-space:nowrap}
-.document-meta .site-meta>span{padding-top:10px}
+.document-meta .period-meta>span,.document-meta .site-meta>span{padding-top:7px;white-space:nowrap}
 .document-meta strong{padding:0 8px 4px;border-bottom:1px solid #111;text-align:center;text-transform:uppercase}
+.document-meta .period-meta>strong{box-sizing:border-box;display:flex;align-items:center;justify-content:center;min-height:28px;padding:0 8px}
 .document-meta span{text-transform:uppercase;font-weight:800}
 .document-meta .site-identity{display:flex;min-width:0;flex-direction:column;align-items:stretch;gap:3px}
-.document-meta .site-identity-line{display:flex;align-items:flex-end;justify-content:flex-start;gap:8px;min-width:0;min-height:34px;padding-bottom:3px;border-bottom:1px solid #111}
-.document-meta .site-logo{width:58px;height:24px}
-.document-meta .site-identity strong{box-sizing:border-box;flex:none;min-width:0;padding:0 0 2px 8px;border-bottom:0;text-align:left;white-space:nowrap}
+.document-meta .site-identity-line{box-sizing:border-box;display:flex;align-items:center;justify-content:flex-start;gap:8px;min-width:0;min-height:28px;border-bottom:1px solid #111}
+.document-meta .site-logo{width:58px;height:20px}
+.document-meta .site-identity strong{box-sizing:border-box;flex:none;min-width:0;padding:0 0 0 8px;border-bottom:0;text-align:left;white-space:nowrap}
 .document-meta .site-identity small{display:block;margin:2px 0 0 0;padding-left:8px;color:#4b5563;text-align:left}
 .document-title{margin:10px 0 9px;text-align:center;text-transform:uppercase;font-size:12px}
-.compact-dtr-print-root .compact-legend{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:5px 12px;margin:0 0 9px;color:#43536b;font-size:10px}
+.compact-dtr-print-root .document-footer{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-top:18px}
+.compact-dtr-print-root .compact-legend{display:flex;flex:1;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:5px 12px;min-width:0;color:#64748b;font-size:10px}
 .compact-dtr-print-root .compact-legend span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-.compact-dtr-print-root .compact-legend i{display:inline-block;flex:none;width:10px;height:10px;border-radius:2px}
+.compact-dtr-print-root .compact-legend i{display:inline-block;flex:none;width:10px;height:10px;border-radius:2px;opacity:.62}
 .compact-legend i.tone-late{background:#f97316}.compact-legend i.tone-half-day{background:#64748b}.compact-legend i.tone-absent{background:#ef4444}.compact-legend i.tone-on-leave{background:#8b5cf6}.compact-legend i.tone-vacation-leave{background:#eab308}.compact-legend i.tone-holiday{background:#f59e0b}.compact-legend i.tone-rest-day{background:#0ea5e9}.compact-legend i.tone-reliever{background:#10b981}.compact-legend i.tone-sick-leave{background:#e11d48}.compact-legend i.tone-shift-ds{background:#e0ad16}.compact-legend i.tone-shift-ns{background:#356aa8}.compact-legend i.tone-shift-ss{background:#2f7a52}
 .print-table-wrap{min-width:0;max-width:100%;overflow:visible}
 .compact-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8px}
@@ -318,7 +320,7 @@ function printDtr() {
 .compact-table .empty-row{height:70px;color:#64748b;font-size:11px}
 .signature-blocks{display:grid;grid-template-columns:repeat(3,1fr);gap:70px;margin-top:30px}
 .signature-blocks div{display:grid;min-height:84px;font-size:9px}.signature-blocks strong{text-transform:uppercase}.signature-blocks span{align-self:end;border-bottom:1px solid #111}.signature-blocks small{margin-top:5px;text-align:center;text-transform:uppercase;font-size:7px}
-.document-reference{margin:18px 0 0;color:#64748b;text-align:right;font-size:7px}
+.compact-dtr-print-root .document-reference{flex:none;margin:0;color:#64748b;text-align:right;font-size:7px}
 @media screen{
   .compact-dtr-print-root .print-header{padding-inline:clamp(48px,8vw,150px)}
   .document-meta{gap:clamp(16px,4vw,80px)}
@@ -351,8 +353,8 @@ function printDtr() {
   .compact-dtr-scroll{overflow:visible!important;padding:0!important}
   .compact-dtr-print-root{position:absolute;inset:0;width:100%!important;min-width:0!important;margin:0!important;padding:0!important;box-shadow:none!important}
   .compact-dtr-print-root .print-header{min-height:48px;padding:0 60px}.compact-dtr-print-root .agency-brand{gap:8px}.compact-dtr-print-root .agency-logo{width:34px;height:34px}.compact-dtr-print-root .company-heading{max-width:430px}.compact-dtr-print-root .company-heading h1{font-size:16px}.compact-dtr-print-root .company-heading p{font-size:7px}.compact-dtr-print-root .document-status{top:3px;font-size:8px}
-  .document-meta{gap:35px;font-size:7px}.document-meta .site-meta>span{padding-top:4px}.document-meta .site-identity-line{gap:5px;min-height:24px;padding-bottom:2px}.document-meta .site-logo{width:40px;height:18px}.document-title{margin:6px 0;font-size:8px}
-  .compact-dtr-print-root .compact-legend{gap:3px 7px;margin-bottom:5px;font-size:5px}.compact-dtr-print-root .compact-legend i{width:6px;height:6px}
+  .document-meta{gap:35px;font-size:7px}.document-meta .period-meta>span,.document-meta .site-meta>span{padding-top:4px}.document-meta .period-meta>strong,.document-meta .site-identity-line{min-height:20px}.document-meta .site-identity-line{gap:5px}.document-meta .site-logo{width:40px;height:14px}.document-title{margin:6px 0;font-size:8px}
+  .compact-dtr-print-root .document-footer{gap:10px;margin-top:10px}.compact-dtr-print-root .compact-legend{gap:3px 7px;font-size:5px}.compact-dtr-print-root .compact-legend i{width:6px;height:6px}
   .compact-table{font-size:5.2px}.compact-table th,.compact-table td{height:23px;padding:1px}.compact-table thead th{height:31px;font-size:4.7px}.compact-table .number-column{width:18px}.compact-table .name-column{width:92px}.compact-table .position-column{width:48px}.compact-table .type-column{width:35px}.compact-table .shift-column{width:28px}.compact-table .date-column{width:22px}.compact-table .metric-column{width:27px}.compact-table .signature-column{width:65px}.compact-table .employee-cell small{font-size:4.5px}.compact-table .attendance-cell small{font-size:4px}
   .signature-blocks{gap:45px;margin-top:18px}.signature-blocks div{min-height:50px;font-size:6px}.signature-blocks small,.document-reference{font-size:5px}
 }
