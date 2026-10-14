@@ -614,11 +614,17 @@ async function syncAutomaticAttendanceStatuses(connection: PoolConnection, batch
   }
 }
 
-// WDO is a persisted payroll marker. The latest qualifying day(s) receive the
-// 14/15+ day marker, within the same transaction as attendance/status changes.
-function automaticWdoCount(workedDays: number, enabled: unknown) {
+// WDO is a persisted payroll marker. Its thresholds follow the inclusive
+// calendar length of this batch, within the attendance/status transaction.
+function automaticWdoCount(workedDays: number, periodStart: unknown, periodEnd: unknown, enabled: unknown) {
   if (Number(enabled) !== 1) return 0
-  return workedDays >= 15 ? 2 : workedDays >= 14 ? 1 : 0
+  const cutoffDays = cutoffDates(periodStart, periodEnd).length
+  if (workedDays < 1 || cutoffDays < 1) return 0
+  return workedDays >= cutoffDays ? 2 : workedDays >= cutoffDays - 1 ? 1 : 0
+}
+
+function workedCalendarDayCount(workedRows: { AttendanceDate: unknown }[]) {
+  return new Set(workedRows.map(row => databaseDate(row.AttendanceDate))).size
 }
 
 function isSundayAttendanceDate(attendanceDate: unknown) {
@@ -663,14 +669,14 @@ async function syncAutoWdo(connection: any, batch: any, employeeId: number, supp
   await connection.execute('UPDATE attendance SET IsWDO = 0, RestDayHours = 0, RestDayOTHours = 0 WHERE BatchID = ? AND EmployeeID = ?', [batch.BatchID, employeeId])
   await syncAutomaticAttendanceStatuses(connection, batch, employeeId)
   const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
-  const [workedRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate, at.WorkdayCount, at.RegularHours, at.OTHours, at.OTExtHours
+  const [workedRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate, at.RegularHours, at.OTHours, at.OTExtHours
     FROM attendance at
     WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate BETWEEN ? AND ?
     AND ${workedAttendanceCondition('at.')}
     ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC
     FOR UPDATE`, [batch.BatchID, employeeId, periodStart, periodEnd])
-  const workedDays = workedRows.reduce((total, row) => total + Math.max(1, Number(row.WorkdayCount || 1)), 0)
-  const wdoCount = automaticWdoCount(workedDays, policy.AutoWDOEnabled)
+  const workedDays = workedCalendarDayCount(workedRows)
+  const wdoCount = automaticWdoCount(workedDays, periodStart, periodEnd, policy.AutoWDOEnabled)
   const markerIds = wdoAttendanceIds(workedRows, wdoCount, policy.SundayWDOOTEnabled)
   const markerIdSet = new Set(markerIds)
   for (const row of workedRows) {

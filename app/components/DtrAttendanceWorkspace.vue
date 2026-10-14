@@ -58,6 +58,7 @@ function dayOfMonth(value:string){return Number(dateOnly(value).slice(-2))}
 function sameEmployee(left:unknown,right:unknown){return String(left)===String(right)}
 function dayLabel(value:string){return new Date(dateOnly(value)+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}
 function dates(){const result:string[]=[];for(let d=new Date(dateOnly(props.dtr.PeriodStart)+'T00:00:00');d<=new Date(dateOnly(props.dtr.PeriodEnd)+'T00:00:00');d.setDate(d.getDate()+1))result.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));return result}
+const cutoffDayCount=computed(()=>dates().length)
 function entry(row:Row,date:string){return attendanceMap.value.get(String(row.EmployeeID)+':'+date)}
 function dateWithinDeployment(row:Row,date:string){const start=dateOnly(row.DeploymentStartDate),end=dateOnly(row.DeploymentEndDate);return (!start||date>=start)&&(!end||date<=end)}
 function displayedEntry(row:Row,date:string){const preview=previewAttendance.value;return preview&&sameEmployee(preview.EmployeeID,row.EmployeeID)&&preview.AttendanceDate===date?preview:entry(row,date)}
@@ -290,7 +291,7 @@ onMounted(load)
         <p>{{dtr.ClientName}} - {{dtr.SiteName}}<br>{{dayLabel(dtr.PeriodStart)}} to {{dayLabel(dtr.PeriodEnd)}}</p>
         <section class="policy-section">
           <h4>Work Day Off</h4>
-          <label class="policy-switch"><input v-model="sitePolicy.AutoWDOEnabled" type="checkbox" :true-value="1" :false-value="0"><span></span><div><strong>Automatic WDO count</strong><small>When on: 15 or more worked days = 2 WDO, exactly 14 = 1 WDO, and below 14 = 0. Each automatic WDO posts 8 Rest day hours and 0 Rest day OT.</small></div></label>
+          <label class="policy-switch"><input v-model="sitePolicy.AutoWDOEnabled" type="checkbox" :true-value="1" :false-value="0"><span></span><div><strong>Automatic WDO count</strong><small>When on: {{ cutoffDayCount }} worked calendar dates = 2 WDO, {{ cutoffDayCount - 1 }} = 1 WDO, and fewer = 0. Each automatic WDO posts 8 Rest day hours and 0 Rest day OT.</small></div></label>
           <label class="policy-switch"><input v-model="sitePolicy.SundayWDOOTEnabled" type="checkbox" :true-value="1" :false-value="0"><span></span><div><strong>Sunday WDO OT</strong><small>Each worked Sunday is 1 WDO. Rest day hours follow regular hours; Rest day OT includes regular OT and OT extension. A Special Holiday on a worked Sunday uses the Rest day special holiday fields; a Legal Holiday uses the Legal holiday fields.</small></div></label>
         </section>
         <section class="policy-section">

@@ -9,6 +9,7 @@ const source = fs.readFileSync('server/utils/dtrCrud.ts', 'utf8')
 vm.runInNewContext(transformSync(source + `
   module.exports.sitePolicyTest = {
     automaticWdoCount,
+    workedCalendarDayCount,
     sundayWdoOtHours,
     wdoPayrollAllocation,
     wdoAttendanceIds,
@@ -16,14 +17,29 @@ vm.runInNewContext(transformSync(source + `
   };
 `, { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: () => ({}) })
 
-const { automaticWdoCount, sundayWdoOtHours, wdoPayrollAllocation, wdoAttendanceIds, activeHolidaysByDate } = moduleState.exports.sitePolicyTest
+const { automaticWdoCount, workedCalendarDayCount, sundayWdoOtHours, wdoPayrollAllocation, wdoAttendanceIds, activeHolidaysByDate } = moduleState.exports.sitePolicyTest
 
-test('automatic WDO follows the configured 14 and 15 day thresholds', () => {
-  assert.equal(automaticWdoCount(13, 1), 0)
-  assert.equal(automaticWdoCount(14, 1), 1)
-  assert.equal(automaticWdoCount(15, 1), 2)
-  assert.equal(automaticWdoCount(16, true), 2)
-  assert.equal(automaticWdoCount(16, 0), 0)
+test('automatic WDO thresholds follow the inclusive cutoff calendar length', () => {
+  assert.equal(automaticWdoCount(13, '2026-09-16', '2026-09-30', 1), 0)
+  assert.equal(automaticWdoCount(14, '2026-09-16', '2026-09-30', 1), 1)
+  assert.equal(automaticWdoCount(15, '2026-09-16', '2026-09-30', 1), 2)
+  assert.equal(automaticWdoCount(14, '2026-10-16', '2026-10-31', 1), 0)
+  assert.equal(automaticWdoCount(15, '2026-10-16', '2026-10-31', 1), 1)
+  assert.equal(automaticWdoCount(16, '2026-10-16', '2026-10-31', true), 2)
+  assert.equal(automaticWdoCount(14, '2026-10-01', '2026-10-15', 1), 1)
+  assert.equal(automaticWdoCount(15, '2026-10-01', '2026-10-15', 1), 2)
+  assert.equal(automaticWdoCount(12, '2028-02-16', '2028-02-29', 1), 0)
+  assert.equal(automaticWdoCount(13, '2028-02-16', '2028-02-29', 1), 1)
+  assert.equal(automaticWdoCount(14, '2028-02-16', '2028-02-29', 1), 2)
+  assert.equal(automaticWdoCount(16, '2026-10-16', '2026-10-31', 0), 0)
+})
+
+test('WDO counts distinct worked dates instead of shift day equivalents', () => {
+  assert.equal(workedCalendarDayCount([
+    { AttendanceDate: '2026-09-16', WorkdayCount: 2 },
+    { AttendanceDate: '2026-09-17', WorkdayCount: 1 },
+    { AttendanceDate: '2026-09-17', WorkdayCount: 1 },
+  ]), 2)
 })
 
 test('Sunday WDO OT credits only regular OT and OT extension when enabled', () => {
@@ -86,8 +102,8 @@ test('DTR summaries expose WDO and WDO OT without the removed WDO Hours column',
   for (const filename of ['app/components/DtrAttendanceWorkspace.vue', 'app/components/DtrCompactPrintView.vue']) {
     const contents = fs.readFileSync(filename, 'utf8')
     const summary = contents.slice(contents.indexOf('const summaryFields'), contents.indexOf('] as const', contents.indexOf('const summaryFields')))
-    assert.match(summary, /\['WDODays',\s*'WDO'\]/)
-    assert.match(summary, /\['RestDayOTHours',\s*'WDO OT'\]/)
+    assert.match(summary, /\['WDODays',\s*'WDO'(?:,\s*'[^']+')?\]/)
+    assert.match(summary, /\['RestDayOTHours',\s*'WDO OT'(?:,\s*'[^']+')?\]/)
     assert.doesNotMatch(summary, /\['RestDayHours',\s*'WDO hours'\]/)
   }
 })
