@@ -269,8 +269,8 @@ function printDtr() {
 .compact-dtr-scroll{flex:1;min-width:0;overflow-x:hidden;overflow-y:auto;padding:18px}
 .compact-dtr-print-root{box-sizing:border-box;width:min(1800px,100%);min-width:0;margin:0 auto;padding:22px;background:#fff;color:#101820;box-shadow:0 4px 18px rgba(18,45,88,.12);print-color-adjust:exact;-webkit-print-color-adjust:exact}
 .compact-dtr-print-root .print-header{position:relative;display:flex;align-items:center;justify-content:center;min-height:72px;padding:6px 85px}
-.brand-logo{display:grid;place-items:center;flex:none;overflow:visible;border:0;background:transparent;color:#52647d;font-size:14px;font-weight:850}
-.compact-dtr-print-root .brand-logo>img{display:block!important;box-sizing:border-box!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;padding:0!important;border:0!important;background:transparent!important;object-fit:contain!important;object-position:center!important}
+.compact-dtr-print-root .brand-logo{display:flex;align-items:center;justify-content:center;flex:none;min-width:0;min-height:0;overflow:hidden;border:0;background:transparent;color:#52647d;font-size:14px;font-weight:850}
+.compact-dtr-print-root .brand-logo>img{display:block!important;box-sizing:border-box!important;flex:none;min-width:0!important;min-height:0!important;width:100%!important;height:100%!important;max-width:100%!important;max-height:100%!important;padding:0!important;border:0!important;background:transparent!important;object-fit:contain!important;object-position:center!important}
 .compact-dtr-print-root .agency-brand{display:flex;align-items:flex-start;justify-content:center;gap:14px;min-width:0}
 .compact-dtr-print-root .agency-logo{width:50px;height:50px}
 .compact-dtr-print-root .company-heading{flex:0 1 auto;max-width:680px;text-align:center}
