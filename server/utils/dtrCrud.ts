@@ -199,6 +199,32 @@ export async function computeDtr(event: any) {
     if (current.Status === 'Computed to Both' || current.Status === (target === 'payroll' ? 'Computed to Payroll' : 'Computed to Billing')) {
       throw createError({ statusCode: 409, statusMessage: `This DTR was already computed to ${target}.` })
     }
+    const [roster] = await connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
+        CONCAT_WS(' ', e.FirstName, e.LastName) AS EmployeeName,
+        COUNT(DISTINCT at.AttendanceID) AS AttendanceCount,
+        COUNT(DISTINCT CASE WHEN at.AttendanceID IS NOT NULL
+          AND COALESCE(at.AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
+          AND at.ShiftCodeID IS NULL
+          AND duty.AttendanceID IS NULL
+          THEN at.AttendanceID END) AS UncodedWorkCount
+      FROM attendance_dtr_employee de
+      INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
+      LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
+      LEFT JOIN attendance_duty duty ON duty.AttendanceID = at.AttendanceID
+      WHERE de.BatchID = ?
+      GROUP BY de.EmployeeID, e.EmployeeNumber, e.FirstName, e.LastName
+      ORDER BY e.LastName, e.FirstName, de.EmployeeID`, [id])
+    if (!roster.length) throw createError({ statusCode: 409, statusMessage: 'Add at least one employee to this DTR before computing it.' })
+    const missing = roster.filter((employee: any) => Number(employee.AttendanceCount) === 0)
+    if (missing.length) {
+      const names = missing.slice(0, 3).map((employee: any) => employee.EmployeeNumber || employee.EmployeeName).join(', ')
+      throw createError({ statusCode: 409, statusMessage: `${missing.length} employee${missing.length === 1 ? '' : 's'} in this DTR ${missing.length === 1 ? 'has' : 'have'} no saved attendance for this cutoff (${names}${missing.length > 3 ? ', ...' : ''}). Encode attendance or a no-work status in Edit DTR before computing to ${target}.` })
+    }
+    const uncoded = roster.filter((employee: any) => Number(employee.UncodedWorkCount) > 0)
+    if (uncoded.length) {
+      const names = uncoded.slice(0, 3).map((employee: any) => employee.EmployeeNumber || employee.EmployeeName).join(', ')
+      throw createError({ statusCode: 409, statusMessage: `${uncoded.length} employee${uncoded.length === 1 ? '' : 's'} ${uncoded.length === 1 ? 'has' : 'have'} worked attendance without a shift code (${names}${uncoded.length > 3 ? ', ...' : ''}). Assign a shift code in Edit DTR before computing to ${target}.` })
+    }
     await syncBatchHolidays(connection, current, session.sub)
     if (target === 'payroll') await assertDtrBtrReady(connection, current)
     const nextStatus = current.Status === 'Computed to Both'

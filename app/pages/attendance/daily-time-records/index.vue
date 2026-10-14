@@ -9,6 +9,8 @@ type Agency={AgencyID:number,AgencyName:string}; type Client={AgencyID:number,Cl
 const failedLogos=ref(new Set<string>())
 const btrWorkspace=ref<Dtr|null>(null)
 const adjustmentDtr=ref<Dtr|null>(null)
+const computeConfirmation=ref<{item:Dtr,target:'payroll'|'billing'}|null>(null)
+const computeDialog=ref<HTMLElement|null>(null)
 function logoKey(resource:'agency'|'site',id:number){return resource+'-'+id}
 function logoInitials(name:string){return name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase()||'—'}
 const now=new Date(), selectedYear=ref(String(now.getFullYear())), selectedCutoff=ref(''), search=ref(''), agencyId=ref(''), clientId=ref(''), siteId=ref(''), items=ref<Dtr[]>([]), agencies=ref<Agency[]>([]), clients=ref<Client[]>([]), sites=ref<Site[]>([]), loading=ref(false), saving=ref(false), computingKey=ref(''), detailsLoadingId=ref<number|null>(null), error=ref(''), formOpen=ref(false), editing=ref<Dtr|null>(null), workspace=ref<Dtr|null>(null), detailsData=ref<any>(null), summaryOpen=ref(false), compactOpen=ref(false), summary=ref<any>(null)
@@ -27,13 +29,28 @@ function isComputedFor(i:Dtr,target:'payroll'|'billing'){
 function canCompute(i:Dtr,target:'payroll'|'billing'){
   return !['Approved','Locked'].includes(i.Status)&&!isComputedFor(i,target)
 }
-async function compute(i:Dtr,target:'payroll'|'billing'){
-  if(!canCompute(i,target))return
-  const destination=target==='payroll'?'payroll':'billing'
-  const nextStatus=i.Status.startsWith('Computed')?'Computed to Both':target==='payroll'?'Computed to Payroll':'Computed to Billing'
-  if(!confirm(`Compute DTR-${String(i.BatchID).padStart(4,'0')} to ${destination}?\n\nThis will mark the DTR as “${nextStatus}” and disable attendance editing. Payroll amounts will be available for review in Payroll Processing. This does not post payroll or billing records or adjustments.`))return
-  computingKey.value=`${i.BatchID}-${target}`
-  try{await $fetch(`/api/attendance/dtr/${i.BatchID}/compute`,{method:'POST',body:{target}});await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to compute DTR.'}finally{computingKey.value=''}
+function computeNextStatus(i:Dtr,target:'payroll'|'billing'){
+  return i.Status.startsWith('Computed')?'Computed to Both':target==='payroll'?'Computed to Payroll':'Computed to Billing'
+}
+async function openComputeConfirmation(i:Dtr,target:'payroll'|'billing'){
+  if(!canCompute(i,target)||computingKey.value)return
+  computeConfirmation.value={item:i,target}
+  await nextTick()
+  computeDialog.value?.focus()
+}
+function closeComputeConfirmation(){if(!computingKey.value)computeConfirmation.value=null}
+async function compute(){
+  const pending=computeConfirmation.value
+  if(!pending||!canCompute(pending.item,pending.target)||computingKey.value)return
+  const {item,target}=pending
+  computingKey.value=`${item.BatchID}-${target}`
+  error.value=''
+  try{
+    await $fetch(`/api/attendance/dtr/${item.BatchID}/compute`,{method:'POST',body:{target}})
+    computeConfirmation.value=null
+    await load()
+  }catch(e:any){computeConfirmation.value=null;error.value=e?.data?.statusMessage||e?.message||'Unable to compute DTR.'}
+  finally{computingKey.value=''}
 }
 async function viewSummary(i:Dtr){try{summary.value={item:i,...(await $fetch<any>(`/api/attendance/dtr/${i.BatchID}/summary`))};compactOpen.value=false;summaryOpen.value=true}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load DTR summary.'}}
 async function viewDetails(i:Dtr){
@@ -97,8 +114,8 @@ function blurActions(event:FocusEvent){
                 <button type="button" title="Break Time Reliever" @click="btrWorkspace=i">Add BTR</button>
                 <button type="button" @click="viewSummary(i)">View Summary DTR</button>
                 <button type="button" @click="adjustmentDtr=i">Payroll adjustments</button>
-                <button type="button" :disabled="!canCompute(i,'payroll')||computingKey===`${i.BatchID}-payroll`" @click="compute(i,'payroll')">{{computingKey===`${i.BatchID}-payroll`?'Computing…':'Compute to payroll'}}</button>
-                <button type="button" :disabled="!canCompute(i,'billing')||computingKey===`${i.BatchID}-billing`" @click="compute(i,'billing')">{{computingKey===`${i.BatchID}-billing`?'Computing…':'Compute to billing'}}</button>
+                <button type="button" :disabled="!canCompute(i,'payroll')||!!computingKey" @click="openComputeConfirmation(i,'payroll')">Compute to payroll</button>
+                <button type="button" :disabled="!canCompute(i,'billing')||!!computingKey" @click="openComputeConfirmation(i,'billing')">Compute to billing</button>
                 <button type="button" class="delete-action" :disabled="!canEdit(i)" @click="remove(i)">Delete DTR</button>
               </div>
             </details>
@@ -111,6 +128,15 @@ function blurActions(event:FocusEvent){
   </table>
 </div>
 <div v-if="formOpen" class="overlay" @click.self="formOpen=false"><form class="modal" @submit.prevent="save"><button class="close" type="button" @click="formOpen=false">×</button><h2>Create DTR</h2><p>Create one DTR batch per agency, site, and payroll cutoff.</p><div class="grid"><label>Agency<select v-model="form.AgencyID" required @change="form.ClientID='';form.SiteID=''"><option disabled value="">Select agency</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select></label><label>Client<select v-model="form.ClientID" required :disabled="!form.AgencyID" @change="form.SiteID=''"><option disabled value="">Select client</option><option v-for="c in formClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select></label><label>Site<select v-model="form.SiteID" required :disabled="!form.ClientID"><option disabled value="">Select site</option><option v-for="s in formSites" :key="s.SiteID" :value="String(s.SiteID)">{{s.SiteName}}</option></select></label><label>Period start<input v-model="form.PeriodStart" type="date" required></label><label>Period end<input v-model="form.PeriodEnd" type="date" required></label></div><p v-if="error" class="error">{{error}}</p><div class="modal-actions"><button class="secondary" type="button" @click="formOpen=false">Cancel</button><button class="primary" :disabled="saving">{{saving?'Saving…':'Save DTR'}}</button></div></form></div>
+<div v-if="computeConfirmation" class="overlay" @click.self="closeComputeConfirmation">
+  <section ref="computeDialog" class="modal compute-modal" role="dialog" aria-modal="true" aria-labelledby="compute-confirm-title" tabindex="-1" @keydown.esc.stop.prevent="closeComputeConfirmation">
+    <button class="close" type="button" aria-label="Close confirmation" :disabled="!!computingKey" @click="closeComputeConfirmation">×</button>
+    <p class="eyebrow">CONFIRM DTR COMPUTATION</p>
+    <h2 id="compute-confirm-title">Compute DTR-{{String(computeConfirmation.item.BatchID).padStart(4,'0')}} to {{computeConfirmation.target}}?</h2>
+    <p>This will mark the DTR as <strong>{{computeNextStatus(computeConfirmation.item,computeConfirmation.target)}}</strong> and make attendance read-only. This does not finalize payroll or billing.</p>
+    <div class="modal-actions"><button class="secondary" type="button" :disabled="!!computingKey" @click="closeComputeConfirmation">Cancel</button><button class="primary" type="button" :disabled="!!computingKey" @click="compute">{{computingKey?'Computing…':`Compute to ${computeConfirmation.target}`}}</button></div>
+  </section>
+</div>
 <div v-if="summaryOpen&&summary" class="overlay" @click.self="summaryOpen=false"><section class="modal"><button class="close" @click="summaryOpen=false">×</button><h2>DTR Summary</h2><p><strong>{{summary.item.ClientName}}</strong> · {{summary.item.SiteName}}<br>{{formatDate(summary.item.PeriodStart)}}–{{formatDate(summary.item.PeriodEnd)}}</p><dl><div><dt>Employees</dt><dd>{{summary.summary.PeopleCount}}</dd></div><div><dt>Attendance entries</dt><dd>{{summary.summary.AttendanceCount}}</dd></div><div><dt>Regular hours</dt><dd>{{summary.summary.RegularHours}}</dd></div><div><dt>OT hours</dt><dd>{{summary.summary.OTHours}}</dd></div><div><dt>Late hours</dt><dd>{{summary.summary.LateHours}}</dd></div><div><dt>Undertime hours</dt><dd>{{summary.summary.UndertimeHours}}</dd></div><div class="summary-night-diff"><dt>Night diff hours</dt><dd>{{summary.summary.NightDiffHours}}</dd></div></dl><div class="modal-actions"><button class="secondary" type="button" @click="summaryOpen=false">Close</button><button class="primary" type="button" @click="compactOpen=true">View compact DTR</button></div></section></div>
 <DtrCompactPrintView v-if="compactOpen&&summary" :data="summary" @close="compactOpen=false" />
 <DtrEmployeeAttendanceDetailsModal v-if="detailsData" :data="detailsData" @close="detailsData=null" />
@@ -157,6 +183,9 @@ function blurActions(event:FocusEvent){
 .dtr-page .dtr-action-options button:disabled { opacity: .45; cursor: not-allowed; }
 .dtr-page .dtr-row-actions :focus-visible { outline: 2px solid #2867d8; outline-offset: 2px; }
 .dtr-page .overlay { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(15,27,52,.30); }.dtr-page .modal { position: relative; width: min(650px,100%); box-sizing: border-box; padding: 28px; border-radius: 15px; background: #fff; }.dtr-page .close { position: absolute; right: 18px; top: 12px; border: 0; background: none; font-size: 25px; cursor: pointer; }.dtr-page .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }.dtr-page .grid label { color: #3f5271; font-size: 13px; font-weight: 700; }.dtr-page .grid input, .dtr-page .grid select { margin-top: 6px; }.dtr-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }.dtr-page dl { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; margin: 22px 0; }.dtr-page dl div { padding: 12px; border: 1px solid #dae4f3; border-radius: 8px; }.dtr-page dt { color: #667793; font-size: 12px; }.dtr-page dd { margin: 6px 0 0; color: #183965; font-weight: 800; }
+.dtr-page .compute-modal { width: min(560px,100%); box-shadow: 0 20px 60px rgba(15,27,52,.18); }
+.dtr-page .compute-modal .eyebrow { margin: 0 0 8px; color: #4f79bd; }
+.dtr-page .compute-modal > p:not(.eyebrow) { margin-top: 12px; line-height: 1.5; }
 .dtr-page .summary-night-diff { grid-column: 1 / -1; }
 @container (max-width: 1100px) {
   .dtr-page .filters { grid-template-columns: repeat(4,minmax(0,1fr)); }
