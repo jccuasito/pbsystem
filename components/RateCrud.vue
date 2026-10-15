@@ -20,7 +20,27 @@ const agencyOptions = computed(() => [...new Map(agencyPositions.value.map(item 
 const formPositionOptions = computed(() => agencyPositions.value.filter(item => String(item.AgencyID) === String(selectedAgencyId.value)).map(item => ({ value: item.AgencyPositionID, label: String(item.PositionName) })).sort((a, b) => a.label.localeCompare(b.label)))
 const agencies = computed(() => [...new Set(items.value.map(item => String(item.AgencyName || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
 const positions = computed(() => [...new Set(items.value.filter(item => !agencyFilter.value || item.AgencyName === agencyFilter.value).map(item => String(item.PositionName || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
-const rateRegions = computed(() => [...new Map(items.value.filter(item => item.RegionID != null).map(item => [String(item.RegionID), { id: String(item.RegionID), name: String(item.RegionName || item.RegionCode || '') }])).values()].sort((a, b) => a.name.localeCompare(b.name)))
+const regionOrder = ['13', '14', '01', '02', '03', '04', '17', '05', '06', '18', '07', '08', '09', '10', '11', '12', '16', '19']
+const regionRank = new Map(regionOrder.map((code, index) => [code, index]))
+function compareRegions(a: any, b: any) {
+  return (regionRank.get(String(a.RegionCode)) ?? 99) - (regionRank.get(String(b.RegionCode)) ?? 99)
+    || String(a.RegionName || '').localeCompare(String(b.RegionName || ''))
+}
+function regionLabel(region: any) {
+  const name = String(region.RegionName || '').toUpperCase()
+  const namedRegion = /^REGION ([IVX]+(?:-A)?) \((.+)\)$/.exec(name)
+  if (namedRegion) return `REGION ${namedRegion[1]} — ${namedRegion[2].replace(/ REGION$/, '')}`
+  const shortNames: Record<string, string> = {
+    '13': 'NCR — NATIONAL CAPITAL',
+    '14': 'CAR — CORDILLERA',
+    '17': 'MIMAROPA',
+    '18': 'NIR — NEGROS ISLAND',
+    '19': 'BARMM — BANGSAMORO',
+  }
+  return shortNames[String(region.RegionCode)] || name || String(region.RegionCode || '')
+}
+const sortedRegions = computed(() => [...regions.value].sort(compareRegions))
+const rateRegions = computed(() => [...new Map(items.value.filter(item => item.RegionID != null).map(item => [String(item.RegionID), { id: String(item.RegionID), RegionCode: item.RegionCode, RegionName: item.RegionName, name: regionLabel(item) }])).values()].sort(compareRegions))
 const historyEntries = computed(() => {
   const item = viewingHistory.value
   if (!item) return []
@@ -243,7 +263,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
               <div class="rate-fields-grid rate-fields-grid--three">
                 <SearchableSelect v-model="selectedAgencyId" label="Agency" placeholder="Search agency" :options="agencyOptions" required empty-text="No active agencies with positions found." @change="changeFormAgency" />
                 <SearchableSelect v-model="form.AgencyPositionID" label="Position" :placeholder="selectedAgencyId ? 'Search position' : 'Select agency first'" :options="formPositionOptions" :disabled="!selectedAgencyId" required empty-text="No active positions for this agency." />
-                <label class="rate-control"><span>Region</span><select v-model="form.RegionID"><option value="">All regions</option><option v-for="option in regions" :key="option.RegionID" :value="option.RegionID">{{ option.RegionCode }} — {{ option.RegionName }}</option></select></label>
+                <label class="rate-control"><span>Region</span><select v-model="form.RegionID"><option value="">All regions</option><option v-for="option in sortedRegions" :key="option.RegionID" :value="option.RegionID" :title="option.RegionName">{{ regionLabel(option) }}</option></select></label>
               </div>
             </section>
             <section class="rate-modal-section">

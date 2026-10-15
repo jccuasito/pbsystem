@@ -13,7 +13,7 @@ const numberFields = new Set(['AgencyID', 'PositionID', 'RegionID', 'ClientID', 
 
 const activeAgencies = async () => { const [rows] = await pool.execute<any[]>('SELECT AgencyID, AgencyName FROM agency WHERE Status = \'Active\' ORDER BY AgencyName'); return { agencies: rows } }
 const activePositions = async () => { const [rows] = await pool.execute<any[]>('SELECT PositionID, PositionName FROM `position` WHERE Status = \'Active\' ORDER BY PositionName'); return { positions: rows } }
-const activeRegions = async () => { const [rows] = await pool.execute<any[]>('SELECT RegionID, RegionCode, RegionName FROM region WHERE Status = \'Active\' ORDER BY RegionName'); return { regions: rows } }
+const activeRegions = async () => { const [rows] = await pool.execute<any[]>('SELECT RegionID, RegionCode, RegionName FROM region WHERE Status = \'Active\' ORDER BY RegionCode'); return { regions: rows } }
 const activeClients = async () => { const [rows] = await pool.execute<any[]>('SELECT ClientID, ClientName FROM client WHERE Status = \'Active\' ORDER BY ClientName'); return { clients: rows } }
 const activeSites = async () => { const [rows] = await pool.execute<any[]>('SELECT s.SiteID, s.SiteName, s.ClientID, s.RegionID, r.RegionName FROM site s LEFT JOIN region r ON r.RegionID = s.RegionID WHERE s.Status = \'Active\' ORDER BY s.SiteName'); return { sites: rows } }
 const activeShiftCodes = async () => { const [rows] = await pool.execute<any[]>('SELECT ShiftCodeID, AgencyID, ShiftCode, ShiftName FROM shift_code WHERE Status = \'Active\' ORDER BY ShiftCode, ShiftName'); return { shiftCodes: rows } }
@@ -22,7 +22,7 @@ const configs: Record<Resource, Config> = {
   agency: { table: 'agency', id: 'AgencyID', fields: ['AgencyName', 'AgencyAddress', 'AgencyEmail', 'AgencyContact', 'Status'], listSql: 'SELECT AgencyID, AgencyName, AgencyAddress, AgencyEmail, AgencyContact, Status, CreatedAt, CASE WHEN LogoData IS NULL THEN 0 ELSE 1 END AS HasLogo FROM agency ORDER BY AgencyName' },
   position: { table: '`position`', id: 'PositionID', fields: ['PositionName', 'Description', 'Status'], listSql: 'SELECT PositionID, PositionName, Description, Status FROM `position` ORDER BY PositionName' },
   'agency-position': { table: 'agency_position', id: 'AgencyPositionID', fields: ['AgencyID', 'PositionID', 'Status'], listSql: 'SELECT ap.AgencyPositionID, ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName, ap.Status FROM agency_position ap INNER JOIN agency a ON a.AgencyID = ap.AgencyID INNER JOIN `position` p ON p.PositionID = ap.PositionID ORDER BY a.AgencyName, p.PositionName', lookups: async () => ({ ...(await activeAgencies()), ...(await activePositions()) }) },
-  region: { table: 'region', id: 'RegionID', fields: ['RegionCode', 'RegionName', 'Status'], listSql: 'SELECT RegionID, RegionCode, RegionName, Status FROM region ORDER BY RegionName' },
+  region: { table: 'region', id: 'RegionID', fields: ['RegionCode', 'RegionName', 'Status'], listSql: 'SELECT RegionID, RegionCode, RegionName, Status FROM region ORDER BY RegionCode' },
   client: { table: 'client', id: 'ClientID', fields: ['ClientName', 'ClientAddress', 'ContractStart', 'ContractEnd', 'Status'], listSql: 'SELECT ClientID, ClientName, ClientAddress, ContractStart, ContractEnd, Status FROM client ORDER BY ClientName' },
   'client-policy': { table: 'client_policy', id: 'ClientPolicyID', fields: ['ClientID', ...policyFields], listSql: 'SELECT cp.*, c.ClientName FROM client_policy cp INNER JOIN client c ON c.ClientID = cp.ClientID ORDER BY c.ClientName', lookups: activeClients },
   site: { table: 'site', id: 'SiteID', fields: ['ClientID', 'RegionID', 'SiteName', 'SiteAddress', 'Status'], listSql: `SELECT s.SiteID, s.ClientID, c.ClientName, s.RegionID, r.RegionCode, r.RegionName, s.SiteName, s.SiteAddress, s.Status, CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END AS HasLogo, v.PolicySource, v.NDEnabled, v.NDStartTime, v.NDEndTime FROM site s INNER JOIN client c ON c.ClientID = s.ClientID LEFT JOIN region r ON r.RegionID = s.RegionID LEFT JOIN vw_effective_site_policy v ON v.SiteID = s.SiteID ORDER BY c.ClientName, s.SiteName`, lookups: async () => ({ ...(await activeClients()), ...(await activeRegions()), ...(await activeAgencies()) }) },
@@ -38,6 +38,16 @@ function resource(event: any): Resource {
 }
 
 function normalizeValue(field: string, value: unknown) {
+  if (field === 'RegionCode') {
+    const code = String(value ?? '').trim()
+    if (!/^\d{2}$/.test(code)) throw createError({ statusCode: 400, statusMessage: 'Region code must be the two-digit PSGC prefix (for example, 01 or 13).' })
+    return code
+  }
+  if (field === 'RegionName') {
+    const name = String(value ?? '').trim().toUpperCase()
+    if (!name) throw createError({ statusCode: 400, statusMessage: 'Region name is required.' })
+    return name
+  }
   if (field === 'Status') {
     if (value === undefined || value === null || value === '') return 'Active'
     if (value === 'Active' || value === 'Inactive') return value
