@@ -42,6 +42,15 @@ function optionalBoolean(value: unknown, label: string) {
   throw createError({ statusCode: 400, statusMessage: `${label} must be on or off.` })
 }
 
+function fixedSiteForDtrType(type: 'Regular' | 'Reliever', requested: unknown) {
+  const fixed = type === 'Regular'
+  const submitted = optionalBoolean(requested, 'Permanent site')
+  if (submitted !== null && submitted !== fixed) {
+    throw createError({ statusCode: 400, statusMessage: 'Regular employees must be Fixed; Relievers must be Cutoff-only.' })
+  }
+  return fixed
+}
+
 function wholeMinutes(value: unknown, label: string) {
   const minutes = Number(value)
   if (!Number.isInteger(minutes) || minutes < 0 || minutes > 240) throw createError({ statusCode: 400, statusMessage: `${label} must be a whole number from 0 to 240.` })
@@ -485,7 +494,7 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
     INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
     INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-    WHERE ed.IsPermanentSite = 1 AND e.Status = 'Active' AND ap.AgencyID = ? AND sr.SiteID = ? AND ed.SiteID = ?
+    WHERE ed.IsPermanentSite = 1 AND ed.DeploymentType = 'Regular' AND e.Status = 'Active' AND ap.AgencyID = ? AND sr.SiteID = ? AND ed.SiteID = ?
       AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
     ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [batch.AgencyID, batch.SiteID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
   for (const employee of permanentEmployees) {
@@ -793,16 +802,18 @@ export async function listDtrEmployees(event: any) {
   const connection = await pool.getConnection()
   try {
     const batch = await batchDetail(connection, id)
-    const values: any[] = [batch.SiteID, batch.PeriodEnd, batch.PeriodStart, id, batch.AgencyID, batch.SiteID]
+    const values: any[] = [id, batch.SiteID, batch.PeriodEnd, batch.PeriodStart, id, batch.AgencyID, batch.SiteID]
     let searchSql = ''
     if (query.search?.trim()) {
       const value = `%${query.search.trim()}%`; values.push(value, value, value, value)
       searchSql = ' AND (CAST(e.EmployeeID AS CHAR) LIKE ? OR e.EmployeeNumber LIKE ? OR e.FirstName LIKE ? OR e.LastName LIKE ?)' 
     }
     const [employees] = await connection.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName,
+      COALESCE((SELECT enrolled.IsPermanentSite FROM attendance_dtr_employee enrolled
+        WHERE enrolled.BatchID = ? AND enrolled.EmployeeID = e.EmployeeID LIMIT 1),
       EXISTS (SELECT 1 FROM employee_deployment permanent_deployment
         WHERE permanent_deployment.EmployeeID = e.EmployeeID AND permanent_deployment.SiteID = ? AND permanent_deployment.IsPermanentSite = 1
-          AND permanent_deployment.StartDate <= ? AND (permanent_deployment.EndDate IS NULL OR permanent_deployment.EndDate >= ?)) AS IsPermanentSite,
+          AND permanent_deployment.StartDate <= ? AND (permanent_deployment.EndDate IS NULL OR permanent_deployment.EndDate >= ?))) AS IsPermanentSite,
       EXISTS (SELECT 1 FROM attendance_dtr_employee enrolled WHERE enrolled.BatchID = ? AND enrolled.EmployeeID = e.EmployeeID) AS IsAdded
       FROM employee e INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN payroll_rate pr ON pr.AgencyPositionID = e.AgencyPositionID
@@ -821,7 +832,7 @@ export async function addDtrEmployee(event: any) {
   const employeeId = positiveId(body.EmployeeID, 'Employee')
   const deploymentType = body.DeploymentType === 'Reliever' ? 'Reliever' : body.DeploymentType === 'Regular' ? 'Regular' : null
   if (!deploymentType) throw createError({ statusCode: 400, statusMessage: 'Deployment type must be Regular or Reliever.' })
-  const isPermanentSite = optionalBoolean(body.IsPermanentSite, 'Permanent site') === true
+  const isPermanentSite = fixedSiteForDtrType(deploymentType, body.IsPermanentSite)
   const alreadyAdded = () => createError({ statusCode: 409, statusMessage: alertMessages.dtrEmployeeAlreadyAdded().title, data: { code: DTR_EMPLOYEE_ALREADY_ADDED } })
   const connection = await pool.getConnection()
   try {
@@ -887,26 +898,27 @@ export async function updateDtrEmployeeType(event: any) {
   const employeeId = positiveId(body.EmployeeID, 'Employee')
   const deploymentType = body.DeploymentType === undefined ? null : body.DeploymentType === 'Reliever' ? 'Reliever' : body.DeploymentType === 'Regular' ? 'Regular' : null
   if (body.DeploymentType !== undefined && !deploymentType) throw createError({ statusCode: 400, statusMessage: 'Deployment type must be Regular or Reliever.' })
-  const isPermanentSite = optionalBoolean(body.IsPermanentSite, 'Permanent site')
-  if (deploymentType === null && isPermanentSite === null) throw createError({ statusCode: 400, statusMessage: 'Choose an attendance type or permanent site status.' })
+  const requestedPermanentSite = optionalBoolean(body.IsPermanentSite, 'Permanent site')
+  if (deploymentType === null && requestedPermanentSite === null) throw createError({ statusCode: 400, statusMessage: 'Choose an attendance type or permanent site status.' })
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
-    const [[enrollment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
+    const [[enrollment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType, IsPermanentSite FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
     const effectiveType = deploymentType || (enrollment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular')
+    const isPermanentSite = fixedSiteForDtrType(effectiveType, body.IsPermanentSite)
     let deploymentId = Number(enrollment.DeploymentID), syncedAttendanceRows = 0
-    if (isPermanentSite === true) {
+    if (isPermanentSite && (Number(enrollment.IsPermanentSite) !== 1 || enrollment.AttendanceType === 'Reliever')) {
       deploymentId = await promoteDtrEmployeeToPermanentSite(connection, batch, employeeId, effectiveType, deploymentId, session.sub)
       await connection.execute('UPDATE attendance_dtr_employee SET DeploymentID = ?, IsPermanentSite = 1 WHERE BatchID = ? AND EmployeeID = ?', [deploymentId, id, employeeId])
       await syncPermanentSiteEmployees(connection, batch, session.sub)
-    } else if (isPermanentSite === false) {
+    } else if (!isPermanentSite && Number(enrollment.IsPermanentSite) !== 0) {
       const [[deployment]] = await connection.execute<any[]>(`SELECT DeploymentID, StartDate, Remarks FROM employee_deployment
         WHERE DeploymentID = ? AND EmployeeID = ? FOR UPDATE`, [deploymentId, employeeId])
       if (!deployment) throw createError({ statusCode: 404, statusMessage: 'Employee deployment was not found.' })
       await connection.execute('UPDATE attendance_dtr_employee SET IsPermanentSite = 0 WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
-      // The switch is a cutoff snapshot. Never shorten or relabel an original
+      // This cutoff-only assignment is a snapshot. Never shorten or relabel an original
       // fixed deployment merely because one DTR enrollment is cutoff-only.
       if (databaseDate(deployment.StartDate) === databaseDate(batch.PeriodStart)
         && ['Created from DTR attendance assignment', 'Set as permanent from DTR assignment'].includes(String(deployment.Remarks || ''))) {
