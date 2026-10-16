@@ -74,7 +74,9 @@ test('paid unworked LH appears in totals only, with a blank cell and no worked d
   assert.deepEqual(compileStyle({ source: descriptor.styles[0].content, filename, id: 'holiday-test', scoped: true }).errors, [])
   const status = { exports: {} }
   vm.runInNewContext(transformSync(fs.readFileSync('shared/utils/dtrAttendanceStatus.ts', 'utf8'), { loader: 'ts', format: 'cjs' }).code, { module: status })
-  const context = { ...vue, onMounted() {}, defineProps: () => ({ dtr: {} }), defineEmits: () => () => {}, require: () => status.exports, module: { exports: {} } }
+  const attendanceStatusesModule = { exports: {} }
+  vm.runInNewContext(transformSync(fs.readFileSync('shared/utils/attendanceStatuses.ts', 'utf8'), { loader: 'ts', format: 'cjs' }).code, { module: attendanceStatusesModule })
+  const context = { ...vue, onMounted() {}, defineProps: () => ({ dtr: {} }), defineEmits: () => () => {}, require: name => name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : status.exports, module: { exports: {} } }
   const scope = vue.effectScope()
   try {
     scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports={cellText,cellSub,dayCellClass,isWorkedDay,totalDays,wdoDays,attendanceRows,summaryValue,holidays,sitePolicy,dayForm,syncHolidayHours};', { loader: 'ts', format: 'cjs' }).code, context))

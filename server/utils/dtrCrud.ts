@@ -33,6 +33,64 @@ function databaseDate(value: unknown) {
   return match[0]
 }
 
+function dateOffset(value: string, days: number) {
+  const date = new Date(value + 'T00:00:00Z')
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function timeOverlap(leftIn: string, leftOut: string, rightIn: string, rightOut: string) {
+  return leftIn < rightOut && rightIn < leftOut
+}
+
+// Serialize attendance writes for an employee before checking other DTRs. The
+// database key keeps each DTR's row separate; this guard protects actual duty
+// intervals across sites, including a night shift crossing midnight.
+async function lockAttendanceEmployee(connection: any, employeeId: number) {
+  const [[employee]] = await connection.execute<any[]>('SELECT EmployeeID FROM employee WHERE EmployeeID = ? FOR UPDATE', [employeeId])
+  if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+}
+
+async function otherDtrAttendance(connection: any, employeeId: number, batchId: number, attendanceDate: string) {
+  const [rows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.AttendanceDate, at.AttendanceStatus,
+    DATE_FORMAT(at.TimeIn, '%Y-%m-%d %H:%i:%s') AS TimeIn,
+    DATE_FORMAT(at.TimeOut, '%Y-%m-%d %H:%i:%s') AS TimeOut,
+    at.RegularHours, at.OTHours, at.OTExtHours, at.RestDayHours, at.LegalHolidayHours, at.SpecialHolidayHours,
+    s.SiteName, ad.Status AS DtrStatus
+    FROM attendance at LEFT JOIN attendance_dtr ad ON ad.BatchID = at.BatchID
+    LEFT JOIN site s ON s.SiteID = ad.SiteID
+    WHERE at.EmployeeID = ? AND at.AttendanceDate BETWEEN ? AND ?
+      AND (at.BatchID IS NULL OR at.BatchID <> ?) FOR UPDATE`,
+  [employeeId, dateOffset(attendanceDate, -1), dateOffset(attendanceDate, 1), batchId])
+  return rows
+}
+
+function attendanceConflict(rows: any[], attendanceDate: string, timeIn: string | null, timeOut: string | null, noWorkStatus = false) {
+  const dayStart = `${attendanceDate} 00:00:00`, dayEnd = `${dateOffset(attendanceDate, 1)} 00:00:00`
+  for (const row of rows) {
+    const status = normalizeAttendanceStatus(row.AttendanceStatus)
+    const otherDate = databaseDate(row.AttendanceDate)
+    if (isEmployeeStatusLeave(status)) {
+      const leaveStart = `${otherDate} 00:00:00`, leaveEnd = `${dateOffset(otherDate, 1)} 00:00:00`
+      if (noWorkStatus ? otherDate === attendanceDate : timeIn && timeOut && timeOverlap(timeIn, timeOut, leaveStart, leaveEnd)) return `HR-approved ${status} on ${otherDate} must be corrected in Employee Status first.`
+      continue
+    }
+    if (noWorkAttendanceStatuses.has(status)) continue
+    const paidHours = ['RegularHours', 'OTHours', 'OTExtHours', 'RestDayHours', 'LegalHolidayHours', 'SpecialHolidayHours'].some(key => Number(row[key] || 0) > 0)
+    if (!row.TimeIn && !row.TimeOut && !paidHours) continue
+    const site = row.SiteName || 'another site'
+    if (noWorkStatus) {
+      if (!row.TimeIn || !row.TimeOut || timeOverlap(dayStart, dayEnd, String(row.TimeIn), String(row.TimeOut))) return `This employee already worked at ${site} on ${otherDate}. Choose a worked shift at this site or correct the other DTR.`
+      continue
+    }
+    if (!timeIn || !timeOut || !row.TimeIn || !row.TimeOut) return `Attendance at ${site} has no complete time range. Enter both time in and time out in each DTR before recording another site on the same day.`
+    const otherIn = String(row.TimeIn).replace('T', ' ').slice(0, 19)
+    const otherOut = String(row.TimeOut).replace('T', ' ').slice(0, 19)
+    if (timeOverlap(timeIn, timeOut, otherIn, otherOut)) return `This shift overlaps attendance at ${site} (${otherIn} to ${otherOut}). Use a non-overlapping shift or correct the other DTR.`
+  }
+  return null
+}
+
 function batchId(event: any) { return positiveId(getRouterParam(event, 'id'), 'DTR ID') }
 
 function optionalBoolean(value: unknown, label: string) {
@@ -791,8 +849,21 @@ export async function listDtrRecords(event: any) {
           WHERE ap.AgencyID = ? AND sr.SiteID = ?
             AND sr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
           ORDER BY p.PositionName, pr.EffectiveDate DESC, sr.SiteRateID DESC`, [databaseDate(batch.PeriodEnd), databaseDate(batch.PeriodEnd), batch.AgencyID, batch.SiteID])])
+    const [relieverElsewhereRows] = await connection.execute<any[]>(`SELECT at.EmployeeID, at.AttendanceDate, s.SiteName, sc.ShiftCode, sc.ShiftType,
+      DATE_FORMAT(at.TimeIn, '%Y-%m-%d %H:%i:%s') AS TimeIn,
+      DATE_FORMAT(at.TimeOut, '%Y-%m-%d %H:%i:%s') AS TimeOut
+      FROM attendance at
+      INNER JOIN attendance_dtr source ON source.BatchID = at.BatchID
+      INNER JOIN attendance_dtr_employee source_enrollment ON source_enrollment.BatchID = at.BatchID AND source_enrollment.EmployeeID = at.EmployeeID
+      INNER JOIN site s ON s.SiteID = source.SiteID
+      LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
+      WHERE at.BatchID <> ? AND at.AttendanceDate BETWEEN ? AND ?
+        AND source_enrollment.AttendanceType = 'Reliever'
+        AND EXISTS (SELECT 1 FROM attendance_dtr_employee here WHERE here.BatchID = ? AND here.EmployeeID = at.EmployeeID)
+        AND ${workedAttendanceCondition('at.')}
+      ORDER BY at.EmployeeID, at.AttendanceDate, at.TimeIn`, [id, databaseDate(batch.PeriodStart), databaseDate(batch.PeriodEnd), id])
     await connection.commit()
-    return { batch, policy, records, shifts, attendanceRows, dutyRows, workPositions, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
+    return { batch, policy, records, shifts, attendanceRows, relieverElsewhereRows, dutyRows, workPositions, holidays: Array.from(holidays, ([AttendanceDate, holiday]) => ({ AttendanceDate, ...holiday })) }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -1151,12 +1222,14 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd), policy = await sitePolicyForBatch(connection, batch)
     const [[enrollment]] = await connection.execute<any[]>('SELECT de.DeploymentID, de.AttendanceType FROM attendance_dtr_employee de WHERE de.BatchID = ? AND de.EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before applying a shift.' })
+    await lockAttendanceEmployee(connection, employeeId)
     const [[shift]] = await connection.execute<any[]>('SELECT ShiftCodeID, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\' FOR UPDATE', [shiftCodeId, batch.AgencyID])
     if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     if (!shift.TimeIn || !shift.TimeOut) throw createError({ statusCode: 400, statusMessage: 'A Flexible shift without default times cannot be applied to every cutoff day. Import or enter its biometric times per duty instead.' })
     await attachPendingEmployeeStatuses(connection, batch, session.sub)
     const [currentRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceDate, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate BETWEEN ? AND ? FOR UPDATE', [employeeId, periodStart, periodEnd])
-    const currentByDate = new Map(currentRows.map(row => [databaseDate(row.AttendanceDate), row]))
+    const currentByDate = new Map<string, any>()
+    for (const row of currentRows) if (Number(row.BatchID) === id || row.BatchID === null) currentByDate.set(databaseDate(row.AttendanceDate), row)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd), Number(batch.SiteID))
     let changed = 0, preservedEmployeeStatusDays = 0
@@ -1169,14 +1242,12 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
       const hourValues = holiday.values
       const workdayCount = holiday.holidayId ? 1 : Number(shift.WorkdayCount || 1)
       const current = currentByDate.get(attendanceDate)
-      if (current && current.BatchID !== null && Number(current.BatchID) !== id) {
-        skippedElsewhereDates.push(attendanceDate)
-        continue
-      }
       if (current && isEmployeeStatusLeave(current.AttendanceStatus)) {
         preservedEmployeeStatusDays++
         continue
       }
+      const conflict = attendanceConflict(await otherDtrAttendance(connection, employeeId, id, attendanceDate), attendanceDate, shiftTimeIn, shiftTimeOut)
+      if (conflict) { skippedElsewhereDates.push(attendanceDate); continue }
       if (current) {
         // Legacy/unbatched attendance belongs to no DTR yet, so adopt it into this cutoff.
         // Only entries already belonging to this DTR are preserved by the blank-days option.
@@ -1337,8 +1408,10 @@ async function importDtrAttendanceRows(event: any, body: { Rows?: unknown }, ses
       )
       const holiday = holidayHours(baseValues, attendanceStatus, timeIn, timeOut, holidays.get(attendanceDate))
       const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
-      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
-      if (existing && Number(existing.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
+      await lockAttendanceEmployee(connection, Number(enrollment.EmployeeID))
+      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE', [enrollment.EmployeeID, attendanceDate, id])
+      const conflict = attendanceConflict(await otherDtrAttendance(connection, Number(enrollment.EmployeeID), id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
+      if (conflict) { skip(conflict); continue }
       if (existing) {
         await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = NULL, UpdatedBy = ? WHERE AttendanceID = ?`, [enrollment.DeploymentID, shift?.ShiftCodeID || null, workdayCount, timeIn, timeOut, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub, existing.AttendanceID])
         updated++
@@ -1459,8 +1532,8 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       if (!enrollment) { skip('Employee ID / Employee No. is not in this DTR.'); continue }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
       if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
-      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, attendanceDate])
-      if (existing && existing.BatchID !== null && Number(existing.BatchID) !== id) { skip('Employee already has attendance under another DTR on this date.'); continue }
+      await lockAttendanceEmployee(connection, Number(enrollment.EmployeeID))
+      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE', [enrollment.EmployeeID, attendanceDate, id])
       if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) {
         preservedEmployeeStatusDates.add(`${enrollment.EmployeeID}:${attendanceDate}`)
         skip(`HR-approved ${normalizeAttendanceStatus(existing.AttendanceStatus)} was preserved; the Excel row was not applied.`)
@@ -1491,6 +1564,8 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       } catch { skip('Date in/time in or date out/time out is invalid.'); continue }
       if (!noWorkStatus && (!timeIn || !timeOut)) { skip('Time in and time out are required for this shift.'); continue }
       if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) { skip('Time out must be after time in.'); continue }
+      const conflict = attendanceConflict(await otherDtrAttendance(connection, Number(enrollment.EmployeeID), id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
+      if (conflict) { skip(conflict); continue }
       let attendanceId = Number(existing?.AttendanceID || 0)
       if (!attendanceId) {
         const [result] = await connection.execute<any>(`INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${hourColumns.join(', ')}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, 1, ?, ?, NULL, NULL, ${hourColumns.map(() => '?').join(', ')}, NULL, ?, ?, 1, ?)`, [enrollment.EmployeeID, enrollment.DeploymentID, null, id, attendanceDate, ...hourColumns.map(() => 0), attendanceStatus, enrollment.AttendanceType, session.sub])
@@ -1586,6 +1661,7 @@ export async function createDtrAttendance(event: any) {
     if (workPositionApplyThrough && (workPositionApplyThrough < attendanceDate || workPositionApplyThrough > batch.PeriodEnd)) throw createError({ statusCode: 400, statusMessage: 'Apply-through date must be within this DTR cutoff and not before the attendance date.' })
     const [[deployment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     if (!deployment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before entering attendance.' })
+    await lockAttendanceEmployee(connection, employeeId)
     const attendanceType = deployment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular'
     let shift: any = null
     if (shiftCodeId) {
@@ -1614,12 +1690,9 @@ export async function createDtrAttendance(event: any) {
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
-    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
-    if (existing && existing.BatchID !== null && Number(existing.BatchID) !== id) {
-      const [[otherSite]] = await connection.execute<any[]>(`SELECT s.SiteName FROM attendance_dtr ad
-        INNER JOIN site s ON s.SiteID = ad.SiteID WHERE ad.BatchID = ?`, [existing.BatchID])
-      throw createError({ statusCode: 409, statusMessage: `Attendance already exists at ${otherSite?.SiteName || 'another site'} on ${attendanceDate}. An employee cannot have two DTR entries on the same date. Correct the original DTR if the site is wrong.` })
-    }
+    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE', [employeeId, attendanceDate, id])
+    const conflict = attendanceConflict(await otherDtrAttendance(connection, employeeId, id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
+    if (conflict) throw createError({ statusCode: 409, statusMessage: conflict })
     if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved leave cannot be changed from the DTR. Update it from Employee Status.' })
     // Attendance edits and reapplying the same position must retain the original
     // snapshot, including after the site's override setting has been disabled.

@@ -37,7 +37,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
     },
   }
   vm.createContext(context)
-  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, shifts, sitePolicy, attendanceRows, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr };', { loader: 'ts', format: 'cjs' }).code, context))
+  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, shifts, sitePolicy, attendanceRows, relieverElsewhereRows, displayedEntry, elsewhereLabel, totalDays, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr };', { loader: 'ts', format: 'cjs' }).code, context))
   const state = context.module.exports
   state.shifts.value = [shift]
   state.sitePolicy.value = { ...sitePolicy }
@@ -53,6 +53,36 @@ function backend() {
   return context.module.exports.calculate
 }
 const calculate = backend()
+const overlap = (() => {
+  const context = { module: { exports: {} }, require: name => name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.includes('employeeStatusCrud') ? { employeeStatusAttendanceStatuses: ['On-Leave', 'Vacation Leave', 'Sick Leave'] } : {} }
+  vm.createContext(context)
+  vm.runInContext(transformSync(fs.readFileSync(path.join(root, 'server/utils/dtrCrud.ts'), 'utf8') + '\nmodule.exports.policy = { timeOverlap, attendanceConflict };', { loader: 'ts', format: 'cjs' }).code, context)
+  return context.module.exports.policy
+})()
+
+test('day reliever and night fixed shifts share a calendar day only without overlapping', () => {
+  assert.equal(overlap.timeOverlap('2026-09-21 07:00:00', '2026-09-21 19:00:00', '2026-09-21 19:00:00', '2026-09-22 07:00:00'), false)
+  assert.equal(overlap.timeOverlap('2026-09-21 07:00:00', '2026-09-21 19:00:00', '2026-09-21 18:30:00', '2026-09-22 06:30:00'), true)
+  assert.equal(overlap.timeOverlap('2026-09-21 19:00:00', '2026-09-22 07:00:00', '2026-09-22 06:00:00', '2026-09-22 18:00:00'), true)
+  const other = { AttendanceDate: '2026-09-21', AttendanceStatus: 'Present', SiteName: 'Pasig BLVD', TimeIn: '2026-09-21 07:00:00', TimeOut: '2026-09-21 19:00:00' }
+  assert.equal(overlap.attendanceConflict([other], '2026-09-21', '2026-09-21 19:00:00', '2026-09-22 07:00:00'), null)
+  assert.match(overlap.attendanceConflict([other], '2026-09-21', '2026-09-21 18:00:00', '2026-09-22 06:00:00'), /overlaps attendance at Pasig BLVD/)
+  assert.equal(overlap.attendanceConflict([{ ...other, AttendanceDate: '2026-09-22', TimeIn: '2026-09-22 07:00:00', TimeOut: '2026-09-22 19:00:00' }], '2026-09-21', '2026-09-21 19:00:00', '2026-09-22 07:00:00'), null)
+  assert.equal(overlap.attendanceConflict([{ ...other, AttendanceDate: '2026-09-22', TimeIn: '2026-09-22 07:00:00', TimeOut: '2026-09-22 19:00:00' }], '2026-09-21', null, null, true), null)
+})
+
+test('reliever duty at another site is visible without adding hours to this DTR', () => {
+  const harness = workspace()
+  try {
+    harness.state.attendanceRows.value = []
+    harness.state.relieverElsewhereRows.value = [{ EmployeeID: 5, AttendanceDate: '2026-09-01', SiteName: 'Pasig BLVD', ShiftCode: 'DS', TimeIn: '2026-09-01 07:00:00', TimeOut: '2026-09-01 19:00:00' }]
+    assert.equal(harness.state.displayedEntry(employee, '2026-09-01').AttendanceStatus, 'Reliever')
+    assert.match(harness.state.elsewhereLabel(employee, '2026-09-01'), /Pasig BLVD.*07:00.*19:00/)
+    assert.equal(harness.state.totalDays(employee), 0)
+    harness.state.openDay(employee, '2026-09-01')
+    assert.equal(harness.state.dayForm.value.AttendanceStatus, 'Present')
+  } finally { harness.close() }
+})
 
 test('DJA 07:23–18:02 retains 8 regular + 4 OT with separate 23 late / 58 undertime minutes', async () => {
   const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }

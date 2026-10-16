@@ -221,11 +221,10 @@ export async function updateEmployeeDailyStatus(event: any) {
         WHERE AgencyID = ? AND ClientID = ? AND SiteID = ? AND PeriodStart <= ? AND PeriodEnd >= ?
         ORDER BY PeriodStart DESC, BatchID DESC LIMIT 1 FOR UPDATE`, [deployment.AgencyID, deployment.ClientID, deployment.SiteID, attendanceDate, attendanceDate])
       if (batch && batch.Status !== 'Draft') throw createError({ statusCode: 409, statusMessage: `The DTR covering ${attendanceDate} is ${batch.Status} and can no longer be edited.` })
-      const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
-      if (existing?.BatchID && Number(existing.BatchID) !== Number(batch?.BatchID || 0)) {
-        const [[sourceBatch]] = await connection.execute<any[]>('SELECT Status FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [existing.BatchID])
-        if (sourceBatch && sourceBatch.Status !== 'Draft') throw createError({ statusCode: 409, statusMessage: `Attendance on ${attendanceDate} belongs to a ${sourceBatch.Status} DTR and cannot be changed.` })
-      }
+      const [sameDayRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
+      const otherSiteRow = sameDayRows.find(row => row.BatchID !== null && Number(row.BatchID) !== Number(batch?.BatchID || 0))
+      if (otherSiteRow) throw createError({ statusCode: 409, statusMessage: `Attendance on ${attendanceDate} also belongs to another site DTR. Correct that DTR before setting a whole-day employee status.` })
+      const existing = sameDayRows.find(row => Number(row.BatchID) === Number(batch?.BatchID || 0)) || sameDayRows.find(row => row.BatchID === null) || null
       assignments.push({ attendanceDate, deployment, batch: batch || null, existing: existing || null })
     }
     let updated = 0
