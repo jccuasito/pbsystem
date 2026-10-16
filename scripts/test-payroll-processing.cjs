@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { btrRegularAllocation, combinedLateUndertimeLines, componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction } = require('../shared/utils/payrollPreview.ts')
+const { btrRegularAllocation, combinedLateUndertimeLines, componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction, selectCutoffAllowances } = require('../shared/utils/payrollPreview.ts')
 
 test('review display combines late and undertime without changing either deduction', () => {
   const lines = combinedLateUndertimeLines([
@@ -42,6 +42,18 @@ test('loan and deduction plans follow only the fixed-site DTR', () => {
   ])
   assert.equal(selected.get(1), 10)
   assert.equal(selected.has(2), false)
+})
+
+test('flat allowance is assigned once to the fixed site using the latest worked rate', () => {
+  const assignments = selectCutoffAllowances([
+    { employeeId: 1, batchId: 20, fixedSite: false, workDate: '2026-09-30', sequence: 1, amountCents: 90000 },
+    { employeeId: 1, batchId: 10, fixedSite: true, workDate: '2026-09-20', sequence: 2, amountCents: 60000 },
+    { employeeId: 1, batchId: 10, fixedSite: true, workDate: '2026-09-25', sequence: 3, amountCents: 70000 },
+    { employeeId: 2, batchId: 30, fixedSite: false, workDate: '2026-09-20', sequence: 4, amountCents: 20000 },
+    { employeeId: 2, batchId: 31, fixedSite: false, workDate: '2026-09-25', sequence: 5, amountCents: 30000 },
+  ])
+  assert.deepEqual([assignments.get(1)?.batchId, assignments.get(1)?.amountCents], [10, 70000])
+  assert.deepEqual([assignments.get(2)?.batchId, assignments.get(2)?.amountCents], [31, 30000])
 })
 
 test('installment is due only for its cutoff, effective dates, and remaining balance', () => {

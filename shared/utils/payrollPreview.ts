@@ -51,6 +51,34 @@ export function btrRegularAllocation(regularHours: unknown, coveredHours: unknow
     uncoveredHours: (coveredUnits - transferredUnits) / 100 }
 }
 
+export type AllowanceCandidate = {
+  employeeId: number
+  batchId: number
+  fixedSite: boolean
+  workDate: string
+  sequence: number
+  amountCents: number
+}
+
+// A configured allowance is a flat cutoff earning. Prefer payable work at the
+// fixed site, then the most recent payable duty; never pay it twice across DTRs.
+export function selectCutoffAllowances(candidates: AllowanceCandidate[]) {
+  const selected = new Map<number, AllowanceCandidate>()
+  for (const candidate of candidates) {
+    const current = selected.get(candidate.employeeId)
+    if (!current ||
+      (candidate.fixedSite && !current.fixedSite) ||
+      (candidate.fixedSite === current.fixedSite && (
+        candidate.workDate > current.workDate ||
+        (candidate.workDate === current.workDate && (
+          candidate.batchId < current.batchId ||
+          (candidate.batchId === current.batchId && candidate.sequence > current.sequence)
+        ))
+      ))) selected.set(candidate.employeeId, candidate)
+  }
+  return selected
+}
+
 export function fixedDeductionBatchByEmployee(roster: any[], attendance: any[]) {
   const counts = new Map<string, number>()
   for (const row of attendance) {

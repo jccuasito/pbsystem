@@ -19,6 +19,7 @@ export async function listDtrRelieverAttendance(event: any) {
   const [rows] = await pool.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
       ad.BatchID, ad.Status AS DtrStatus, ad.AgencyID, a.AgencyName, c.ClientName, s.SiteName,
+      de.AttendanceType AS SiteAttendanceType,
       DATE_FORMAT(at.AttendanceDate, '%Y-%m-%d') AS AttendanceDate,
       at.AttendanceStatus, at.WorkdayCount, at.RegularHours, at.OTHours, at.OTExtHours,
       at.NightDiffHours, at.RestDayHours, at.RestDayOTHours,
@@ -35,12 +36,25 @@ export async function listDtrRelieverAttendance(event: any) {
     INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
     INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
     LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
-    WHERE de.AttendanceType = 'Reliever' AND at.AttendanceDate BETWEEN ? AND ?
+    WHERE at.AttendanceDate BETWEEN ? AND ?
       AND (? IS NULL OR ad.AgencyID = ?)
       AND at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
       AND (at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL OR at.RegularHours > 0
         OR at.RestDayHours > 0 OR at.SpecialHolidayHours > 0 OR at.LegalHolidayHours > 0)
-    ORDER BY e.LastName, e.FirstName, at.AttendanceDate, s.SiteName, at.AttendanceID`,
-  [periodStart, periodEnd, agencyId, agencyId])
+      AND EXISTS (
+        SELECT 1 FROM attendance relief_at
+        INNER JOIN attendance_dtr relief_dtr ON relief_dtr.BatchID = relief_at.BatchID
+        INNER JOIN attendance_dtr_employee relief_de
+          ON relief_de.BatchID = relief_at.BatchID AND relief_de.EmployeeID = relief_at.EmployeeID
+        WHERE relief_at.EmployeeID = at.EmployeeID
+          AND relief_de.AttendanceType = 'Reliever'
+          AND relief_at.AttendanceDate BETWEEN ? AND ?
+          AND (? IS NULL OR relief_dtr.AgencyID = ?)
+          AND relief_at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
+          AND (relief_at.TimeIn IS NOT NULL OR relief_at.TimeOut IS NOT NULL OR relief_at.RegularHours > 0
+            OR relief_at.RestDayHours > 0 OR relief_at.SpecialHolidayHours > 0 OR relief_at.LegalHolidayHours > 0)
+      )
+    ORDER BY e.LastName, e.FirstName, at.AttendanceDate, at.TimeIn, s.SiteName, at.AttendanceID`,
+  [periodStart, periodEnd, agencyId, agencyId, periodStart, periodEnd, agencyId, agencyId])
   return { agencies, rows }
 }

@@ -2,7 +2,7 @@ import { getQuery, getRouterParam, readBody, createError } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
-import { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction } from '../../shared/utils/payrollPreview'
+import { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, moneyCents, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction, selectCutoffAllowances } from '../../shared/utils/payrollPreview'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { postEmployeeAccountTransaction } from './employeeAccountTransactionCrud'
 
@@ -64,7 +64,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     ORDER BY at.BatchID, at.EmployeeID, at.AttendanceDate`, ids)
   const [btrRows] = await connection.execute<any[]>(`SELECT b.BatchID, b.RelieverEmployeeID AS EmployeeID, b.ReplacedEmployeeID,
       DATE_FORMAT(b.AttendanceDate, '%Y-%m-%d') AS WorkDate, b.Hours,
-      pr.PayrollRateID, DATE_FORMAT(pr.EffectiveDate, '%Y-%m-%d') AS BaseEffectiveDate, pr.RegularRate
+      pr.PayrollRateID, DATE_FORMAT(pr.EffectiveDate, '%Y-%m-%d') AS BaseEffectiveDate, pr.RegularRate, pr.Allowance
     FROM attendance_dtr_btr b
     LEFT JOIN attendance_dtr_employee de ON de.BatchID = b.BatchID AND de.EmployeeID = b.RelieverEmployeeID
     LEFT JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
@@ -208,6 +208,31 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
   const [btrTotals] = await connection.execute<any[]>(`SELECT BatchID, COUNT(*) AS EntryCount, COALESCE(SUM(Hours), 0) AS CoverageHours
     FROM attendance_dtr_btr WHERE BatchID IN (${ids.map(() => '?').join(', ')}) AND Status = 'Active' GROUP BY BatchID`, ids)
   const btrByBatch = new Map(btrTotals.map(row => [Number(row.BatchID), row]))
+  const rosterByBatchEmployee = new Map(roster.map(person => [`${person.BatchID}:${person.EmployeeID}`, person]))
+  const allowanceCandidates = []
+  for (const day of attendance) {
+    if (!day.PayrollRateID || day.BaseEffectiveDate > day.WorkDate ||
+        !payrollHourComponents.some(([column]) => Number(day[column] || 0) > 0)) continue
+    const person = rosterByBatchEmployee.get(`${day.BatchID}:${day.EmployeeID}`)
+    if (!person) continue
+    const rate = snapshotAtDate(day, versions.get(Number(day.PayrollRateID)) || [], day.WorkDate)
+    allowanceCandidates.push({ employeeId: Number(day.EmployeeID), batchId: Number(day.BatchID),
+      fixedSite: Number(person.IsPermanentSite) === 1 && person.AttendanceType !== 'Reliever',
+      workDate: day.WorkDate, sequence: Number(day.AttendanceID),
+      amountCents: Math.max(0, moneyCents(rate.Allowance)) })
+  }
+  for (const [index, coverage] of btrRows.entries()) {
+    if (!coverage.PayrollRateID || coverage.BaseEffectiveDate > coverage.WorkDate || Number(coverage.Hours || 0) <= 0) continue
+    const person = rosterByBatchEmployee.get(`${coverage.BatchID}:${coverage.EmployeeID}`)
+    if (!person) continue
+    const rate = snapshotAtDate(coverage, versions.get(Number(coverage.PayrollRateID)) || [], coverage.WorkDate)
+    if (Number(rate.RegularRate || 0) <= 0) continue
+    allowanceCandidates.push({ employeeId: Number(coverage.EmployeeID), batchId: Number(coverage.BatchID),
+      fixedSite: Number(person.IsPermanentSite) === 1 && person.AttendanceType !== 'Reliever',
+      workDate: coverage.WorkDate, sequence: -index - 1,
+      amountCents: Math.max(0, moneyCents(rate.Allowance)) })
+  }
+  const cutoffAllowances = selectCutoffAllowances(allowanceCandidates)
   const sites = selected.map(batch => {
     const employees = roster.filter(person => Number(person.BatchID) === Number(batch.BatchID)).map(person => {
       const components = new Map<string, any>()
@@ -245,7 +270,6 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
           previous.hours += quantity; previous.amountCents += amountCents
           components.set(hourField, previous); timeDeductionCents += amountCents
         }
-        if (Number(rate.Allowance || 0)) warnings.push('Configured allowance is excluded until its payout rule is defined.')
       }
       for (const [date, uncovered] of remainingRestCoverage) {
         if (uncovered > 0) warnings.push(`${date}: BTR REST coverage exceeds the employee's regular hours by ${uncovered.toFixed(2)} h. Review attendance or BTR before finalizing.`)
@@ -278,6 +302,9 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         if (item.direction === 'Earning') grossCents += Math.round(item.amount * 100)
         else timeDeductionCents += Math.round(item.amount * 100)
       }
+      const selectedAllowance = cutoffAllowances.get(Number(person.EmployeeID))
+      const allowanceCents = selectedAllowance?.batchId === Number(batch.BatchID) ? selectedAllowance.amountCents : 0
+      grossCents += allowanceCents
       const fixedSite = deductionBatchByEmployee.get(Number(person.EmployeeID)) === Number(batch.BatchID)
       const accountPlans = fixedSite ? accountsByEmployee.get(Number(person.EmployeeID)) || [] : []
       const recurringPlans = fixedSite ? recurringByEmployee.get(Number(person.EmployeeID)) || [] : []
@@ -315,7 +342,8 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       const accountDeductionCents = deductions.reduce((sum, item) => sum + Math.round(item.amount * 100), 0)
       if (grossCents - timeDeductionCents - accountDeductionCents < 0) warnings.push('Deductions exceed computed earnings for this cutoff.')
       return { ...person, components: [...components.values()].map(item => ({ ...item, amount: pesos(item.amountCents), amountCents: undefined })),
-        adjustments, deductions, dueDeductions, warnings: [...new Set(warnings)], gross: pesos(grossCents),
+        adjustments, deductions, dueDeductions, warnings: [...new Set(warnings)],
+        allowance: pesos(allowanceCents), gross: pesos(grossCents),
         timeDeductions: pesos(timeDeductionCents), accountDeductions: pesos(accountDeductionCents),
         netPreview: pesos(grossCents - timeDeductionCents - accountDeductionCents) }
     })
@@ -489,9 +517,9 @@ export async function reviewPayrollProcessing(event: any) {
         const [insert] = await connection.execute<any>(`INSERT INTO payroll
           (EmployeeID, DeploymentID, PayrollType, StartDate, EndDate, PayrollDate,
             GrossPay, Allowance, TotalDeduction, NetPay, Status)
-          VALUES (?, ?, 'Regular', ?, ?, ?, ?, 0, ?, ?, 'Approved')`,
+          VALUES (?, ?, 'Regular', ?, ?, ?, ?, ?, ?, ?, 'Approved')`,
         [person.EmployeeID, person.DeploymentID, batch.PeriodStart, batch.PeriodEnd, batch.PeriodEnd,
-          person.gross, Number(person.timeDeductions) + Number(person.accountDeductions), person.netPreview])
+          person.gross, person.allowance, Number(person.timeDeductions) + Number(person.accountDeductions), person.netPreview])
         const payrollId = Number(insert.insertId)
         await connection.execute(`INSERT INTO payroll_processing_posting (BatchID, EmployeeID, PayrollID) VALUES (?, ?, ?)`,
           [batchId, person.EmployeeID, payrollId])
@@ -500,6 +528,10 @@ export async function reviewPayrollProcessing(event: any) {
             VALUES (?, ?, ?, ?, ?)`, [payrollId, line.label, line.hours,
             line.hours ? Math.round(Number(line.amount) / Number(line.hours) * 100) / 100 : 0,
             line.direction === 'Deduction' ? -Number(line.amount) : Number(line.amount)])
+        }
+        if (Number(person.allowance || 0) > 0) {
+          await connection.execute(`INSERT INTO payroll_detail (PayrollID, Description, Quantity, Rate, Amount)
+            VALUES (?, 'Allowance', 1, ?, ?)`, [payrollId, person.allowance, person.allowance])
         }
         for (const line of person.adjustments) {
           await connection.execute(`INSERT INTO payroll_detail (PayrollID, Description, Quantity, Rate, Amount)
