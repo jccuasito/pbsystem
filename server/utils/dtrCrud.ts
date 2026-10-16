@@ -876,10 +876,14 @@ export async function removeDtrEmployee(event: any) {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id); assertEditableBatch(batch)
     const [[enrollment]] = await connection.execute<any[]>(
-      'SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE',
+      'SELECT EmployeeID, DeploymentID, IsPermanentSite FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE',
       [id, employeeId],
     )
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
+    const [[activeBtr]] = await connection.execute<any[]>(`SELECT BTRID FROM attendance_dtr_btr
+      WHERE BatchID = ? AND Status = 'Active' AND (ReplacedEmployeeID = ? OR RelieverEmployeeID = ?) LIMIT 1`,
+    [id, employeeId, employeeId])
+    if (activeBtr) throw createError({ statusCode: 409, statusMessage: 'Remove this employee from the active BTR coverage before removing them from the DTR.' })
     const [preservedResult] = await connection.execute<any>(
       `UPDATE attendance SET BatchID = NULL, UpdatedBy = ?
        WHERE BatchID = ? AND EmployeeID = ? AND AttendanceStatus IN (${employeeStatusAttendanceStatuses.map(() => '?').join(', ')})`,
@@ -887,6 +891,19 @@ export async function removeDtrEmployee(event: any) {
     )
     const [attendanceResult] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     await connection.execute('DELETE FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
+    // A fixed assignment created from this DTR otherwise enrolls the person again
+    // as soon as the Draft roster is refreshed. Retire only this DTR-owned fixed
+    // deployment when no other DTR or attendance record depends on it.
+    if (Number(enrollment.IsPermanentSite) === 1) {
+      const [retired] = await connection.execute<any>(`UPDATE employee_deployment ed
+        SET ed.IsPermanentSite = 0, ed.EndDate = DATE(?)
+        WHERE ed.DeploymentID = ? AND ed.EmployeeID = ? AND ed.IsPermanentSite = 1
+          AND ed.Remarks IN ('Created from DTR attendance assignment', 'Set as permanent from DTR assignment')
+          AND NOT EXISTS (SELECT 1 FROM attendance_dtr_employee de WHERE de.DeploymentID = ed.DeploymentID)
+          AND NOT EXISTS (SELECT 1 FROM attendance at WHERE at.DeploymentID = ed.DeploymentID)`,
+      [batch.PeriodEnd, enrollment.DeploymentID, employeeId])
+      if (!retired.affectedRows) throw createError({ statusCode: 409, statusMessage: 'This fixed assignment is shared with another record or was created outside this DTR. Change its fixed-site deployment before removing the employee here.' })
+    }
     await connection.commit()
     return { success: true, deletedAttendanceRows: attendanceResult.affectedRows, preservedEmployeeStatusDays: preservedResult.affectedRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
@@ -1143,6 +1160,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const holidays = await activeHolidaysByDate(connection, cutoffDates(periodStart, periodEnd), Number(batch.SiteID))
     let changed = 0, preservedEmployeeStatusDays = 0
+    const skippedElsewhereDates: string[] = []
     for (const attendanceDate of cutoffDates(periodStart, periodEnd)) {
       const shiftTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
       const shiftTimeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
@@ -1151,7 +1169,10 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
       const hourValues = holiday.values
       const workdayCount = holiday.holidayId ? 1 : Number(shift.WorkdayCount || 1)
       const current = currentByDate.get(attendanceDate)
-      if (current && current.BatchID !== null && Number(current.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR on ' + attendanceDate + '.' })
+      if (current && current.BatchID !== null && Number(current.BatchID) !== id) {
+        skippedElsewhereDates.push(attendanceDate)
+        continue
+      }
       if (current && isEmployeeStatusLeave(current.AttendanceStatus)) {
         preservedEmployeeStatusDays++
         continue
@@ -1173,7 +1194,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     await syncBatchHolidays(connection, batch, session.sub)
     const wdoCount = await syncAutoWdo(connection, batch, employeeId)
     await connection.commit()
-    return { success: true, changed, preservedEmployeeStatusDays, onlyEmpty, wdoCount }
+    return { success: true, changed, preservedEmployeeStatusDays, skippedElsewhereDates, onlyEmpty, wdoCount }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -1594,7 +1615,11 @@ export async function createDtrAttendance(event: any) {
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
     const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
-    if (existing && Number(existing.BatchID) !== id) throw createError({ statusCode: 409, statusMessage: 'This employee already has attendance under another DTR for this date.' })
+    if (existing && existing.BatchID !== null && Number(existing.BatchID) !== id) {
+      const [[otherSite]] = await connection.execute<any[]>(`SELECT s.SiteName FROM attendance_dtr ad
+        INNER JOIN site s ON s.SiteID = ad.SiteID WHERE ad.BatchID = ?`, [existing.BatchID])
+      throw createError({ statusCode: 409, statusMessage: `Attendance already exists at ${otherSite?.SiteName || 'another site'} on ${attendanceDate}. An employee cannot have two DTR entries on the same date. Correct the original DTR if the site is wrong.` })
+    }
     if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved leave cannot be changed from the DTR. Update it from Employee Status.' })
     // Attendance edits and reapplying the same position must retain the original
     // snapshot, including after the site's override setting has been disabled.

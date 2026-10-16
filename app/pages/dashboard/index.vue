@@ -15,6 +15,7 @@ import PayrollRatePage from '../rates/payroll/index.vue'
 import BillingRatePage from '../rates/billing/index.vue'
 import SiteRatePage from '../rates/site/index.vue'
 import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
+import DtrRelieverPage from '../attendance/dtr-reliever/index.vue'
 import ShiftCodePage from '../attendance/shift-code/index.vue'
 import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
 import DeductionLoanCatalogPage from '../deductions-loans/catalog/index.vue'
@@ -44,13 +45,13 @@ let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
-  | 'attendance-dtr' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history'
+  | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
   | 'employee-loans-deductions' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
-  'attendance-dtr', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history',
+  'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
   'employee-loans-deductions', 'deductions-loans-contributions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
 ])
@@ -177,6 +178,7 @@ const navGroups = [
     label: 'Attendance', icon: 'clock', key: 'attendance',
     children: [
       { label: 'Daily Time Records', to: '/attendance/daily-time-records', icon: 'clock', view: 'attendance-dtr' },
+      { label: 'DTR Reliever', to: '/attendance/dtr-reliever', icon: 'clock', view: 'attendance-dtr-reliever' },
       { label: 'Shift Code', to: '/attendance/shift-code', icon: 'clock', view: 'attendance-shift-code' },
       { label: 'Holiday Manager', to: '/attendance/holiday-manager', icon: 'file-text', view: 'attendance-holiday-manager' }
     ]
@@ -280,6 +282,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'rates-billing': BillingRatePage,
   'rates-site': SiteRatePage,
   'attendance-dtr': DailyTimeRecordsPage,
+  'attendance-dtr-reliever': DtrRelieverPage,
   'attendance-shift-code': ShiftCodePage,
   'attendance-holiday-manager': HolidayManagerPage,
   'payroll-adjustments': PayrollAdjustmentsPage,

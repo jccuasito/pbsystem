@@ -92,6 +92,23 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - None detected.
 - Links to: none detected.
 
+### `/attendance/dtr-reliever`
+
+- Page: `app/pages/attendance/dtr-reliever/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - `app/composables/useRealtimeRefresh.ts`
+- API calls and handlers:
+  - `GET /api/attendance/dtr/relievers` → `server/api/attendance/dtr/relievers.get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/dtrRelieverCrud.ts`
+  - `server/utils/jwt.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
 ### `/attendance/holiday-manager`
 
 - Page: `app/pages/attendance/holiday-manager/index.vue`
@@ -146,6 +163,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/PayrollProcessingDetailModal.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
+  - `app/pages/attendance/dtr-reliever/index.vue`
   - `app/pages/attendance/holiday-manager/index.vue`
   - `app/pages/attendance/shift-code/index.vue`
   - `app/pages/deductions-loans/catalog/index.vue`
@@ -208,6 +226,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/attendance/dtr/[param]/site-policy` → `server/api/attendance/dtr/[id]/site-policy.get.ts`
   - `PUT /api/attendance/dtr/[param]/site-policy` → `server/api/attendance/dtr/[id]/site-policy.put.ts`
   - `GET /api/attendance/dtr/[param]/summary` → `server/api/attendance/dtr/[id]/summary.get.ts`
+  - `GET /api/attendance/dtr/relievers` → `server/api/attendance/dtr/relievers.get.ts`
   - `DELETE /api/attendance/holidays` → `server/api/attendance/holidays/index.delete.ts`
   - `GET /api/attendance/holidays` → `server/api/attendance/holidays/index.get.ts`
   - `POST /api/attendance/holidays` → `server/api/attendance/holidays/index.post.ts`
@@ -307,6 +326,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/deductionLoanCatalogCrud.ts`
   - `server/utils/dtrBtrCrud.ts`
   - `server/utils/dtrCrud.ts`
+  - `server/utils/dtrRelieverCrud.ts`
   - `server/utils/dtrWorkflowAudit.ts`
   - `server/utils/employeeAccountTransactionCrud.ts`
   - `server/utils/employeeCrud.ts`
