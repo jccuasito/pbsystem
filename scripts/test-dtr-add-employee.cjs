@@ -15,7 +15,7 @@ const alerts = evaluate(fs.readFileSync('components/alertmessage/messages.ts', '
 const conflict = error => error.statusCode === 409 && error.data.code === alerts.DTR_EMPLOYEE_ALREADY_ADDED
 const request = (batch = 5, overrides = {}) => ({ id: batch, body: { EmployeeID: 2, DeploymentType: 'Reliever', IsPermanentSite: false, ...overrides } })
 
-function backend({ enrolled = false, insertConflict = false, initialEnrollment = { type: 'Reliever', permanent: 1, deployment: 30 } } = {}) {
+function backend({ enrolled = false, insertConflict = false, initialEnrollment = { type: 'Reliever', permanent: 1, deployment: 30 }, batchSites = {} } = {}) {
   const enrollments = new Map(enrolled ? [['5:2', { ...initialEnrollment }]] : [])
   const calls = []
   const connection = {
@@ -25,7 +25,7 @@ function backend({ enrolled = false, insertConflict = false, initialEnrollment =
     release() { calls.push('release') },
     async execute(sql, args) {
       calls.push({ sql, args })
-      if (sql.includes('FROM attendance_dtr WHERE')) return [[{ BatchID: args[0], AgencyID: 1, ClientID: 1, SiteID: 1, PeriodStart: '2026-08-16', PeriodEnd: '2026-08-31', Status: 'Draft' }]]
+      if (sql.includes('FROM attendance_dtr WHERE')) return [[{ BatchID: args[0], AgencyID: 1, ClientID: 1, SiteID: batchSites[args[0]] || 1, PeriodStart: '2026-08-16', PeriodEnd: '2026-08-31', Status: 'Draft' }]]
       if (sql.startsWith('SELECT DeploymentID, AttendanceType, IsPermanentSite FROM attendance_dtr_employee')) {
         const saved = enrollments.get(args.join(':'))
         return [saved ? [{ DeploymentID: saved.deployment, AttendanceType: saved.type, IsPermanentSite: saved.permanent }] : []]
@@ -67,13 +67,14 @@ test('repeat Add rejects before deployment/rate changes and preserves saved type
   assert.deepEqual(h.calls.slice(-2), ['rollback', 'release'])
 })
 
-test('new enrollment is added once; retry cannot change it; same employee can join another cutoff', async () => {
-  const h = backend()
+test('reliever enrollment is added once per DTR and may join another site in the same cutoff', async () => {
+  const h = backend({ batchSites: { 10: 2 } })
   assert.equal((await h.api.addDtrEmployee(request())).success, true)
   await assert.rejects(h.api.addDtrEmployee(request(5, { IsPermanentSite: false, DeploymentType: 'Reliever' })), conflict)
   assert.deepEqual(h.enrollments.get('5:2'), { type: 'Reliever', permanent: 0, deployment: 30 })
   assert.equal((await h.api.addDtrEmployee(request(10))).success, true)
   assert.equal(h.enrollments.size, 2)
+  assert.deepEqual(h.enrollments.get('10:2'), { type: 'Reliever', permanent: 0, deployment: 30 })
 })
 
 test('Regular is saved as Fixed, Reliever as Cutoff-only, and opposing flags are rejected', async () => {

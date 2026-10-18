@@ -266,14 +266,15 @@ export async function computeDtr(event: any) {
     if (current.Status === 'Computed to Both' || current.Status === (target === 'payroll' ? 'Computed to Payroll' : 'Computed to Billing')) {
       throw createError({ statusCode: 409, statusMessage: `This DTR was already computed to ${target}.` })
     }
+    const uncodedWorkCondition = `at.AttendanceID IS NOT NULL
+      AND COALESCE(at.AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
+      AND at.ShiftCodeID IS NULL AND duty.AttendanceID IS NULL`
     const [roster] = await connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
         CONCAT_WS(' ', e.FirstName, e.LastName) AS EmployeeName,
         COUNT(DISTINCT at.AttendanceID) AS AttendanceCount,
-        COUNT(DISTINCT CASE WHEN at.AttendanceID IS NOT NULL
-          AND COALESCE(at.AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
-          AND at.ShiftCodeID IS NULL
-          AND duty.AttendanceID IS NULL
-          THEN at.AttendanceID END) AS UncodedWorkCount
+        COUNT(DISTINCT CASE WHEN ${uncodedWorkCondition} THEN at.AttendanceID END) AS UncodedWorkCount,
+        GROUP_CONCAT(DISTINCT CASE WHEN ${uncodedWorkCondition} THEN DATE_FORMAT(at.AttendanceDate, '%Y-%m-%d') END
+          ORDER BY at.AttendanceDate SEPARATOR ', ') AS UncodedWorkDates
       FROM attendance_dtr_employee de
       INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
       LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
@@ -289,8 +290,8 @@ export async function computeDtr(event: any) {
     }
     const uncoded = roster.filter((employee: any) => Number(employee.UncodedWorkCount) > 0)
     if (uncoded.length) {
-      const names = uncoded.slice(0, 3).map((employee: any) => employee.EmployeeNumber || employee.EmployeeName).join(', ')
-      throw createError({ statusCode: 409, statusMessage: `${uncoded.length} employee${uncoded.length === 1 ? '' : 's'} ${uncoded.length === 1 ? 'has' : 'have'} worked attendance without a shift code (${names}${uncoded.length > 3 ? ', ...' : ''}). Assign a shift code in Edit DTR before computing to ${target}.` })
+      const names = uncoded.slice(0, 3).map((employee: any) => `${employee.EmployeeNumber || employee.EmployeeName}${employee.UncodedWorkDates ? ': ' + employee.UncodedWorkDates : ''}`).join('; ')
+      throw createError({ statusCode: 409, statusMessage: `${uncoded.length} employee${uncoded.length === 1 ? '' : 's'} ${uncoded.length === 1 ? 'has' : 'have'} worked attendance without a shift code (${names}${uncoded.length > 3 ? ', ...' : ''}). Select a shift code for the affected dates in Edit DTR before computing to ${target}.` })
     }
     await syncBatchHolidays(connection, current, session.sub)
     if (target === 'payroll') await assertDtrBtrReady(connection, current)
@@ -1690,7 +1691,14 @@ export async function createDtrAttendance(event: any) {
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
-    const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE', [employeeId, attendanceDate, id])
+    const [[existing]] = await connection.execute<any[]>(`SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate,
+      EXISTS (SELECT 1 FROM attendance_duty duty WHERE duty.AttendanceID = attendance.AttendanceID) AS HasImportedDuty
+      FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE`, [employeeId, attendanceDate, id])
+    // Consolidated imported duties have their own shifts. An ordinary daily
+    // entry must retain a shift now rather than fail only at cutoff computation.
+    if (!noWorkStatus && !shiftCodeId && !Number(existing?.HasImportedDuty || 0)) {
+      throw createError({ statusCode: 400, statusMessage: `Select a shift code for ${attendanceDate} before saving worked attendance.` })
+    }
     const conflict = attendanceConflict(await otherDtrAttendance(connection, employeeId, id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
     if (conflict) throw createError({ statusCode: 409, statusMessage: conflict })
     if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved leave cannot be changed from the DTR. Update it from Employee Status.' })

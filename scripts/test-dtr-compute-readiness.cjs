@@ -51,20 +51,62 @@ test('compute rejects when one enrolled employee has no saved cutoff attendance'
   assert.equal(calls.some(call => call.sql?.startsWith('UPDATE attendance_dtr') || call === 'audit'), false)
 })
 
-test('compute rejects worked entries without a shift or imported duty', async () => {
-  const { compute, calls } = backend([employee({ UncodedWorkCount: 1 })])
-  await assert.rejects(compute(), error => error.statusCode === 409 && /without a shift code/.test(error.message))
+test('compute identifies the exact dates missing a shift, even when the employee has attendance', async () => {
+  const { compute, calls } = backend([employee({ AttendanceCount: 15, UncodedWorkCount: 1, UncodedWorkDates: '2026-09-30' })])
+  await assert.rejects(compute(), error => error.statusCode === 409 && /without a shift code/.test(error.message) && /EMP-0004: 2026-09-30/.test(error.message))
   const sql = calls.find(call => call.sql?.includes('UncodedWorkCount')).sql
   assert.match(sql, /LEFT JOIN attendance_duty duty ON duty.AttendanceID = at.AttendanceID/)
   assert.match(sql, /'Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'/)
   assert.equal(calls.some(call => call.sql?.startsWith('UPDATE attendance_dtr') || call === 'audit'), false)
 })
 
-test('a ready roster can compute the second target and record an audit event', async () => {
+test('a site with only one ready employee can compute and record an audit event', async () => {
   const { compute, calls } = backend([employee()])
   const result = await compute()
   assert.equal(result.status, 'Computed to Both')
   assert.ok(calls.some(call => call.sql?.startsWith('UPDATE attendance_dtr')))
   assert.ok(calls.includes('audit'))
   assert.ok(calls.includes('commit'))
+})
+
+function saveBackend({ status = 'Present', shiftCodeId = null, importedDuties = false } = {}) {
+  const calls = []
+  const connection = {
+    async beginTransaction() {}, async commit() {}, async rollback() { calls.push('rollback') }, release() {},
+    async execute(sql) {
+      calls.push(sql)
+      if (sql.includes('FROM attendance_dtr WHERE')) return [[{ BatchID: 79, AgencyID: 2, SiteID: 2, PeriodStart: '2026-09-16', PeriodEnd: '2026-09-30', Status: 'Draft' }]]
+      if (sql.includes('FROM site s')) return [[]]
+      if (sql.startsWith('SELECT DeploymentID, AttendanceType')) return [[{ DeploymentID: 30, AttendanceType: 'Regular' }]]
+      if (sql.startsWith('SELECT EmployeeID FROM employee')) return [[{ EmployeeID: 13 }]]
+      if (sql.startsWith('SELECT ShiftCodeID, ShiftType')) return [[{ ShiftCodeID: 3, ShiftType: 'DS', TimeIn: '07:00:00', TimeOut: '19:00:00' }]]
+      if (sql.includes('FROM holiday WHERE') || sql.startsWith('SELECT HolidayID FROM site_special_holiday')) return [[]]
+      if (sql.startsWith('SELECT AttendanceID, BatchID, AttendanceStatus')) return [[{ AttendanceID: 1823, BatchID: 79, AttendanceStatus: 'Present', HasImportedDuty: Number(importedDuties) }]]
+      if (sql.includes('FROM attendance at LEFT JOIN attendance_dtr')) throw new Error('Reached overlap validation')
+      throw new Error('Unexpected query: ' + sql)
+    },
+  }
+  const moduleState = { exports: {} }
+  vm.runInNewContext(transformSync(source, { loader: 'ts', format: 'cjs' }).code, {
+    module: moduleState,
+    require: name => name === 'h3'
+      ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: () => '79', readBody: async () => ({ EmployeeID: 13, AttendanceDate: '2026-09-30', AttendanceStatus: status, ShiftCodeID: shiftCodeId, TimeIn: '2026-09-30 07:00', TimeOut: '2026-09-30 19:00', RegularHours: 8, OTHours: 4 }) }
+      : name.includes('dbconnect') ? { getConnection: async () => connection }
+        : name === './auth' ? { requireSession: () => ({ sub: 1 }) }
+          : name.includes('attendanceStatuses') ? { attendanceStatuses: ['Present', 'Absent', 'Reliever'] } : {},
+  })
+  return { save: () => moduleState.exports.createDtrAttendance({}), calls }
+}
+
+test('saving ordinary worked attendance requires a shift immediately', async () => {
+  const { save, calls } = saveBackend()
+  await assert.rejects(save(), error => error.statusCode === 400 && /Select a shift code for 2026-09-30/.test(error.message))
+  assert.equal(calls.some(sql => /^(INSERT|UPDATE|DELETE) /.test(sql)), false)
+})
+
+test('coded work, consolidated imported duties and no-work statuses retain their save paths', async () => {
+  for (const options of [{ shiftCodeId: 3 }, { importedDuties: true }, { status: 'Absent' }, { status: 'Reliever' }]) {
+    const { save } = saveBackend(options)
+    await assert.rejects(save(), error => error.message === 'Reached overlap validation')
+  }
 })
