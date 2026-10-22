@@ -4,6 +4,7 @@ import SystemAlert from '../../../../components/alertmessage/SystemAlert.vue'
 import type { AlertMessage } from '../../../../components/alertmessage/messages'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { attendanceStatuses as dtrAttendanceStatuses, reasonRequiredAttendanceStatuses } from '~~/shared/utils/attendanceStatuses'
+import { employeeStatusCutoffSummary } from '~~/shared/utils/employeeStatusSheet'
 
 const employees = ref<any[]>([])
 const deployments = ref<any[]>([])
@@ -14,7 +15,9 @@ const attendanceStatuses = ref<string[]>([...dtrAttendanceStatuses])
 const loading = ref(true), saving = ref(false), error = ref('')
 const search = ref(''), agencyFilter = ref(''), positionFilter = ref('')
 const sheetOpen = ref(false), statusOpen = ref(false), summaryOpen = ref(false)
-const sheetSearch = ref(''), sheetEmployeeId = ref('')
+const sheetEmployeeId = ref('')
+const sheetHistory = ref<any[]>([]), sheetHistoryLoading = ref(false), sheetHistoryError = ref('')
+let sheetHistoryRequest = 0
 const now = new Date(), selectedYear = ref(String(now.getFullYear()))
 const selectedCutoffKey = ref(''), summaryEmployeeId = ref('')
 const summaryLoading = ref(false), summaryError = ref('')
@@ -81,7 +84,19 @@ const cutoffDates = computed(() => {
 })
 const agencies = computed(() => [...new Set(employees.value.map(item => item.AgencyName).filter(Boolean))].sort())
 const positions = computed(() => [...new Set(employees.value.map(item => item.PositionName).filter(Boolean))].sort())
-const statusByEmployeeDate = computed(() => new Map(history.value.map(item => [`${item.EmployeeID}|${dateOnly(item.AttendanceDate)}`, item])))
+const statusByEmployeeDate = computed(() => {
+  const result = new Map<string, any>()
+  for (const row of sheetOpen.value ? sheetHistory.value : history.value) {
+    const day = dateOnly(row.AttendanceDate), key = `${row.EmployeeID}|${day}`
+    const current = result.get(key)
+    const deploymentId = deploymentAt(row.EmployeeID, day)?.DeploymentID
+    const matchesAssignment = deploymentId != null && String(row.DeploymentID) === String(deploymentId)
+    const currentMatchesAssignment = deploymentId != null && String(current?.DeploymentID) === String(deploymentId)
+    if (!current || (matchesAssignment && !currentMatchesAssignment)
+      || (matchesAssignment === currentMatchesAssignment && Number(row.AttendanceID) > Number(current.AttendanceID))) result.set(key, row)
+  }
+  return result
+})
 const listedEmployees = computed(() => {
   const query = search.value.trim().toLowerCase()
   return employees.value.filter(employee => {
@@ -103,19 +118,23 @@ function cutoffAssignment(employeeId: any) {
     && (!item.EndDate || dateOnly(item.EndDate) >= dateOnly(selectedCutoff.value.PeriodStart))) || null
 }
 const sheetEmployees = computed(() => {
-  const query = sheetSearch.value.trim().toLowerCase()
   return employees.value.filter(employee => {
     const assignment = cutoffAssignment(employee.EmployeeID)
     if (!assignment) return false
-    const searchable = [employee.EmployeeName, employee.EmployeeNumber, employeeCode(employee.EmployeeID), assignment.AgencyName, employee.PositionName]
-    return (!query || searchable.some(value => String(value || '').toLowerCase().includes(query)))
-      && (!sheetEmployeeId.value || String(employee.EmployeeID) === sheetEmployeeId.value)
+    return !sheetEmployeeId.value || String(employee.EmployeeID) === sheetEmployeeId.value
   })
 })
 const statusEmployee = computed(() => employees.value.find(item => String(item.EmployeeID) === String(statusForm.value.EmployeeID)) || null)
 const statusAssignment = computed(() => deploymentAt(statusForm.value.EmployeeID, statusForm.value.StartDate))
 const sheetEmployee = computed(() => employees.value.find(item => String(item.EmployeeID) === sheetEmployeeId.value) || null)
 const selectedSheetAgency = computed(() => cutoffAssignment(sheetEmployeeId.value)?.AgencyName || sheetEmployee.value?.AgencyName || 'No agency assignment')
+const sheetTotals = computed(() => employeeStatusCutoffSummary(cutoffDates.value,
+  day => statusAt(sheetEmployeeId.value, day)?.AttendanceStatus,
+  day => Boolean(deploymentAt(sheetEmployeeId.value, day))))
+const sheetCountItems = computed(() => [
+  ...Object.entries(sheetTotals.value.counts).map(([label, count]) => ({ label, count })),
+  { label: 'Not yet encoded', count: sheetTotals.value.missingDays },
+])
 const summaryEmployee = computed(() => employees.value.find(item => String(item.EmployeeID) === summaryEmployeeId.value) || null)
 const summaryStatusOptions = computed(() => [...new Set(summaryHistoryRows.value.map(item => String(item.AttendanceStatus || '')).filter(Boolean))].sort())
 const summaryCounts = computed(() => {
@@ -157,7 +176,16 @@ const summaryPeriods = computed(() => {
     .sort((a, b) => dateOnly(b.PeriodEnd).localeCompare(dateOnly(a.PeriodEnd)) || Number(b.BatchID || 0) - Number(a.BatchID || 0))
 })
 const reasonRequired = computed(() => reasonRequiredAttendanceStatuses.has(statusForm.value.AttendanceStatus))
-const canSaveStatus = computed(() => Boolean(statusForm.value.EmployeeID && statusForm.value.AttendanceStatus && statusForm.value.StartDate && (!reasonRequired.value || statusForm.value.Remarks.trim())) && !saving.value)
+const statusRecord = computed(() => statusAt(statusForm.value.EmployeeID, statusForm.value.StartDate))
+const statusReadOnly = computed(() => isLocked(statusRecord.value))
+const canSaveStatus = computed(() => Boolean(statusForm.value.EmployeeID && statusForm.value.AttendanceStatus && statusForm.value.StartDate && (!reasonRequired.value || statusForm.value.Remarks.trim())) && !saving.value && !statusReadOnly.value)
+
+function auditDate(value: unknown) {
+  if (!value) return 'Not recorded'
+  const timestamp = String(value).replace(' ', 'T')
+  const date = new Date(timestamp)
+  return Number.isNaN(date.getTime()) ? 'Not recorded' : date.toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
 
 function statusAt(employeeId: any, attendanceDate: string) { return statusByEmployeeDate.value.get(`${employeeId}|${attendanceDate}`) || null }
 function isLocked(record: any) { return Boolean(record?.BatchID && record?.DtrStatus && record.DtrStatus !== 'Draft') }
@@ -214,7 +242,7 @@ async function load(silent = false) {
 }
 async function openStatusSheet(employee?: any) {
   sheetEmployeeId.value = employee ? String(employee.EmployeeID) : ''
-  sheetSearch.value = ''; error.value = ''
+  error.value = ''
   const employeeCutoff = employee ? cutoffs.value.find(item => String(item.EmployeeID) === String(employee.EmployeeID)) : null
   if (employeeCutoff) {
     selectedYear.value = dateOnly(employeeCutoff.PeriodStart).slice(0, 4)
@@ -226,9 +254,24 @@ async function openStatusSheet(employee?: any) {
   sheetOpen.value = true
   await load(true)
 }
+async function loadSheetHistory() {
+  const request = ++sheetHistoryRequest
+  const employeeId = sheetEmployeeId.value, year = selectedYear.value
+  sheetHistoryLoading.value = true; sheetHistoryError.value = ''; sheetHistory.value = []
+  try {
+    const result = await $fetch<any>(`/api/employees/status/${employeeId}/summary`, { query: { year } })
+    if (request === sheetHistoryRequest) sheetHistory.value = result.history || []
+  } catch (cause: any) {
+    if (request === sheetHistoryRequest) sheetHistoryError.value = cause.data?.statusMessage || 'Unable to load this employee’s cutoff statuses.'
+  } finally { if (request === sheetHistoryRequest) sheetHistoryLoading.value = false }
+}
+watch([sheetOpen, selectedYear, sheetEmployeeId], () => {
+  if (sheetOpen.value && sheetEmployeeId.value) void loadSheetHistory()
+  else { sheetHistoryRequest++; sheetHistoryLoading.value = false }
+})
 function openStatusCell(employee: any, attendanceDate: string) {
   const record = statusAt(employee.EmployeeID, attendanceDate)
-  if (!deploymentAt(employee.EmployeeID, attendanceDate) || isLocked(record)) return
+  if (!deploymentAt(employee.EmployeeID, attendanceDate) || sheetHistoryLoading.value || sheetHistoryError.value) return
   const currentStatus = attendanceStatuses.value.includes(record?.AttendanceStatus) ? record.AttendanceStatus : ''
   statusForm.value = { EmployeeID: String(employee.EmployeeID), AttendanceStatus: currentStatus, StartDate: attendanceDate, EndDate: attendanceDate, Remarks: record?.Remarks || '' }
   error.value = ''; statusOpen.value = true
@@ -268,7 +311,7 @@ async function saveStatus() {
   try {
     const result = await $fetch<any>('/api/employees/status/attendance', { method: 'POST', body: statusForm.value })
     const employeeName = statusEmployee.value?.EmployeeName || 'The employee'
-    statusOpen.value = false; await load(true)
+    statusOpen.value = false; await load(true); await loadSheetHistory()
     const detail = result.pending ? 'It will be attached automatically when the DTR cutoff is created.' : 'The matching Draft DTR was updated immediately.'
     alert.value = message('Employee status updated', `${employeeName} was updated for ${formatDate(statusForm.value.StartDate)}. ${detail}`, 'success')
   } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to update employee status.' }
@@ -289,13 +332,19 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !statusOpen.value &&
     <footer class="list-footer">Showing {{ listedEmployees.length }} of {{ employees.length }} employees</footer>
 
     <div v-if="sheetOpen" class="modal-layer sheet-layer"><section class="modal sheet-modal"><button class="modal-close" type="button" aria-label="Close" @click="sheetOpen=false">×</button><header class="sheet-head"><div><p class="eyebrow">HR STATUS ENCODING</p><h2>Employee status sheet</h2><small>Choose a cutoff and date to update an employee attendance status.</small></div></header>
-      <section class="filters sheet-filters"><label class="year-field">Year<select v-model="selectedYear"><option v-for="year in yearOptions" :key="year" :value="year">{{ year }}</option></select></label><label>Cutoff<select v-model="selectedCutoffKey"><option v-for="option in cutoffOptions" :key="option.key" :value="option.key">{{ periodLabel(option) }}</option></select></label><label>Personnel<input v-model="sheetSearch" type="search" placeholder="Search employee ID, number, or name"></label><div class="agency-assignment"><span>Agency</span><strong>{{ selectedSheetAgency }}</strong></div></section>
+      <section class="filters sheet-filters"><label class="year-field">Year<select v-model="selectedYear"><option v-for="year in yearOptions" :key="year" :value="year">{{ year }}</option></select></label><label>Cutoff<select v-model="selectedCutoffKey"><option v-for="option in cutoffOptions" :key="option.key" :value="option.key">{{ periodLabel(option) }}</option></select></label><div class="agency-assignment"><span>Agency</span><strong>{{ selectedSheetAgency }}</strong></div></section>
       <p v-if="error && !statusOpen" class="error" role="alert">{{ error }}</p>
       <section v-if="selectedCutoff" class="cutoff-heading"><div><h3>{{ periodLabel(selectedCutoff) }}</h3><small>{{ sheetEmployeeId ? 'Selected employee' : 'Employees assigned during this cutoff' }}</small></div><p class="status-legend"><span v-for="status in attendanceStatuses" :key="status"><i :class="statusClass(status)"></i>{{ status }}</span></p></section>
-      <section class="table-shell sheet-table-shell"><table class="status-grid"><thead><tr><th class="person-column">Name of personnel</th><th class="employee-number-column">Employee no.</th><th class="position-column">Position</th><th v-for="date in cutoffDates" :key="date" class="day-heading"><strong>{{ Number(date.slice(8, 10)) }}</strong><small>{{ dateHeader(date) }}</small></th></tr></thead><tbody><tr v-for="employee in sheetEmployees" :key="employee.EmployeeID"><td class="person-column"><button class="person-button" type="button" title="View employee status summary" @click="openSummary(employee)"><strong>{{ employee.EmployeeName }}</strong><small>{{ employeeCode(employee.EmployeeID) }}</small></button></td><td class="employee-number-column">{{ employeeNumber(employee.EmployeeNumber) }}</td><td class="position-column">{{ employee.PositionName }}</td><td v-for="date in cutoffDates" :key="date" class="day-cell"><button type="button" :disabled="!deploymentAt(employee.EmployeeID, date) || isLocked(statusAt(employee.EmployeeID, date))" :class="[statusAt(employee.EmployeeID, date) ? statusClass(statusAt(employee.EmployeeID, date).AttendanceStatus) : '', { 'outside-deployment': !deploymentAt(employee.EmployeeID, date), locked: isLocked(statusAt(employee.EmployeeID, date)) }]" :title="!deploymentAt(employee.EmployeeID, date) ? 'No agency deployment on this date' : isLocked(statusAt(employee.EmployeeID, date)) ? `${statusAt(employee.EmployeeID, date).DtrStatus} DTR — view only` : statusAt(employee.EmployeeID, date)?.AttendanceStatus || 'Click to add status'" @click="openStatusCell(employee, date)"><strong>{{ statusAt(employee.EmployeeID, date) ? statusCode(statusAt(employee.EmployeeID, date).AttendanceStatus) : deploymentAt(employee.EmployeeID, date) ? '+' : '—' }}</strong><small>{{ statusAt(employee.EmployeeID, date) ? statusAt(employee.EmployeeID, date).AttendanceStatus : deploymentAt(employee.EmployeeID, date) ? 'Click to add' : 'Not assigned' }}</small></button></td></tr><tr v-if="!sheetEmployees.length"><td :colspan="3 + cutoffDates.length" class="state">No employees are assigned during this cutoff.</td></tr></tbody></table></section>
+      <p v-if="sheetHistoryLoading" class="sheet-loading" role="status">Loading cutoff statuses...</p>
+      <p v-else-if="sheetHistoryError" class="error" role="alert">{{ sheetHistoryError }} <button class="secondary" type="button" @click="loadSheetHistory">Retry</button></p>
+      <section v-else class="cutoff-summary" aria-label="Cutoff status summary">
+        <p><strong>{{ sheetTotals.encodedDays }} of {{ sheetTotals.assignedDays }}</strong> assigned days encoded <small>Blank dates are not counted as Absent. Leave includes On-Leave, Vacation Leave, and Sick Leave.</small></p>
+        <ul><li v-for="item in sheetCountItems" :key="item.label" :class="[{ 'not-encoded': item.label === 'Not yet encoded' }, statusClass(item.label)]"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></li></ul>
+      </section>
+      <section v-if="!sheetHistoryLoading && !sheetHistoryError" class="table-shell sheet-table-shell"><table class="status-grid"><thead><tr><th class="person-column">Name of personnel</th><th class="employee-number-column">Employee no.</th><th class="position-column">Position</th><th v-for="date in cutoffDates" :key="date" class="day-heading"><strong>{{ Number(date.slice(8, 10)) }}</strong><small>{{ dateHeader(date) }}</small></th></tr></thead><tbody><tr v-for="employee in sheetEmployees" :key="employee.EmployeeID"><td class="person-column"><button class="person-button" type="button" title="View employee status summary" @click="openSummary(employee)"><strong>{{ employee.EmployeeName }}</strong><small>{{ employeeCode(employee.EmployeeID) }}</small></button></td><td class="employee-number-column">{{ employeeNumber(employee.EmployeeNumber) }}</td><td class="position-column">{{ employee.PositionName }}</td><td v-for="date in cutoffDates" :key="date" class="day-cell"><button type="button" :disabled="!deploymentAt(employee.EmployeeID, date)" :class="[statusAt(employee.EmployeeID, date) ? statusClass(statusAt(employee.EmployeeID, date).AttendanceStatus) : '', { 'outside-deployment': !deploymentAt(employee.EmployeeID, date), locked: isLocked(statusAt(employee.EmployeeID, date)) }]" :title="!deploymentAt(employee.EmployeeID, date) ? 'No agency deployment on this date' : isLocked(statusAt(employee.EmployeeID, date)) ? `${statusAt(employee.EmployeeID, date).DtrStatus} DTR — view only` : statusAt(employee.EmployeeID, date)?.AttendanceStatus || 'Click to add status'" @click="openStatusCell(employee, date)"><strong>{{ statusAt(employee.EmployeeID, date) ? statusCode(statusAt(employee.EmployeeID, date).AttendanceStatus) : deploymentAt(employee.EmployeeID, date) ? '+' : '—' }}</strong><small>{{ statusAt(employee.EmployeeID, date) ? statusAt(employee.EmployeeID, date).AttendanceStatus : deploymentAt(employee.EmployeeID, date) ? 'Click to add' : 'Not assigned' }}</small></button></td></tr><tr v-if="!sheetEmployees.length"><td :colspan="3 + cutoffDates.length" class="state">No employees are assigned during this cutoff.</td></tr></tbody></table></section>
       <footer><button class="secondary" type="button" @click="sheetOpen=false">Close</button></footer></section></div>
 
-    <div v-if="statusOpen" class="modal-layer editor-layer"><form class="modal status-modal" @submit.prevent="saveStatus"><button class="modal-close" type="button" aria-label="Close" :disabled="saving" @click="statusOpen=false">×</button><p class="eyebrow">ATTENDANCE STATUS</p><h2>{{ statusEmployee?.EmployeeName }}</h2><small>{{ statusAssignment?.AgencyName }} · {{ statusEmployee?.PositionName }}</small><div class="selected-day"><span>{{ periodLabel(selectedCutoff) }}</span><strong>{{ formatDate(statusForm.StartDate) }}</strong></div><div class="status-options"><button v-for="status in attendanceStatuses" :key="status" type="button" :class="[statusClass(status), { selected: statusForm.AttendanceStatus === status }]" @click="statusForm.AttendanceStatus=status">{{ status }}</button></div><p class="status-hint">Worked hours and shifts are managed in the DTR.</p><label class="remarks-field">{{ reasonRequired ? 'Reason (required)' : 'Notes (optional)' }}<textarea v-model.trim="statusForm.Remarks" maxlength="255" :required="reasonRequired" :placeholder="reasonRequired ? 'Explain this status' : 'Optional note or reference'"></textarea></label><p v-if="error" class="error" role="alert">{{ error }}</p><footer><button class="secondary" type="button" :disabled="saving" @click="statusOpen=false">Cancel</button><button class="primary" :disabled="!canSaveStatus">{{ saving ? 'Saving…' : 'Save status' }}</button></footer></form></div>
+    <div v-if="statusOpen" class="modal-layer editor-layer"><form class="modal status-modal" @submit.prevent="saveStatus"><button class="modal-close" type="button" aria-label="Close" :disabled="saving" @click="statusOpen=false">×</button><p class="eyebrow">ATTENDANCE STATUS</p><h2>{{ statusEmployee?.EmployeeName }}</h2><small>{{ statusAssignment?.AgencyName }} · {{ statusEmployee?.PositionName }}</small><div class="selected-day"><span>{{ periodLabel(selectedCutoff) }}</span><strong>{{ formatDate(statusForm.StartDate) }}</strong></div><p v-if="statusReadOnly" class="status-readonly">{{ statusRecord.DtrStatus }} DTR — view only.</p><dl v-if="statusRecord" class="status-audit"><div><dt>Updated by</dt><dd>{{ statusRecord.UpdatedByName || 'Not recorded' }}</dd></div><div><dt>Updated at</dt><dd>{{ auditDate(statusRecord.UpdatedAt) }}</dd></div></dl><p v-if="statusRecord" class="audit-hint">Latest attendance record update.</p><div class="status-options"><button v-for="status in attendanceStatuses" :key="status" type="button" :disabled="statusReadOnly || saving" :class="[statusClass(status), { selected: statusForm.AttendanceStatus === status }]" @click="statusForm.AttendanceStatus=status">{{ status }}</button></div><p class="status-hint">Worked hours and shifts are managed in the DTR.</p><label class="remarks-field">{{ reasonRequired ? 'Reason (required)' : 'Notes (optional)' }}<textarea v-model.trim="statusForm.Remarks" :readonly="statusReadOnly" maxlength="255" :required="reasonRequired" :placeholder="reasonRequired ? 'Explain this status' : 'Optional note or reference'"></textarea></label><p v-if="error" class="error" role="alert">{{ error }}</p><footer><button class="secondary" type="button" :disabled="saving" @click="statusOpen=false">{{ statusReadOnly ? 'Close' : 'Cancel' }}</button><button v-if="!statusReadOnly" class="primary" :disabled="!canSaveStatus">{{ saving ? 'Saving…' : 'Save status' }}</button></footer></form></div>
 
     <div v-if="summaryOpen" class="modal-layer editor-layer">
       <section class="modal summary-modal">
@@ -391,7 +440,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !statusOpen.value &&
 .employee-status-page .sheet-modal{display:flex;width:min(1180px,calc(100vw - 32px))!important;max-width:none!important;max-height:calc(100dvh - 32px);min-width:0;flex-direction:column;overflow:hidden;padding:20px}
 .employee-status-page .sheet-head{flex:0 0 auto;align-items:flex-start;margin:0 34px 12px 0}
 .employee-status-page .sheet-head h2{font-size:24px}
-.employee-status-page .sheet-filters{grid-template-columns:90px 250px minmax(210px,1fr) 220px;gap:10px;margin:8px 0 10px}
+.employee-status-page .sheet-filters{grid-template-columns:100px minmax(300px,1fr) minmax(260px,1fr);gap:10px;margin:8px 0 10px}
 .employee-status-page .agency-assignment{display:grid;min-width:0;gap:7px;color:#50617c;font-size:13px;font-weight:800}
 .employee-status-page .agency-assignment strong{box-sizing:border-box;display:flex;align-items:center;min-height:46px;overflow:hidden;border:1px solid #ccd7e8;border-radius:10px;padding:0 13px;background:#f4f7fc;color:#17243d;white-space:nowrap;text-overflow:ellipsis}
 .employee-status-page .cutoff-heading{align-items:center;margin:10px 0 8px}
@@ -411,4 +460,6 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !statusOpen.value &&
 :global(html[data-theme='dark']) .employee-status-page{color:#e9efff}:global(html[data-theme='dark']) .table-shell,:global(html[data-theme='dark']) .modal{border-color:#2b3b5b;background:#15223f;color:#edf3ff}:global(html[data-theme='dark']) .employee-table th{background:#1d2d4c;color:#b8c7df}:global(html[data-theme='dark']) .employee-table td{border-color:#293958;color:#e2eaf7}:global(html[data-theme='dark']) .status-grid tbody .person-column,:global(html[data-theme='dark']) .status-grid tbody .employee-number-column,:global(html[data-theme='dark']) .status-grid tbody .agency-column,:global(html[data-theme='dark']) .status-grid tbody .position-column,:global(html[data-theme='dark']) .day-cell button{background:#15223f;color:#e1eaff}:global(html[data-theme='dark']) .filters input,:global(html[data-theme='dark']) .filters select,:global(html[data-theme='dark']) .remarks-field textarea,:global(html[data-theme='dark']) .agency-assignment strong,:global(html[data-theme='dark']) .summary-toolbar select{border-color:#385070;background:#0e1b34;color:#f2f6ff}:global(html[data-theme='dark']) .secondary,:global(html[data-theme='dark']) .action-button:not(.action-primary){border-color:#405477;background:#1b2c4e;color:#dce8ff}:global(html[data-theme='dark']) .summary-overview,:global(html[data-theme='dark']) .summary-period{border-color:#344867;background:#182946}:global(html[data-theme='dark']) .summary-overview{background:#14213c}:global(html[data-theme='dark']) .period-details{border-color:#344867;background:#101e38}:global(html[data-theme='dark']) .range-row{border-color:#344867;background:#182946}:global(html[data-theme='dark']) .dtr-state{border-color:#405477;background:transparent;color:#dce7ff}:global(html[data-theme='dark']) .chevron{background:transparent;color:#dce7ff}:global(html[data-theme='dark']) .period-summary,:global(html[data-theme='dark']) .period-count{color:#b9c8df}:global(html[data-theme='dark']) .period-count strong,:global(html[data-theme='dark']) .summary-metric{color:#edf3ff}:global(html[data-theme='dark']) .summary-metric{border-color:#496080}:global(html[data-theme='dark']) .summary-empty{border-color:#405477;color:#aab9d0}
 @media(max-width:900px){.employee-status-page{padding:22px 15px 60px}.page-head{align-items:stretch;flex-direction:column}.page-head h1{font-size:29px}.main-filters,.employee-status-page .sheet-filters{grid-template-columns:1fr}.sheet-modal{width:calc(100vw - 20px);padding:23px 12px}.sheet-head,.cutoff-heading{align-items:flex-start;flex-direction:column}.status-legend{justify-content:flex-start}.employee-number-column,.agency-column,.position-column{position:static}.person-column{width:175px;min-width:175px}.day-heading,.day-cell{width:52px;min-width:52px}.status-options{grid-template-columns:repeat(2,1fr)}.summary-modal{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);padding:20px 14px}.summary-header h2{font-size:21px}.summary-toolbar{grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}.summary-overview{align-items:flex-start;flex-direction:column}.summary-counts{justify-content:flex-start}.period-list{max-height:none}.period-toggle{align-items:flex-start;padding:12px}.period-heading{min-width:0}.period-heading strong,.period-heading small{overflow-wrap:anywhere}.period-summary{align-items:flex-end;flex-direction:column;gap:5px}.period-counts{padding:0 12px 11px}.period-details{padding:9px 10px 11px}.range-row{align-items:flex-start;flex-direction:column}.modal>footer{position:sticky;bottom:-20px;margin:20px -16px -20px;padding:12px 16px;border-top:1px solid #dce4ef;background:inherit}.modal>footer button{flex:1}}
 .status-suspended{background:#fae8ff!important;color:#86198f!important}
+.cutoff-summary{flex:0 0 auto;margin:0 0 12px}.cutoff-summary>p{margin:0 0 8px;color:#53647c;font-size:12px}.cutoff-summary small{display:block;margin-top:3px;font-size:11px}.cutoff-summary ul{display:flex;flex-wrap:wrap;gap:7px;margin:0;padding:0;list-style:none}.cutoff-summary li{display:flex;align-items:center;gap:14px;border:1px solid #dce4ef;border-radius:9px;padding:7px 11px;font-size:12px}.cutoff-summary li strong{font-size:17px}.cutoff-summary .status-leave{background:#ede9fe;color:#5b21b6}.cutoff-summary .not-encoded{background:#f8fafc;color:#475569;border-style:dashed}.status-audit{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0 4px;border-radius:10px;padding:12px;background:#f4f7fc}.status-audit dt{color:#657792;font-size:11px}.status-audit dd{margin:4px 0 0;font-size:12px;font-weight:700;overflow-wrap:anywhere}.audit-hint{margin:0;color:#657792;font-size:11px}.status-readonly{margin-bottom:0;color:#50617c;font-size:12px}.status-options button:disabled{cursor:default}.sheet-loading{padding:15px 0;color:#657792}
+@media(max-width:600px){.status-audit{grid-template-columns:1fr}.cutoff-summary li{flex:1 1 95px;justify-content:space-between}}
 </style>

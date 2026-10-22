@@ -72,6 +72,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
   const c = await mysql.createConnection({ host: env.DB_HOST || '127.0.0.1', port: Number(env.DB_PORT || 3306), user: env.DB_USER || 'root', password: env.DB_PASSWORD, database: env.DB_NAME || 'pbsystem', dateStrings: true })
   try {
     const tables = {
+      user: 'UserID INT PRIMARY KEY, FirstName VARCHAR(50), LastName VARCHAR(50)',
       employee: 'EmployeeID INT PRIMARY KEY, EmployeeNumber VARCHAR(30), AgencyPositionID INT, FirstName VARCHAR(50), MiddleName VARCHAR(50), LastName VARCHAR(50), Status VARCHAR(20)',
       agency_position: 'AgencyPositionID INT PRIMARY KEY, AgencyID INT, PositionID INT',
       agency: 'AgencyID INT PRIMARY KEY, AgencyName VARCHAR(100)',
@@ -83,15 +84,16 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
       employee_deployment: 'DeploymentID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, SiteRateID INT, SiteID INT, DeploymentType VARCHAR(20), IsPermanentSite TINYINT, StartDate DATE, EndDate DATE',
       attendance_dtr: 'BatchID INT PRIMARY KEY, AgencyID INT, ClientID INT, SiteID INT, PeriodStart DATE, PeriodEnd DATE, Status VARCHAR(30)',
       attendance_dtr_employee: 'BatchID INT, EmployeeID INT, DeploymentID INT, AttendanceType VARCHAR(20), IsPermanentSite TINYINT, CreatedBy INT, PRIMARY KEY(BatchID,EmployeeID)',
-      attendance: `AttendanceID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, DeploymentID INT, BatchID INT NULL, AttendanceDate DATE, ShiftCodeID INT, TimeIn DATETIME, TimeOut DATETIME, AttendanceStatus VARCHAR(30), AttendanceType VARCHAR(20), IsWDO TINYINT DEFAULT 0, IsManualEdit TINYINT DEFAULT 0, Remarks VARCHAR(255), CreatedBy INT, UpdatedBy INT,
+      attendance: `AttendanceID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, DeploymentID INT, BatchID INT NULL, AttendanceDate DATE, ShiftCodeID INT, TimeIn DATETIME, TimeOut DATETIME, AttendanceStatus VARCHAR(30), AttendanceType VARCHAR(20), IsWDO TINYINT DEFAULT 0, IsManualEdit TINYINT DEFAULT 0, Remarks VARCHAR(255), CreatedBy INT, UpdatedBy INT, CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP, UpdatedAt DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
         RegularHours DECIMAL(8,2) DEFAULT 0, OTHours DECIMAL(8,2) DEFAULT 0, OTExtHours DECIMAL(8,2) DEFAULT 0, NightDiffHours DECIMAL(8,2) DEFAULT 0, RestDayHours DECIMAL(8,2) DEFAULT 0, RestDayOTHours DECIMAL(8,2) DEFAULT 0, LegalHolidayHours DECIMAL(8,2) DEFAULT 0, LegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, LateHours DECIMAL(8,2) DEFAULT 0, UndertimeHours DECIMAL(8,2) DEFAULT 0, BreakHours DECIMAL(8,2) DEFAULT 0, HolidayID INT, UNIQUE(EmployeeID,AttendanceDate)`,
       attendance_duty: 'AttendanceDutyID INT AUTO_INCREMENT PRIMARY KEY, AttendanceID INT',
     }
     for (const [name, columns] of Object.entries(tables)) await c.query(`CREATE TEMPORARY TABLE \`${name}\` (${columns}) ENGINE=InnoDB`)
+    await c.query("INSERT INTO `user` VALUES (14,'Test','Encoder')")
     await c.query("INSERT INTO employee VALUES (8,'DJA-0001',11,'John','Doe','Example','Active')")
     await c.query('INSERT INTO agency_position VALUES (11,3,4)')
     await c.query("INSERT INTO agency VALUES (3,'DJA Security Services INC.')")
-    await c.query("INSERT INTO position VALUES (4,'Security Guard')")
+    await c.query("INSERT INTO `position` VALUES (4,'Security Guard')")
     await c.query("INSERT INTO payroll_rate VALUES (21,11,'Active')")
     await c.query("INSERT INTO site_rate VALUES (31,51,21,'Active')")
     await c.query("INSERT INTO client VALUES (41,'Samsung','Active')")
@@ -133,6 +135,8 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal(listed.dtrCutoffs.length, 1)
     assert.equal(listed.history.length, 3)
     assert.equal(listed.history[0].AttendanceStatus, 'Late')
+    assert.equal(listed.history[0].UpdatedByName, 'Test Encoder')
+    assert.ok(listed.history[0].UpdatedAt)
     const summary = await api.getEmployeeStatusSummary({ params: { id: '8' }, query: { year: '2026' } })
     assert.equal(summary.employee.EmployeeID, 8)
     assert.equal(summary.year, 2026)
@@ -157,6 +161,12 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal((await c.query('SELECT Status FROM employee WHERE EmployeeID=8'))[0][0].Status, 'Active')
     const suspendedSummary = await api.getEmployeeStatusSummary({ params: { id: '8' }, query: { year: '2026' } })
     assert.ok(suspendedSummary.history.some(row => row.AttendanceStatus === 'Suspended' && row.Remarks === 'HR suspension reference'))
+    assert.equal(suspendedSummary.history.find(row => row.AttendanceStatus === 'Suspended').UpdatedByName, 'Test Encoder')
+    await c.query("UPDATE attendance SET UpdatedBy=99,UpdatedAt='2026-09-27 09:30:00' WHERE AttendanceDate='2026-09-24'")
+    const unknownActor = await api.getEmployeeStatusSummary({ params: { id: '8' }, query: { year: '2026' } })
+    const unknownRecord = unknownActor.history.find(row => row.AttendanceStatus === 'Suspended')
+    assert.equal(unknownRecord.UpdatedByName, null)
+    assert.equal(unknownRecord.UpdatedAt, '2026-09-27 09:30:00')
     await c.query("UPDATE attendance_dtr SET Status='Computed to Payroll' WHERE BatchID=71")
     await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Suspended' } }), /DTR covering/)
   } finally {

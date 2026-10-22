@@ -6,6 +6,8 @@ import { attendanceStatuses, reasonRequiredAttendanceStatuses } from '../../shar
 export const employeeStatusAttendanceStatuses = ['On-Leave', 'Vacation Leave', 'Sick Leave', 'Suspended'] as const
 const noWorkStatuses = new Set<string>(['Absent', 'Rest Day', ...employeeStatusAttendanceStatuses, 'Reliever'])
 const hourColumns = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours', 'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours', 'LateHours', 'UndertimeHours', 'BreakHours'] as const
+const recordAuditFields = `NULLIF(TRIM(CONCAT_WS(' ', actor.FirstName, actor.LastName)), '') AS UpdatedByName,
+  DATE_FORMAT(COALESCE(at.UpdatedAt, at.CreatedAt), '%Y-%m-%d %H:%i:%s') AS UpdatedAt`
 
 function positiveId(value: unknown, label: string) {
   const result = Number(value)
@@ -98,6 +100,7 @@ export async function listEmployeeStatus(event: any) {
       INNER JOIN agency a ON a.AgencyID = d.AgencyID
       ORDER BY d.PeriodStart DESC, d.BatchID DESC`),
     pool.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.BatchID, at.AttendanceDate, at.AttendanceStatus, at.Remarks,
+      at.DeploymentID, ${recordAuditFields},
       d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
       c.ClientName, s.SiteName
       FROM attendance at
@@ -106,6 +109,7 @@ export async function listEmployeeStatus(event: any) {
       INNER JOIN site s ON s.SiteID = ed.SiteID
       INNER JOIN client c ON c.ClientID = s.ClientID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
+      LEFT JOIN \`user\` actor ON actor.UserID = COALESCE(at.UpdatedBy, at.CreatedBy)
       ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC LIMIT 1000`),
   ])
   return {
@@ -166,6 +170,7 @@ export async function getEmployeeStatusSummary(event: any) {
       WHERE de.EmployeeID = ? AND d.PeriodStart <= ? AND d.PeriodEnd >= ?
       ORDER BY d.PeriodStart DESC, d.BatchID DESC`, [employeeId, yearEnd, yearStart]),
     pool.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.BatchID, at.AttendanceDate,
+      at.DeploymentID, ${recordAuditFields},
       at.AttendanceStatus, at.Remarks, d.PeriodStart, d.PeriodEnd,
       d.Status AS DtrStatus, c.ClientName, s.SiteName
       FROM attendance at
@@ -173,6 +178,7 @@ export async function getEmployeeStatusSummary(event: any) {
       INNER JOIN site s ON s.SiteID = ed.SiteID
       INNER JOIN client c ON c.ClientID = s.ClientID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
+      LEFT JOIN \`user\` actor ON actor.UserID = COALESCE(at.UpdatedBy, at.CreatedBy)
       WHERE at.EmployeeID = ? AND at.AttendanceDate BETWEEN ? AND ?
       ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC`, [employeeId, yearStart, yearEnd]),
   ])

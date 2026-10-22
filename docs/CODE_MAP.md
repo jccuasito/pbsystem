@@ -206,6 +206,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
+  - `shared/utils/employeeStatusSheet.ts`
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
@@ -535,6 +536,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
   - `shared/utils/attendanceStatuses.ts`
+  - `shared/utils/employeeStatusSheet.ts`
 - API calls and handlers:
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
   - `GET /api/employees/status/[param]/summary` → `server/api/employees/status/[id]/summary.get.ts`
