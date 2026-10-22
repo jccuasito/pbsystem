@@ -2,7 +2,7 @@ import { getQuery, getRouterParam, readBody, createError } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
-import { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, moneyCents, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction, selectCutoffAllowances } from '../../shared/utils/payrollPreview'
+import { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, moneyCents, payrollDeductionHours, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction, selectCutoffAllowances } from '../../shared/utils/payrollPreview'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { postEmployeeAccountTransaction } from './employeeAccountTransactionCrud'
 
@@ -14,7 +14,8 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     throw createError({ statusCode: 400, statusMessage: 'Select a valid payroll cutoff.' })
   }
   const [batches] = await connection.execute<any[]>(`SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName,
-      d.SiteID, s.SiteName, DATE_FORMAT(d.PeriodStart, '%Y-%m-%d') AS PeriodStart,
+      d.SiteID, s.SiteName, COALESCE(sp.AutoBreakEnabled, 0) AS AutoBreakEnabled,
+      DATE_FORMAT(d.PeriodStart, '%Y-%m-%d') AS PeriodStart,
       DATE_FORMAT(d.PeriodEnd, '%Y-%m-%d') AS PeriodEnd, d.Status,
       EXISTS (SELECT 1 FROM payroll_processing_posting pp WHERE pp.BatchID = d.BatchID AND pp.Status = 'Active') AS IsFinalized,
       review.ReviewStatus, review.SnapshotJson, review.RejectionReason,
@@ -26,6 +27,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     INNER JOIN agency a ON a.AgencyID = d.AgencyID
     INNER JOIN client c ON c.ClientID = d.ClientID
     INNER JOIN site s ON s.SiteID = d.SiteID
+    LEFT JOIN site_policy sp ON sp.SiteID = d.SiteID AND sp.Status = 'Active'
     LEFT JOIN payroll_processing_review review ON review.BatchID = d.BatchID
     LEFT JOIN user approver ON approver.UserID = review.ApprovedBy
     LEFT JOIN user rejector ON rejector.UserID = review.RejectedBy
@@ -263,7 +265,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
           components.set(hourField, previous); grossCents += amountCents
         }
         for (const [hourField, rateField, label] of payrollTimeDeductions) {
-          const quantity = Number(day[hourField] || 0)
+          const quantity = payrollDeductionHours(hourField, day, batch)
           if (!quantity) continue
           const amountCents = componentAmountCents(quantity, rate[rateField])
           const previous = components.get(hourField) || { code: hourField, label, hours: 0, amountCents: 0, direction: 'Deduction' }

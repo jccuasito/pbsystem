@@ -22,6 +22,14 @@ export const payrollTimeDeductions = [
   ['BreakHours', 'BreakDeduction', 'Break'],
 ] as const
 
+// Automatic breaks are already removed from the DTR's paid hour components.
+// Keep BreakHours as attendance information without charging the same break again.
+// Manual breaks retain their configured monetary deduction when automation is off.
+export function payrollDeductionHours(hourField: string, attendance: Record<string, unknown>, policy: { AutoBreakEnabled?: unknown }) {
+  if (hourField === 'BreakHours' && Number(policy.AutoBreakEnabled) === 1) return 0
+  return Number(attendance[hourField] || 0)
+}
+
 // Presentation only: keep the separately calculated late and undertime amounts,
 // but show their combined hours and deduction on payroll review screens.
 export function combinedLateUndertimeLines<T extends { code: string; label: string; hours: number; amount: number }>(lines: T[]) {

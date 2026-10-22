@@ -1,6 +1,21 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { btrRegularAllocation, combinedLateUndertimeLines, componentAmountCents, fixedDeductionBatchByEmployee, previewInstallment, previewRecurringDeduction, selectCutoffAllowances } = require('../shared/utils/payrollPreview.ts')
+const { btrRegularAllocation, combinedLateUndertimeLines, componentAmountCents, fixedDeductionBatchByEmployee, payrollDeductionHours, payrollTimeDeductions, previewInstallment, previewRecurringDeduction, selectCutoffAllowances } = require('../shared/utils/payrollPreview.ts')
+
+test('automatic break is paid through net DTR hours without a second monetary deduction', () => {
+  // Nine hours on site less a 60-minute break already leaves eight paid hours.
+  const day = { RegularHours: 8, BreakHours: 1, LateHours: 0.25, UndertimeHours: 0.5 }
+  const rate = { RegularRate: 80, BreakDeduction: 80, LateDeduction: 80, UndertimeDeduction: 80 }
+  const deductions = policy => payrollTimeDeductions.reduce((sum, [hours, field]) =>
+    sum + componentAmountCents(payrollDeductionHours(hours, day, policy), rate[field]), 0)
+  assert.equal(componentAmountCents(day.RegularHours, rate.RegularRate) - deductions({ AutoBreakEnabled: 1 }), 58000)
+  assert.equal(deductions({ AutoBreakEnabled: '1' }), 6000)
+  // A manual-break site still charges its configured break amount.
+  assert.equal(deductions({ AutoBreakEnabled: 0 }), 14000)
+  assert.equal(deductions({}), 14000)
+  assert.equal(day.BreakHours, 1)
+  assert.equal(day.RegularHours, 8)
+})
 
 test('review display combines late and undertime without changing either deduction', () => {
   const lines = combinedLateUndertimeLines([

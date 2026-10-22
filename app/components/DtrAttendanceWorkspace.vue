@@ -330,7 +330,7 @@ onMounted(load)
         <section class="policy-section">
           <h4>Time and attendance</h4>
           <label class="policy-switch"><input v-model="sitePolicy.DayShiftNDEnabled" type="checkbox" :true-value="1" :false-value="0"><span></span><div><strong>Allow Night Differential for Day Shift</strong><small>When on, DS shifts use the standard 10:00 PM-6:00 AM ND window. NS, MS, SS, and Flexible stay based on their shift-code ND settings.</small></div></label>
-          <label class="policy-switch"><input v-model="sitePolicy.AutoBreakEnabled" type="checkbox" :true-value="1" :false-value="0"><span></span><div><strong>Automatic break deduction</strong><small>Deduct the break once per worked DTR day, including straight duty with augmentation.</small></div></label>
+          <label class="policy-switch"><input v-model="sitePolicy.AutoBreakEnabled" type="checkbox" :true-value="1" :false-value="0"><span></span><div><strong>Automatic break deduction</strong><small>Subtract the break from paid DTR hours once per worked day, including straight duty with augmentation. Payroll will not deduct the break amount again while this is on.</small></div></label>
           <label class="break-minutes">Break minutes per worked day<input v-model.number="sitePolicy.DefaultBreakMinutes" type="number" min="0" max="240" step="1" :disabled="Number(sitePolicy.AutoBreakEnabled)!==1"></label>
         </section>
         <p class="policy-note">Saving recalculates WDO, Sunday WDO OT, selected Special Holidays, and Day Shift ND for existing attendance in this Draft cutoff.</p>

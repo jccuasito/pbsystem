@@ -3,6 +3,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 const { test } = require('node:test')
+const { componentAmountCents, payrollDeductionHours } = require('../shared/utils/payrollPreview.ts')
 const { transformSync } = require('esbuild')
 const { parse, compileScript, compileTemplate } = require('@vue/compiler-sfc')
 const vue = require('vue')
@@ -53,6 +54,20 @@ function backend() {
   return context.module.exports.calculate
 }
 const calculate = backend()
+
+test('automatic DTR break reaches payroll exactly once for day and overnight duties', () => {
+  for (const [shift, timeIn, timeOut, expectedPaidHours] of [
+    [philtob, '2026-09-01 09:00', '2026-09-01 18:00', 8],
+    [{ ...philtob, ShiftType: 'NS', TimeIn: '19:00', TimeOut: '07:00', RegularOTCap: 4 }, '2026-09-01 19:00', '2026-09-02 07:00', 11],
+  ]) {
+    const day = calculate(shift, timeIn, timeOut, policy)
+    assert.equal(day.RegularHours + day.OTHours + day.OTExtHours, expectedPaidHours)
+    assert.equal(day.BreakHours, 1)
+    const gross = componentAmountCents(day.RegularHours + day.OTHours + day.OTExtHours, 80)
+    const breakDeduction = componentAmountCents(payrollDeductionHours('BreakHours', day, policy), 80)
+    assert.equal(gross - breakDeduction, expectedPaidHours * 8000)
+  }
+})
 const overlap = (() => {
   const context = { module: { exports: {} }, require: name => name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.includes('employeeStatusCrud') ? { employeeStatusAttendanceStatuses: ['On-Leave', 'Vacation Leave', 'Sick Leave'] } : {} }
   vm.createContext(context)

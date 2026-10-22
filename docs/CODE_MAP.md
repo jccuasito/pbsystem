@@ -87,6 +87,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
+  - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.

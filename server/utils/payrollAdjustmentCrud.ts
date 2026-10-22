@@ -2,6 +2,7 @@ import { createError, getQuery, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
+import { payrollDeductionHours } from '../../shared/utils/payrollPreview'
 
 type Body = Record<string, unknown>
 type Status = 'Draft' | 'For Approval' | 'Approved' | 'Ready for Payroll' | 'Applied' | 'Rejected' | 'Cancelled'
@@ -295,8 +296,11 @@ export async function createPayrollAdjustment(event: any) {
   try {
     await connection.beginTransaction(); await assertReady(connection)
     const [[source]] = await connection.execute<any[]>(`SELECT source.BatchID, source.AgencyID, source.SiteID, source.PeriodStart, source.PeriodEnd, source.Status,
+      COALESCE(sp.AutoBreakEnabled, 0) AS AutoBreakEnabled,
       EXISTS (SELECT 1 FROM attendance_dtr_employee roster WHERE roster.BatchID = source.BatchID AND roster.EmployeeID = ?) AS HasEmployee
-      FROM attendance_dtr source WHERE source.BatchID = ? FOR UPDATE`, [employeeId, sourceBatchId])
+      FROM attendance_dtr source
+      LEFT JOIN site_policy sp ON sp.SiteID = source.SiteID AND sp.Status = 'Active'
+      WHERE source.BatchID = ? FOR UPDATE`, [employeeId, sourceBatchId])
     if (!source) throw createError({ statusCode: 404, statusMessage: 'Source DTR not found.' })
     if (!Number(source.HasEmployee)) throw createError({ statusCode: 400, statusMessage: 'The employee does not belong to the source DTR.' })
     const [[target]] = await connection.execute<any[]>(`SELECT target.BatchID, target.AgencyID, target.PeriodStart, target.PeriodEnd, target.Status,
@@ -336,7 +340,7 @@ export async function createPayrollAdjustment(event: any) {
         lines.push({ attendanceId: Number(row.AttendanceID), sourceDate, component, label, entrySource: 'DTR Snapshot', direction: 'Earning', quantity, rate, amount: Math.round(quantity * rate * 100) / 100 })
       }
       for (const [component, rateField, label] of deductionComponents) {
-        const quantity = Number(row[component] || 0)
+        const quantity = payrollDeductionHours(component, row, source)
         if (!quantity) continue
         const rate = Number(effectiveRate[rateField] || 0)
         lines.push({ attendanceId: Number(row.AttendanceID), sourceDate, component, label, entrySource: 'DTR Snapshot', direction: 'Deduction', quantity, rate, amount: -Math.round(quantity * rate * 100) / 100 })
