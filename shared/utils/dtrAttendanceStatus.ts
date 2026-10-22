@@ -20,7 +20,7 @@ type AttendanceStatusInput = {
   UndertimeHours?: unknown
 }
 
-const nonWorkStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
+const nonWorkStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave', 'Suspended'])
 const amount = (value: unknown) => Math.max(0, Number(value) || 0)
 const timestamp = (value: unknown) => value instanceof Date ? value.getTime() : new Date(String(value || '').replace(' ', 'T')).getTime()
 

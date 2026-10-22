@@ -71,7 +71,7 @@ async function attendanceFor(connection: PoolConnection, batchId: number): Promi
     'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours',
     'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours']
   const [rows] = await connection.execute<any[]>(`SELECT EmployeeID, AttendanceDate, AttendanceStatus,
-    (COALESCE(AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever')
+    (COALESCE(AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Reliever', 'Suspended')
       AND (${workedColumns.map(column => `COALESCE(${column}, 0) > 0`).join(' OR ')}
         OR TimeIn IS NOT NULL OR TimeOut IS NOT NULL)) AS HasWork
     FROM attendance WHERE BatchID = ?`, [batchId])

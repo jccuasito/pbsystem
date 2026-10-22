@@ -3,7 +3,7 @@ import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { attendanceStatuses, reasonRequiredAttendanceStatuses } from '../../shared/utils/attendanceStatuses'
 
-export const employeeStatusAttendanceStatuses = ['On-Leave', 'Vacation Leave', 'Sick Leave'] as const
+export const employeeStatusAttendanceStatuses = ['On-Leave', 'Vacation Leave', 'Sick Leave', 'Suspended'] as const
 const noWorkStatuses = new Set<string>(['Absent', 'Rest Day', ...employeeStatusAttendanceStatuses, 'Reliever'])
 const hourColumns = ['RegularHours', 'OTHours', 'OTExtHours', 'NightDiffHours', 'RestDayHours', 'RestDayOTHours', 'LegalHolidayHours', 'LegalHolidayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'SpecialHolidayHours', 'SpecialHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours', 'LateHours', 'UndertimeHours', 'BreakHours'] as const
 

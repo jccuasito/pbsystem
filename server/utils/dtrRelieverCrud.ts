@@ -38,7 +38,7 @@ export async function listDtrRelieverAttendance(event: any) {
     LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
     WHERE at.AttendanceDate BETWEEN ? AND ?
       AND (? IS NULL OR ad.AgencyID = ?)
-      AND at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
+      AND at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave', 'Suspended')
       AND (at.TimeIn IS NOT NULL OR at.TimeOut IS NOT NULL OR at.RegularHours > 0
         OR at.RestDayHours > 0 OR at.SpecialHolidayHours > 0 OR at.LegalHolidayHours > 0)
       AND EXISTS (
@@ -50,7 +50,7 @@ export async function listDtrRelieverAttendance(event: any) {
           AND relief_de.AttendanceType = 'Reliever'
           AND relief_at.AttendanceDate BETWEEN ? AND ?
           AND (? IS NULL OR relief_dtr.AgencyID = ?)
-          AND relief_at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
+          AND relief_at.AttendanceStatus NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave', 'Suspended')
           AND (relief_at.TimeIn IS NOT NULL OR relief_at.TimeOut IS NOT NULL OR relief_at.RegularHours > 0
             OR relief_at.RestDayHours > 0 OR relief_at.SpecialHolidayHours > 0 OR relief_at.LegalHolidayHours > 0)
       )

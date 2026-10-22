@@ -69,7 +69,7 @@ test('automatic DTR break reaches payroll exactly once for day and overnight dut
   }
 })
 const overlap = (() => {
-  const context = { module: { exports: {} }, require: name => name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.includes('employeeStatusCrud') ? { employeeStatusAttendanceStatuses: ['On-Leave', 'Vacation Leave', 'Sick Leave'] } : {} }
+  const context = { module: { exports: {} }, require: name => name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.includes('employeeStatusCrud') ? { employeeStatusAttendanceStatuses: ['On-Leave', 'Vacation Leave', 'Sick Leave', 'Suspended'] } : {} }
   vm.createContext(context)
   vm.runInContext(transformSync(fs.readFileSync(path.join(root, 'server/utils/dtrCrud.ts'), 'utf8') + '\nmodule.exports.policy = { timeOverlap, attendanceConflict };', { loader: 'ts', format: 'cjs' }).code, context)
   return context.module.exports.policy
@@ -84,6 +84,13 @@ test('day reliever and night fixed shifts share a calendar day only without over
   assert.match(overlap.attendanceConflict([other], '2026-09-21', '2026-09-21 18:00:00', '2026-09-22 06:00:00'), /overlaps attendance at Pasig BLVD/)
   assert.equal(overlap.attendanceConflict([{ ...other, AttendanceDate: '2026-09-22', TimeIn: '2026-09-22 07:00:00', TimeOut: '2026-09-22 19:00:00' }], '2026-09-21', '2026-09-21 19:00:00', '2026-09-22 07:00:00'), null)
   assert.equal(overlap.attendanceConflict([{ ...other, AttendanceDate: '2026-09-22', TimeIn: '2026-09-22 07:00:00', TimeOut: '2026-09-22 19:00:00' }], '2026-09-21', null, null, true), null)
+})
+
+test('HR suspension blocks overlapping work at another site until HR corrects the status', () => {
+  const suspended = { AttendanceDate: '2026-09-21', AttendanceStatus: 'Suspended', TimeIn: null, TimeOut: null }
+  assert.match(overlap.attendanceConflict([suspended], '2026-09-21', '2026-09-21 07:00:00', '2026-09-21 19:00:00'), /HR-approved Suspended.*Employee Status first/)
+  assert.match(overlap.attendanceConflict([suspended], '2026-09-20', '2026-09-20 19:00:00', '2026-09-21 07:00:00'), /HR-approved Suspended/)
+  assert.equal(overlap.attendanceConflict([suspended], '2026-09-22', '2026-09-22 07:00:00', '2026-09-22 19:00:00'), null)
 })
 
 test('reliever duty at another site is visible without adding hours to this DTR', () => {

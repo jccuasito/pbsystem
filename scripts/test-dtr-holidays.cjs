@@ -7,7 +7,7 @@ const { parse, compileScript, compileTemplate, compileStyle } = require('@vue/co
 const vue = require('vue')
 
 const moduleState = { exports: {} }
-vm.runInNewContext(transformSync(fs.readFileSync('server/utils/dtrCrud.ts', 'utf8') + '\nmodule.exports.holidays={holidayHours,hourColumns,syncBatchHolidays,previousHolidayDate,workedAttendanceCondition};', { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: () => ({}) })
+vm.runInNewContext(transformSync(fs.readFileSync('server/utils/dtrCrud.ts', 'utf8') + '\nmodule.exports.holidays={holidayHours,hourColumns,syncBatchHolidays,previousHolidayDate,workedAttendanceCondition};', { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: name => name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts') : {} })
 const { holidayHours, hourColumns, syncBatchHolidays, previousHolidayDate, workedAttendanceCondition } = moduleState.exports.holidays
 const legal = { HolidayID: 1, HolidayName: 'Test LH', HolidayType: 'Legal' }
 const special = { ...legal, HolidayID: 2, HolidayType: 'Special' }
@@ -17,6 +17,8 @@ function allocation(fields, status, holiday, eligible = false, sundayWdoOtApplie
 }
 
 test('unworked LH grants eight LH hours only; SH remains no work no pay', () => {
+  assert.equal(allocation({}, 'Suspended', legal, true).hours.LegalHolidayHours, 0)
+  assert.equal(allocation({}, 'Suspended', special, true).hours.SpecialHolidayHours, 0)
   const paid = allocation({}, 'Absent', legal, true)
   assert.equal(paid.paidUnworked, true)
   assert.equal(paid.hours.LegalHolidayHours, 8)

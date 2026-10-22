@@ -267,7 +267,7 @@ export async function computeDtr(event: any) {
       throw createError({ statusCode: 409, statusMessage: `This DTR was already computed to ${target}.` })
     }
     const uncodedWorkCondition = `at.AttendanceID IS NOT NULL
-      AND COALESCE(at.AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
+      AND COALESCE(at.AttendanceStatus, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave', 'Suspended')
       AND at.ShiftCodeID IS NULL AND duty.AttendanceID IS NULL`
     const [roster] = await connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
         CONCAT_WS(' ', e.FirstName, e.LastName) AS EmployeeName,
@@ -374,7 +374,7 @@ const ordinaryWorkedHourColumns = hourColumns.filter(column => ![...holidayHourC
 // Saved zero-hour placeholders (for example Absent, Rest Day, and Reliever)
 // belong in the audit trail, but are not days actually worked.
 const workedHourColumns = hourColumns.filter(column => !['LateHours', 'UndertimeHours', 'BreakHours'].includes(column))
-const noWorkAttendanceStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
+const noWorkAttendanceStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave', 'Suspended'])
 const employeeStatusLeaveStatuses = new Set<string>(employeeStatusAttendanceStatuses)
 
 function normalizeAttendanceStatus(value: unknown) {
@@ -389,7 +389,7 @@ function isEmployeeStatusLeave(value: unknown) {
 function workedAttendanceCondition(prefix = '') {
   const field = (column: string) => `${prefix}${column}`
   const paidTime = workedHourColumns.map(column => `COALESCE(${field(column)}, 0) > 0`).join(' OR ')
-  return `COALESCE(${field('AttendanceStatus')}, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave')
+  return `COALESCE(${field('AttendanceStatus')}, 'Present') NOT IN ('Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave', 'Suspended')
     AND (${paidTime} OR ${field('TimeIn')} IS NOT NULL OR ${field('TimeOut')} IS NOT NULL)`
 }
 
@@ -1116,7 +1116,7 @@ function holidayHours(values: number[], attendanceStatus: string, timeIn: string
   const hasWork = hasHolidayWork(result, attendanceStatus, timeIn, timeOut)
   if (!holiday) return { values: result, holidayId: null, paidUnworked: false }
   if (!hasWork) {
-    const paidUnworked = holiday.HolidayType === 'Legal' && eligibleUnworked
+    const paidUnworked = attendanceStatus !== 'Suspended' && holiday.HolidayType === 'Legal' && eligibleUnworked
     if (paidUnworked) result[hourColumns.indexOf('LegalHolidayHours')] = 8
     return { values: result, holidayId: paidUnworked ? holiday.HolidayID : null, paidUnworked }
   }
@@ -1309,7 +1309,7 @@ async function clearDtrAttendanceBody(event: any, body: { EmployeeID?: unknown, 
     const [[enrollment]] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
     const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, AttendanceStatus FROM attendance WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [id, employeeId, attendanceDate])
-    if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved leave cannot be cleared from the DTR. Update it from Employee Status.' })
+    if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved status cannot be cleared from the DTR. Update it from Employee Status.' })
     const [result] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ? AND AttendanceDate = ?', [id, employeeId, attendanceDate])
     await syncBatchHolidays(connection, batch, session.sub)
     const wdoCount = await syncAutoWdo(connection, batch, employeeId)
@@ -1691,6 +1691,7 @@ export async function createDtrAttendance(event: any) {
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
+    if (attendanceStatus === 'Suspended' && !remarks) throw createError({ statusCode: 400, statusMessage: 'A reason is required for Suspended.' })
     const [[existing]] = await connection.execute<any[]>(`SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate,
       EXISTS (SELECT 1 FROM attendance_duty duty WHERE duty.AttendanceID = attendance.AttendanceID) AS HasImportedDuty
       FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE`, [employeeId, attendanceDate, id])
@@ -1701,7 +1702,7 @@ export async function createDtrAttendance(event: any) {
     }
     const conflict = attendanceConflict(await otherDtrAttendance(connection, employeeId, id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
     if (conflict) throw createError({ statusCode: 409, statusMessage: conflict })
-    if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved leave cannot be changed from the DTR. Update it from Employee Status.' })
+    if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) throw createError({ statusCode: 409, statusMessage: 'HR-approved status cannot be changed from the DTR. Update it from Employee Status.' })
     // Attendance edits and reapplying the same position must retain the original
     // snapshot, including after the site's override setting has been disabled.
     const preserveWorkPosition = !noWorkStatus && existing && (body.WorkAgencyPositionID === undefined || (requestedWorkAgencyPositionId !== null && requestedWorkAgencyPositionId === Number(existing.WorkAgencyPositionID)))

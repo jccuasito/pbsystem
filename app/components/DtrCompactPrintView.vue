@@ -35,11 +35,11 @@ const summaryFields = [
   ['RestDaySpecialHolidayOTHours', 'WDO SH OT', 'Rest day special holiday OT']
 ] as const
 const paidHourFields = [...summaryFields.map(([key]) => key).filter(key => !['WDODays', 'LateHours', 'UndertimeHours'].includes(key)), 'RestDayHours']
-const noWorkStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave'])
+const noWorkStatuses = new Set(['Absent', 'Rest Day', 'On-Leave', 'Vacation Leave', 'Reliever', 'Sick Leave', 'Suspended'])
 const colorLegend = [
   ['Late / undertime', 'tone-late'], ['Half-day', 'tone-half-day'], ['Absent', 'tone-absent'],
   ['On-leave', 'tone-on-leave'], ['Vacation leave', 'tone-vacation-leave'], ['Holiday', 'tone-holiday'],
-  ['Rest day', 'tone-rest-day'], ['Reliever', 'tone-reliever'], ['Sick leave', 'tone-sick-leave'],
+  ['Rest day', 'tone-rest-day'], ['Reliever', 'tone-reliever'], ['Sick leave', 'tone-sick-leave'], ['Suspended', 'tone-suspended'],
   ['Day shift', 'tone-shift-ds'], ['Night shift', 'tone-shift-ns'], ['Straight / split shift', 'tone-shift-ss']
 ] as const
 
@@ -125,7 +125,7 @@ function dayToneClass(row: any, record: any) {
 function dayMain(record: any) {
   if (!record) return ''
   const status = String(record.AttendanceStatus || 'Present')
-  const labels: Record<string, string> = { Absent: 'A', 'Rest Day': 'RD', 'On-Leave': 'OL', 'Vacation Leave': 'VL', Reliever: 'REL', 'Sick Leave': 'SL' }
+  const labels: Record<string, string> = { Absent: 'A', 'Rest Day': 'RD', 'On-Leave': 'OL', 'Vacation Leave': 'VL', Reliever: 'REL', 'Sick Leave': 'SL', Suspended: 'SUS' }
   if (noWorkStatuses.has(status) && Number(record.LegalHolidayHours || 0) > 0) return ''
   if (noWorkStatuses.has(status)) return labels[status] || status
   const regular = Number(record.RegularHours || 0)
@@ -358,4 +358,5 @@ function printDtr() {
   .compact-table{font-size:5.2px}.compact-table th,.compact-table td{height:23px;padding:1px}.compact-table thead th{height:31px;font-size:4.7px}.compact-table .number-column{width:18px}.compact-table .name-column{width:92px}.compact-table .position-column{width:48px}.compact-table .type-column{width:35px}.compact-table .shift-column{width:28px}.compact-table .date-column{width:22px}.compact-table .metric-column{width:27px}.compact-table .signature-column{width:65px}.compact-table .employee-cell small{font-size:4.5px}.compact-table .attendance-cell small{font-size:4px}
   .signature-blocks{gap:45px;margin-top:18px}.signature-blocks div{min-height:50px;font-size:6px}.signature-blocks small,.document-reference{font-size:5px}
 }
+.compact-legend i.tone-suspended{background:#a21caf}.compact-table tbody tr td.tone-suspended{background:#fae8ff;color:#86198f}
 </style>
