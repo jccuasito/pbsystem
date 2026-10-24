@@ -43,7 +43,7 @@ export async function attachPendingEmployeeStatuses(connection: any, batch: any,
     INNER JOIN site s ON s.SiteID = sr.SiteID
     INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-    INNER JOIN attendance_dtr_employee de ON de.BatchID = ? AND de.EmployeeID = at.EmployeeID AND de.DeploymentID = at.DeploymentID
+    INNER JOIN attendance_dtr_employee de ON de.BatchID = ? AND de.EmployeeID = at.EmployeeID
     SET at.BatchID = ?, at.AttendanceType = de.AttendanceType, at.UpdatedBy = ?
     WHERE at.BatchID IS NULL AND at.AttendanceDate BETWEEN ? AND ?
       AND ap.AgencyID = ? AND s.ClientID = ? AND ed.SiteID = ?`, [

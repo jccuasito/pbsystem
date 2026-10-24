@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import EmployeePositionChangeModal from '~/components/EmployeePositionChangeModal.vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import SearchableSelect from '~~/components/SearchableSelect.vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
@@ -31,6 +32,7 @@ const missingEmployeeFields = ref<string[]>([])
 const duplicateReviewOpen = ref(false)
 const duplicateReviewKind = ref<'exact' | 'similar'>('similar')
 const duplicateMatches = ref<any[]>([])
+const positionEmployeeId = ref<number | null>(null)
 const transferOpen = ref(false)
 const deleteOpen = ref(false)
 const editing = ref<any>(null)
@@ -213,19 +215,30 @@ function reset(item: any = null) {
   photoError.value = ''
 }
 
+let employeeLoad: Promise<void> | null = null
+let employeeLoadError = ''
 async function load(silent = false) {
-  if (!silent) loading.value = true
-  try {
-    const response: any = await $fetch('/api/employees', { query: { agencyId: filters.value.agencyId || undefined, positionId: filters.value.positionId || undefined } })
-    items.value = response.items || []
-    agencies.value = response.agencies || []
-    positions.value = response.positions || []
-    agencyPositions.value = response.agencyPositions || []
-  } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to load employees.'
-  } finally {
-    if (!silent) loading.value = false
-  }
+  if (employeeLoad) return employeeLoad
+  if (silent !== true) error.value = ''
+  loading.value = !items.value.length
+  employeeLoad = (async () => {
+    try {
+      const response: any = await $fetch('/api/employees', { timeout: 15000, retry: 0 })
+      items.value = response.items || []
+      agencies.value = response.agencies || []
+      positions.value = response.positions || []
+      agencyPositions.value = response.agencyPositions || []
+      if (error.value === employeeLoadError) error.value = ''
+      employeeLoadError = ''
+    } catch (cause: any) {
+      employeeLoadError = cause.data?.statusMessage || 'Unable to load employees. Please try again.'
+      error.value = employeeLoadError
+    } finally {
+      loading.value = false
+      employeeLoad = null
+    }
+  })()
+  return employeeLoad
 }
 
 async function save(confirmPossibleDuplicate = false) {
@@ -407,9 +420,10 @@ const agencyPositionOptions = computed(() => agencyPositions.value.map((item) =>
 
 const filteredItems = computed(() => {
   const query = search.value.trim().toLowerCase()
-  if (!query) return items.value
-  return items.value.filter((item) => [formatEmployeeId(item.EmployeeID), item.EmployeeNumber, formatEmployeeName(item), item.AgencyName, item.PositionName, item.SiteName]
-    .some((value) => String(value || '').toLowerCase().includes(query)))
+  return items.value.filter((item) => (!filters.value.agencyId || String(item.AgencyID) === String(filters.value.agencyId))
+    && (!filters.value.positionId || String(item.PositionID) === String(filters.value.positionId))
+    && (!query || [formatEmployeeId(item.EmployeeID), item.EmployeeNumber, formatEmployeeName(item), item.AgencyName, item.PositionName, item.SiteName]
+      .some((value) => String(value || '').toLowerCase().includes(query))))
 })
 
 const visibleItems = computed(() => filteredItems.value.slice(0, visibleEmployeeCount.value))
@@ -653,7 +667,6 @@ watch(loadMoreSentinel, (next, previous) => {
 
 watch(() => filters.value.agencyId, () => {
   filters.value.positionId = ''
-  void load()
 })
 
 watch(() => [
@@ -793,7 +806,7 @@ onBeforeUnmount(() => {
   compactViewQuery?.removeEventListener('change', handleCompactViewChange)
   employeeObserver?.disconnect()
 })
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
+useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !busy.value && !modalOpen.value && !transferOpen.value && !deleteOpen.value && !positionEmployeeId.value })
 </script>
 
 <template>
@@ -823,7 +836,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       </label>
       <label>
         <span>Position</span>
-        <select v-model="filters.positionId" @change="load">
+        <select v-model="filters.positionId">
           <option value="">All Positions</option>
           <option v-for="position in availablePositions" :key="position.PositionID" :value="position.PositionID">{{ position.PositionName }}</option>
         </select>
@@ -880,6 +893,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
               <button class="action-icon action-icon--edit" type="button" aria-label="Edit employee" title="Edit" @click="reset(item); modalOpen = true">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
               </button>
+              <button class="action-icon action-icon--position" type="button" aria-label="Change position and view history" title="Change position / history" @click="positionEmployeeId = Number(item.EmployeeID)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6M5 20h14"/></svg></button>
               <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee" title="Transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
               </button>
@@ -923,6 +937,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
             <button class="action-icon action-icon--edit" type="button" aria-label="Edit employee" title="Edit" @click="reset(item); modalOpen = true">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
             </button>
+            <button class="action-icon action-icon--position" type="button" aria-label="Change position and view history" title="Change position / history" @click="positionEmployeeId = Number(item.EmployeeID)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6M5 20h14"/></svg></button>
             <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee" title="Transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
             </button>
@@ -974,7 +989,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
             <div class="employee-form-section__heading"><div><span>BASIC INFORMATION</span><h3>Employee details</h3></div></div>
             <div class="employee-core-grid">
               <label class="employee-core-field"><span>Employee number</span><input v-model="form.EmployeeNumber" placeholder="Enter employee number" /></label>
-              <div class="employee-core-field employee-core-field--search"><SearchableSelect v-model="form.AgencyPositionID" label="Agency position" placeholder="Search agency or position" empty-text="No matching agency position." :options="agencyPositionOptions" required /><small>Required for rates and deployments.</small></div>
+              <div class="employee-core-field employee-core-field--search"><SearchableSelect v-model="form.AgencyPositionID" label="Agency position" placeholder="Search agency or position" empty-text="No matching agency position." :options="agencyPositionOptions" :disabled="!!editing" required /><small>{{ editing ? 'Use Change position from the employee list to record a promotion.' : 'Required for rates and deployments.' }}</small></div>
               <label class="employee-core-field"><span>Status</span><select v-model="form.Status"><option>Active</option><option>Inactive</option></select><small>Employee record availability.</small></label>
             </div>
             <div class="grid"><label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label><label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label></div>
@@ -1166,6 +1181,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
     </Teleport>
 
     <Teleport to="body">
+      <EmployeePositionChangeModal v-if="positionEmployeeId" :employee-id="positionEmployeeId" @close="positionEmployeeId = null" @changed="load" />
+
       <div v-if="transferOpen" class="backdrop" @click.self="!transferBusy && (transferOpen = false)">
         <form class="modal" @submit.prevent="saveTransfer">
           <button class="close" type="button" @click="transferOpen = false">x</button>
@@ -2384,7 +2401,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 .employee-table .col-site { width: 9%; }
 .employee-table .col-deployment { width: 10%; }
 .employee-table .col-status { width: 7%; }
-.employee-table .col-actions { width: 174px; }
+.employee-table .col-actions { width: 210px; }
 
 .employee-table th,
 .employee-table td {
@@ -2605,7 +2622,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
 .mobile-actions {
   display: grid;
-  grid-template-columns: repeat(4, 36px);
+  grid-template-columns: repeat(5, 36px);
   gap: 6px;
 }
 
@@ -2794,7 +2811,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
   }
 
   .mobile-actions {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .mobile-actions .action-icon {

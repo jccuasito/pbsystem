@@ -3,6 +3,7 @@ import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
 import { payrollDeductionHours } from '../../shared/utils/payrollPreview'
+import { dtrDeploymentAtDate } from './dtrDeploymentDates'
 
 type Body = Record<string, unknown>
 type Status = 'Draft' | 'For Approval' | 'Approved' | 'Ready for Payroll' | 'Applied' | 'Rejected' | 'Cancelled'
@@ -366,20 +367,21 @@ export async function createPayrollAdjustment(event: any) {
       [source.AgencyID, ...selectedShiftIds]) : [[]]
       const allowedShifts = new Set(shifts.map(item => Number(item.ShiftCodeID)))
       if (verifiedDays.some(item => item.shiftCodeId != null && !allowedShifts.has(item.shiftCodeId))) throw createError({ statusCode: 400, statusMessage: 'Choose an active shift code from the original DTR agency, or leave it blank and enter verified hours directly.' })
-      const [[rate]] = await connection.execute<any[]>(`SELECT pr.PayrollRateID, pr.RegularRate, pr.OTRate, pr.OTExtRate, pr.NightDiffRate
-        FROM attendance_dtr_employee roster
-        INNER JOIN employee_deployment ed ON ed.DeploymentID = roster.DeploymentID
-        INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
-        INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
-        WHERE roster.BatchID = ? AND roster.EmployeeID = ?`, [sourceBatchId, employeeId])
-      if (!rate) throw createError({ statusCode: 409, statusMessage: 'Original deployment payroll rates are unavailable. Review the employee deployment before creating an adjustment.' })
-      const manualVersions = await loadVersionMap(connection, 'payroll-rate', [Number(rate.PayrollRateID)])
-      for (const day of verifiedDays) for (const [component, rateField, label] of manualComponents) {
-        const quantity = day.hours[component]
-        if (!quantity) continue
-        const hourlyRate = Number(snapshotAtDate(rate, manualVersions.get(Number(rate.PayrollRateID)) || [], day.sourceDate)[rateField])
-        if (!Number.isFinite(hourlyRate) || hourlyRate < 0) throw createError({ statusCode: 409, statusMessage: `${label} rate is unavailable for this deployment.` })
-        lines.push({ attendanceId: null, sourceDate: day.sourceDate, component, label, entrySource: 'Manual Verification', direction: 'Earning', quantity, rate: hourlyRate, amount: Math.round(quantity * hourlyRate * 100) / 100 })
+      const [[roster]] = await connection.execute<any[]>('SELECT DeploymentID FROM attendance_dtr_employee WHERE BatchID=? AND EmployeeID=?', [sourceBatchId, employeeId])
+      for (const day of verifiedDays) {
+        const dated = roster && await dtrDeploymentAtDate(connection, roster, employeeId, day.sourceDate)
+        const [[rate]] = dated ? await connection.execute<any[]>(`SELECT pr.PayrollRateID, pr.RegularRate, pr.OTRate, pr.OTExtRate, pr.NightDiffRate
+          FROM employee_deployment ed INNER JOIN site_rate sr ON sr.SiteRateID=ed.SiteRateID
+          INNER JOIN payroll_rate pr ON pr.PayrollRateID=sr.PayrollRateID WHERE ed.DeploymentID=?`, [dated.DeploymentID]) : [[]]
+        if (!rate) throw createError({ statusCode: 409, statusMessage: 'Original deployment payroll rates are unavailable. Review the employee deployment before creating an adjustment.' })
+        const manualVersions = await loadVersionMap(connection, 'payroll-rate', [Number(rate.PayrollRateID)])
+        for (const [component, rateField, label] of manualComponents) {
+          const quantity = day.hours[component]
+          if (!quantity) continue
+          const hourlyRate = Number(snapshotAtDate(rate, manualVersions.get(Number(rate.PayrollRateID)) || [], day.sourceDate)[rateField])
+          if (!Number.isFinite(hourlyRate) || hourlyRate < 0) throw createError({ statusCode: 409, statusMessage: `${label} rate is unavailable for this deployment.` })
+          lines.push({ attendanceId: null, sourceDate: day.sourceDate, component, label, entrySource: 'Manual Verification', direction: 'Earning', quantity, rate: hourlyRate, amount: Math.round(quantity * hourlyRate * 100) / 100 })
+        }
       }
     }
     if (!lines.length) throw createError({ statusCode: 400, statusMessage: 'The selected dates have no payable attendance components.' })

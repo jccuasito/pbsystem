@@ -9,6 +9,7 @@ import { attachPendingEmployeeStatuses, employeeStatusAttendanceStatuses } from 
 import { attendanceStatuses } from '../../shared/utils/attendanceStatuses'
 import { effectiveAmountSql } from './rateVersions'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
+import { dtrDeploymentAtDate } from './dtrDeploymentDates'
 
 type DtrBody = Record<string, unknown>
 
@@ -339,7 +340,10 @@ export async function dtrSummary(event: any) {
       p.PositionName, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID
       FROM attendance_dtr_employee de
       INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
-      INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+      INNER JOIN employee_deployment position_ed ON position_ed.DeploymentID=de.DeploymentID
+      INNER JOIN site_rate position_sr ON position_sr.SiteRateID=position_ed.SiteRateID
+      INNER JOIN payroll_rate position_pr ON position_pr.PayrollRateID=position_sr.PayrollRateID
+      INNER JOIN agency_position ap ON ap.AgencyPositionID = position_pr.AgencyPositionID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
       WHERE de.BatchID = ?
       ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]),
@@ -556,7 +560,10 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
     WHERE ed.IsPermanentSite = 1 AND ed.DeploymentType = 'Regular' AND e.Status = 'Active' AND ap.AgencyID = ? AND sr.SiteID = ? AND ed.SiteID = ?
       AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
     ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [batch.AgencyID, batch.SiteID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+  const synchronized = new Set<number>()
   for (const employee of permanentEmployees) {
+    if (synchronized.has(Number(employee.EmployeeID))) continue
+    synchronized.add(Number(employee.EmployeeID))
     await connection.execute(`INSERT INTO attendance_dtr_employee (BatchID, EmployeeID, DeploymentID, AttendanceType, IsPermanentSite, CreatedBy)
       VALUES (?, ?, ?, ?, 1, ?)
       ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID)`, [batch.BatchID, employee.EmployeeID, employee.DeploymentID, employee.DeploymentType, createdBy])
@@ -565,6 +572,14 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
 }
 
 async function matchingDtrRate(connection: any, employeeId: number, batch: any) {
+  const [[historical]] = await connection.execute<any[]>(`SELECT ed.SiteRateID FROM employee_deployment ed
+    INNER JOIN site_rate sr ON sr.SiteRateID=ed.SiteRateID
+    INNER JOIN payroll_rate pr ON pr.PayrollRateID=sr.PayrollRateID
+    INNER JOIN agency_position ap ON ap.AgencyPositionID=pr.AgencyPositionID
+    WHERE ed.EmployeeID=? AND ed.SiteID=? AND ap.AgencyID=? AND ed.IsPermanentSite=1
+      AND ed.StartDate<=? AND (ed.EndDate IS NULL OR ed.EndDate>=?)
+    ORDER BY ed.StartDate DESC, ed.DeploymentID DESC LIMIT 1`, [employeeId, batch.SiteID, batch.AgencyID, batch.PeriodEnd, batch.PeriodStart])
+  if (historical) return historical
   const [[rate]] = await connection.execute<any[]>(`SELECT sr.SiteRateID
     FROM employee e
     INNER JOIN payroll_rate employeeRate ON employeeRate.AgencyPositionID = e.AgencyPositionID
@@ -804,15 +819,18 @@ export async function listDtrRecords(event: any) {
     }
     const holidays = await activeHolidaysByDate(connection, cutoffDates(batch.PeriodStart, batch.PeriodEnd), Number(batch.SiteID))
     const [[records], [shifts], [attendanceRows], [dutyRows], [workPositions]] = await Promise.all([connection.execute<any[]>(`SELECT de.EmployeeID, e.EmployeeNumber,
-      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, ed.StartDate AS DeploymentStartDate, ed.EndDate AS DeploymentEndDate, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
+      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName, p.PositionName, ed.DeploymentID, CASE WHEN ed.IsPermanentSite=1 THEN (SELECT MIN(span_ed.StartDate) FROM employee_deployment span_ed WHERE span_ed.EmployeeID=e.EmployeeID AND span_ed.SiteID=ed.SiteID AND span_ed.IsPermanentSite=1 AND span_ed.StartDate<=DATE(?) AND (span_ed.EndDate IS NULL OR span_ed.EndDate>=DATE(?))) ELSE ed.StartDate END AS DeploymentStartDate,
+      CASE WHEN ed.IsPermanentSite=1 THEN (SELECT CASE WHEN SUM(span_ed.EndDate IS NULL)>0 THEN NULL ELSE MAX(span_ed.EndDate) END FROM employee_deployment span_ed WHERE span_ed.EmployeeID=e.EmployeeID AND span_ed.SiteID=ed.SiteID AND span_ed.IsPermanentSite=1 AND span_ed.StartDate<=DATE(?) AND (span_ed.EndDate IS NULL OR span_ed.EndDate>=DATE(?))) ELSE ed.EndDate END AS DeploymentEndDate, de.IsPermanentSite, de.AttendanceType AS DeploymentType, de.DefaultShiftCodeID,
       COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.WorkdayCount ELSE 0 END), 0) AS Days, COALESCE(SUM(CASE WHEN ${workedAttendanceCondition('at.')} THEN at.IsWDO ELSE 0 END), 0) AS WDODays, ${hourColumns.map(column => `COALESCE(SUM(at.${column}), 0) AS ${column}`).join(', ')}
       FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
-      INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+      INNER JOIN site_rate position_sr ON position_sr.SiteRateID=(SELECT assignment.SiteRateID FROM employee_deployment assignment WHERE assignment.DeploymentID=de.DeploymentID)
+      INNER JOIN payroll_rate position_pr ON position_pr.PayrollRateID=position_sr.PayrollRateID
+      INNER JOIN agency_position ap ON ap.AgencyPositionID = position_pr.AgencyPositionID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
       LEFT JOIN attendance at ON at.BatchID = de.BatchID AND at.EmployeeID = de.EmployeeID
       WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, ed.StartDate, ed.EndDate, de.IsPermanentSite, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
-      ORDER BY e.LastName, e.FirstName, e.MiddleName`, [id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
+      ORDER BY e.LastName, e.FirstName, e.MiddleName`, [batch.PeriodEnd, batch.PeriodStart, batch.PeriodEnd, batch.PeriodStart, id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
         at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, at.WorkAgencyPositionID, at.WorkSiteRateID, at.WorkPositionName, at.WorkPayrollRegularRate, at.WorkBillingRegularRate, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
         COALESCE(sc.RegularHours, (SELECT MAX(status_shift.RegularHours) FROM attendance_duty status_duty INNER JOIN shift_code status_shift ON status_shift.ShiftCodeID = status_duty.ShiftCodeID WHERE status_duty.AttendanceID = at.AttendanceID)) AS ShiftRegularHours,
@@ -850,6 +868,15 @@ export async function listDtrRecords(event: any) {
           WHERE ap.AgencyID = ? AND sr.SiteID = ?
             AND sr.Status = 'Active' AND pr.Status = 'Active' AND br.Status = 'Active' AND p.Status = 'Active'
           ORDER BY p.PositionName, pr.EffectiveDate DESC, sr.SiteRateID DESC`, [databaseDate(batch.PeriodEnd), databaseDate(batch.PeriodEnd), batch.AgencyID, batch.SiteID])])
+    const [deploymentRanges] = await connection.execute<any[]>(`SELECT ed.EmployeeID,
+      DATE_FORMAT(ed.StartDate, '%Y-%m-%d') AS StartDate, DATE_FORMAT(ed.EndDate, '%Y-%m-%d') AS EndDate
+      FROM employee_deployment ed WHERE ed.SiteID=? AND ed.IsPermanentSite=1
+        AND ed.StartDate<=? AND (ed.EndDate IS NULL OR ed.EndDate>=?)
+        AND EXISTS (SELECT 1 FROM attendance_dtr_employee de WHERE de.BatchID=? AND de.EmployeeID=ed.EmployeeID AND de.IsPermanentSite=1)
+      ORDER BY ed.EmployeeID, ed.StartDate`, [batch.SiteID, databaseDate(batch.PeriodEnd), databaseDate(batch.PeriodStart), id])
+    for (const record of records) if (Number(record.IsPermanentSite)) {
+      record.DeploymentRanges = deploymentRanges.filter(range => Number(range.EmployeeID) === Number(record.EmployeeID))
+    }
     const [relieverElsewhereRows] = await connection.execute<any[]>(`SELECT at.EmployeeID, at.AttendanceDate, s.SiteName, sc.ShiftCode, sc.ShiftType,
       DATE_FORMAT(at.TimeIn, '%Y-%m-%d %H:%i:%s') AS TimeIn,
       DATE_FORMAT(at.TimeOut, '%Y-%m-%d %H:%i:%s') AS TimeOut
@@ -1167,9 +1194,11 @@ async function syncBatchHolidays(connection: Pick<PoolConnection, 'execute'>, ba
     if (holiday.HolidayType !== 'Legal' || byDay.has(Number(enrollment.EmployeeID) + ':' + date) || !eligible(Number(enrollment.EmployeeID), date)) continue
     const [[elsewhere]] = await connection.execute<any[]>('SELECT AttendanceID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [enrollment.EmployeeID, date])
     if (elsewhere) continue
+    const datedEnrollment = await dtrDeploymentAtDate(connection, enrollment, Number(enrollment.EmployeeID), date)
+    if (!datedEnrollment) continue
     const [inserted] = await connection.execute<any>(`INSERT INTO attendance
       (EmployeeID, DeploymentID, BatchID, AttendanceDate, AttendanceStatus, AttendanceType, WorkdayCount, TimeIn, TimeOut, LegalHolidayHours, HolidayID, IsManualEdit, CreatedBy)
-      VALUES (?, ?, ?, ?, 'Absent', ?, 1, NULL, NULL, 8, ?, 0, ?)`, [enrollment.EmployeeID, enrollment.DeploymentID, batch.BatchID, date, enrollment.AttendanceType, holiday.HolidayID, updatedBy])
+      VALUES (?, ?, ?, ?, 'Absent', ?, 1, NULL, NULL, 8, ?, 0, ?)`, [enrollment.EmployeeID, datedEnrollment.DeploymentID, batch.BatchID, date, enrollment.AttendanceType, holiday.HolidayID, updatedBy])
     attendanceRows.push({ AttendanceID: inserted.insertId, EmployeeID: enrollment.EmployeeID, AttendanceDate: date, AttendanceStatus: 'Absent', WorkdayCount: 1, LegalHolidayHours: 8, HolidayID: holiday.HolidayID })
     changed++
   }
@@ -1236,6 +1265,8 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
     let changed = 0, preservedEmployeeStatusDays = 0
     const skippedElsewhereDates: string[] = []
     for (const attendanceDate of cutoffDates(periodStart, periodEnd)) {
+      const datedEnrollment = await dtrDeploymentAtDate(connection, enrollment, employeeId, attendanceDate)
+      if (!datedEnrollment) continue
       const shiftTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
       const shiftTimeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0, 5) <= String(shift.TimeIn).slice(0, 5))
       const baseHourValues = applyAutoBreak(hourColumns.map(column => column === 'RegularHours' ? Number(shift.RegularHours || 0) : column === 'OTHours' ? Number(shift.RegularOTCap || 0) : column === 'NightDiffHours' ? shiftNightDifferentialHours(shiftTimeIn, shiftTimeOut, shift, policy) : 0), policy)
@@ -1256,9 +1287,9 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
         const updateColumns = hourColumns.map(column => column + ' = ?').join(', ')
         // A cutoff apply is an intentional reset: replace every per-day status, manual
         // time/hours, holiday marker, and remark with the selected shift's clean values.
-        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = \'Present\', AttendanceType = ?, HolidayID = ?, Remarks = NULL, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [enrollment.DeploymentID, id, shiftCodeId, workdayCount, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, holiday.holidayId, session.sub, current.AttendanceID])
+        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = \'Present\', AttendanceType = ?, HolidayID = ?, Remarks = NULL, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [datedEnrollment.DeploymentID, id, shiftCodeId, workdayCount, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, holiday.holidayId, session.sub, current.AttendanceID])
       } else {
-        await connection.execute<any>('INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ' + columns + ', HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ' + placeholders + ', ?, \'Present\', ?, 1, ?)', [employeeId, enrollment.DeploymentID, shiftCodeId, workdayCount, id, attendanceDate, shiftTimeIn, shiftTimeOut, ...hourValues, holiday.holidayId, enrollment.AttendanceType, session.sub])
+        await connection.execute<any>('INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ' + columns + ', HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ' + placeholders + ', ?, \'Present\', ?, 1, ?)', [employeeId, datedEnrollment.DeploymentID, shiftCodeId, workdayCount, id, attendanceDate, shiftTimeIn, shiftTimeOut, ...hourValues, holiday.holidayId, enrollment.AttendanceType, session.sub])
       }
       changed++
     }
@@ -1410,6 +1441,8 @@ async function importDtrAttendanceRows(event: any, body: { Rows?: unknown }, ses
       const holiday = holidayHours(baseValues, attendanceStatus, timeIn, timeOut, holidays.get(attendanceDate))
       const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
       await lockAttendanceEmployee(connection, Number(enrollment.EmployeeID))
+      enrollment = await dtrDeploymentAtDate(connection, enrollment, Number(enrollment.EmployeeID), attendanceDate)
+      if (!enrollment) { skip('No fixed deployment covers this date at this site.'); continue }
       const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE', [enrollment.EmployeeID, attendanceDate, id])
       const conflict = attendanceConflict(await otherDtrAttendance(connection, Number(enrollment.EmployeeID), id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
       if (conflict) { skip(conflict); continue }
@@ -1534,6 +1567,8 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
       if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
       await lockAttendanceEmployee(connection, Number(enrollment.EmployeeID))
+      enrollment = await dtrDeploymentAtDate(connection, enrollment, Number(enrollment.EmployeeID), attendanceDate)
+      if (!enrollment) { skip('No fixed deployment covers this date at this site.'); continue }
       const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE', [enrollment.EmployeeID, attendanceDate, id])
       if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) {
         preservedEmployeeStatusDates.add(`${enrollment.EmployeeID}:${attendanceDate}`)
@@ -1660,9 +1695,11 @@ export async function createDtrAttendance(event: any) {
     const policy = await sitePolicyForBatch(connection, batch)
     if (attendanceDate < batch.PeriodStart || attendanceDate > batch.PeriodEnd) throw createError({ statusCode: 400, statusMessage: 'Attendance date must be inside the DTR cutoff.' })
     if (workPositionApplyThrough && (workPositionApplyThrough < attendanceDate || workPositionApplyThrough > batch.PeriodEnd)) throw createError({ statusCode: 400, statusMessage: 'Apply-through date must be within this DTR cutoff and not before the attendance date.' })
-    const [[deployment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
+    let [[deployment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     if (!deployment) throw createError({ statusCode: 400, statusMessage: 'Add the employee to this DTR before entering attendance.' })
     await lockAttendanceEmployee(connection, employeeId)
+    deployment = await dtrDeploymentAtDate(connection, deployment, employeeId, attendanceDate)
+    if (!deployment) throw createError({ statusCode: 409, statusMessage: 'No fixed deployment covers this date at this site.' })
     const attendanceType = deployment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular'
     let shift: any = null
     if (shiftCodeId) {

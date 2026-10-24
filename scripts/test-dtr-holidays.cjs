@@ -7,7 +7,7 @@ const { parse, compileScript, compileTemplate, compileStyle } = require('@vue/co
 const vue = require('vue')
 
 const moduleState = { exports: {} }
-vm.runInNewContext(transformSync(fs.readFileSync('server/utils/dtrCrud.ts', 'utf8') + '\nmodule.exports.holidays={holidayHours,hourColumns,syncBatchHolidays,previousHolidayDate,workedAttendanceCondition};', { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: name => name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts') : {} })
+vm.runInNewContext(transformSync(fs.readFileSync('server/utils/dtrCrud.ts', 'utf8') + '\nmodule.exports.holidays={holidayHours,hourColumns,syncBatchHolidays,previousHolidayDate,workedAttendanceCondition};', { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: name => name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts') : name.includes('dtrDeploymentDates') ? { dtrDeploymentAtDate: async (_, enrollment) => enrollment } : {} })
 const { holidayHours, hourColumns, syncBatchHolidays, previousHolidayDate, workedAttendanceCondition } = moduleState.exports.holidays
 const legal = { HolidayID: 1, HolidayName: 'Test LH', HolidayType: 'Legal' }
 const special = { ...legal, HolidayID: 2, HolidayType: 'Special' }

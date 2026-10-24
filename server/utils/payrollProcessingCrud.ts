@@ -48,7 +48,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     LEFT JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
     LEFT JOIN site_rate assignmentSiteRate ON assignmentSiteRate.SiteRateID = ed.SiteRateID
     LEFT JOIN payroll_rate assignmentRate ON assignmentRate.PayrollRateID = assignmentSiteRate.PayrollRateID
-    LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+    LEFT JOIN agency_position ap ON ap.AgencyPositionID = COALESCE(assignmentRate.AgencyPositionID, e.AgencyPositionID)
     LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
     WHERE de.BatchID IN (${ids.map(() => '?').join(', ')})
     ORDER BY e.LastName, e.FirstName, e.EmployeeID`, ids)
@@ -59,7 +59,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       ${[...new Set([...payrollHourComponents, ...payrollTimeDeductions].map(([, field]) => field)), 'Allowance'].map(field => `pr.${field}`).join(', ')}
     FROM attendance at
     INNER JOIN attendance_dtr_employee de ON de.BatchID = at.BatchID AND de.EmployeeID = at.EmployeeID
-    LEFT JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+    LEFT JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
     LEFT JOIN site_rate sr ON sr.SiteRateID = COALESCE(at.WorkSiteRateID, ed.SiteRateID)
     LEFT JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     WHERE at.BatchID IN (${ids.map(() => '?').join(', ')})
@@ -69,9 +69,14 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       pr.PayrollRateID, DATE_FORMAT(pr.EffectiveDate, '%Y-%m-%d') AS BaseEffectiveDate, pr.RegularRate, pr.Allowance
     FROM attendance_dtr_btr b
     LEFT JOIN attendance_dtr_employee de ON de.BatchID = b.BatchID AND de.EmployeeID = b.RelieverEmployeeID
-    LEFT JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+    LEFT JOIN employee_deployment ed ON ed.DeploymentID = COALESCE((SELECT dated.DeploymentID
+      FROM employee_deployment dated INNER JOIN attendance_dtr dated_batch ON dated_batch.BatchID=b.BatchID
+      WHERE de.IsPermanentSite=1 AND dated.EmployeeID=b.RelieverEmployeeID AND dated.SiteID=dated_batch.SiteID
+        AND dated.IsPermanentSite=1 AND dated.StartDate<=b.AttendanceDate AND (dated.EndDate IS NULL OR dated.EndDate>=b.AttendanceDate)
+      ORDER BY dated.StartDate DESC, dated.DeploymentID DESC LIMIT 1), de.DeploymentID)
     LEFT JOIN site_rate sr ON sr.SiteRateID = COALESCE(
-      (SELECT at.WorkSiteRateID FROM attendance at
+      (SELECT COALESCE(at.WorkSiteRateID, day_deployment.SiteRateID) FROM attendance at
+        LEFT JOIN employee_deployment day_deployment ON day_deployment.DeploymentID=at.DeploymentID
         WHERE at.BatchID = b.BatchID AND at.EmployeeID = b.RelieverEmployeeID AND at.AttendanceDate = b.AttendanceDate
         ORDER BY at.AttendanceID DESC LIMIT 1), ed.SiteRateID)
     LEFT JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID

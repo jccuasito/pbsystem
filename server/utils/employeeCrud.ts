@@ -847,9 +847,10 @@ export async function updateEmployee(event: any) {
   let existing: any = null
   try {
     await connection.beginTransaction()
-    const [[lockedEmployee]] = await connection.execute<any[]>('SELECT PhotoPath FROM employee WHERE EmployeeID = ? LIMIT 1 FOR UPDATE', [employeeId])
+    const [[lockedEmployee]] = await connection.execute<any[]>('SELECT PhotoPath, AgencyPositionID FROM employee WHERE EmployeeID = ? LIMIT 1 FOR UPDATE', [employeeId])
     existing = lockedEmployee
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+    if (Number(body.AgencyPositionID) !== Number(existing.AgencyPositionID)) throw createError({ statusCode: 409, statusMessage: 'Use Change position to record an effective date and preserve position history. Refresh this employee before saving.' })
     const [result] = await connection.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body, beneficiaries), session.sub, employeeId] as any[])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     await savePayrollDisbursement(connection, employeeId, body)

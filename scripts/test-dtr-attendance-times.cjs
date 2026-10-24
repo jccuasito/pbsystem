@@ -55,6 +55,18 @@ function backend() {
 }
 const calculate = backend()
 
+test('position changes keep both dated assignment windows open without enabling assignment gaps', () => {
+  const harness = workspace()
+  const row = { ...employee, DeploymentStartDate: '2026-09-01', DeploymentEndDate: null,
+    DeploymentRanges: [{ StartDate: '2026-09-01', EndDate: '2026-09-05' }, { StartDate: '2026-09-08', EndDate: null }] }
+  try {
+    harness.state.openDay(row, '2026-09-05'); assert.equal(harness.state.dayOpen.value, true)
+    harness.state.dayOpen.value = false
+    harness.state.openDay(row, '2026-09-06'); assert.equal(harness.state.dayOpen.value, false)
+    harness.state.openDay(row, '2026-09-08'); assert.equal(harness.state.dayOpen.value, true)
+  } finally { harness.close() }
+})
+
 test('automatic DTR break reaches payroll exactly once for day and overnight duties', () => {
   for (const [shift, timeIn, timeOut, expectedPaidHours] of [
     [philtob, '2026-09-01 09:00', '2026-09-01 18:00', 8],
