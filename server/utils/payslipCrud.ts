@@ -1,4 +1,4 @@
-import { getQuery, createError } from 'h3'
+import { getQuery, createError, setHeader } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 
@@ -100,16 +100,9 @@ export function payslipGroups(payrolls: any[], details: any[], deductions: any[]
     || a.assignmentType.localeCompare(b.assignmentType) || (a.siteName || '').localeCompare(b.siteName || ''))
 }
 
-export async function listPayslips(event: any) {
-  const session = requireSession(event)
-  void session.sub
-  const query = getQuery(event)
-  const employeeId = Number(query.employeeId || 0)
-  if (query.employeeId !== undefined && (!Number.isInteger(employeeId) || employeeId < 1)) {
-    throw createError({ statusCode: 400, statusMessage: 'Select a valid employee.' })
-  }
-  if (employeeId) {
-    const [[employee]] = await pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber,
+export async function readEmployeePayslips(employeeId:number, db:any=pool) {
+
+    const [[employee]] = await db.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber,
         CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
         e.Status, a.AgencyName, p.PositionName
       FROM employee e LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
@@ -117,7 +110,7 @@ export async function listPayslips(event: any) {
       LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
       WHERE e.EmployeeID = ? LIMIT 1`, [employeeId])
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
-    const [payrolls] = await pool.execute<any[]>(`SELECT py.PayrollID, py.Status,
+    const [payrolls] = await db.execute<any[]>(`SELECT py.PayrollID, py.Status,
         DATE_FORMAT(py.StartDate, '%Y-%m-%d') AS PeriodStart,
         DATE_FORMAT(py.EndDate, '%Y-%m-%d') AS PeriodEnd,
         py.GrossPay, py.TotalDeduction, py.NetPay, pp.BatchID,
@@ -138,20 +131,41 @@ export async function listPayslips(event: any) {
     const ids = payrolls.map(row => Number(row.PayrollID))
     const placeholders = ids.map(() => '?').join(', ')
     const [[details], [deductions], [transactions]] = await Promise.all([
-      pool.execute<any[]>(`SELECT PayrollID, Description, Quantity, Amount FROM payroll_detail
+      db.execute<any[]>(`SELECT PayrollID, Description, Quantity, Amount FROM payroll_detail
         WHERE PayrollID IN (${placeholders}) ORDER BY PayrollID, PayrollDetailID`, ids),
-      pool.execute<any[]>(`SELECT pd.PayrollID, pd.ReferenceType, pd.Amount,
+      db.execute<any[]>(`SELECT pd.PayrollID, pd.ReferenceType, pd.Amount,
           dt.DeductionName, c.ClassificationName
         FROM payroll_deduction pd
         LEFT JOIN deduction_type dt ON dt.DeductionTypeID = pd.DeductionTypeID
         LEFT JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
         WHERE pd.PayrollID IN (${placeholders}) ORDER BY pd.PayrollID, pd.PayrollDeductionID`, ids),
-      pool.execute<any[]>(`SELECT PayrollID, EntryType, ItemName, ClassificationName, Amount
+      db.execute<any[]>(`SELECT PayrollID, EntryType, ItemName, ClassificationName, Amount
         FROM employee_account_transaction WHERE PayrollID IN (${placeholders}) AND Status = 'Posted'
         ORDER BY PayrollID, TransactionRecordID`, ids),
     ])
-    return { employee, cutoffs: payslipGroups(payrolls, details, deductions, transactions) }
+    const cutoffs = payslipGroups(payrolls, details, deductions, transactions)
+    const [publications] = await db.execute<any[]>('SELECT PublicationID,GroupKey,Status,SnapshotJson,PostedAt FROM payslip_publication WHERE EmployeeID=?',[employeeId])
+    for (const cutoff of cutoffs) {
+      const publication=publications.find(row=>row.GroupKey===cutoff.key)
+      let saved:any=null
+      try{saved=publication?JSON.parse(publication.SnapshotJson):null}catch{}
+      const sameSources=Array.isArray(saved?.cutoff?.payrollIds)&&JSON.stringify([...saved.cutoff.payrollIds].sort((a:number,b:number)=>a-b))===JSON.stringify([...cutoff.payrollIds].sort((a:number,b:number)=>a-b))
+      Object.assign(cutoff,{publicationStatus:publication?.Status==='Posted'&&sameSources?'Posted':'Not Posted',publicationId:publication?.PublicationID||null,postedAt:publication?.PostedAt||null})
+    }
+    return { employee, cutoffs }
+
+}
+
+export async function listPayslips(event: any) {
+  const session = requireSession(event)
+  void session.sub
+  setHeader(event,'Cache-Control','private, no-store')
+  const query = getQuery(event)
+  const employeeId = Number(query.employeeId || 0)
+  if (query.employeeId !== undefined && (!Number.isInteger(employeeId) || employeeId < 1)) {
+    throw createError({ statusCode: 400, statusMessage: 'Select a valid employee.' })
   }
+  if (employeeId) return readEmployeePayslips(employeeId)
 
   const search = String(query.search || '').trim().slice(0, 100)
   const agencyId = Number(query.agencyId || 0)
@@ -160,26 +174,44 @@ export async function listPayslips(event: any) {
   }
   const page = Math.max(1, Math.min(100000, Math.floor(Number(query.page) || 1)))
   const pageSize = 25
+  const joins = `LEFT JOIN (SELECT EmployeeID,MAX(EndDate) AS LastCutoffEnd,COUNT(*) AS PayrollCount,
+      COUNT(DISTINCT StartDate,EndDate) AS CutoffCount FROM payroll WHERE Status IN ('Approved','Released') GROUP BY EmployeeID) summary ON summary.EmployeeID=e.EmployeeID
+    LEFT JOIN (SELECT pub.EmployeeID,COUNT(DISTINCT src.PayrollID) AS PostedPayrollCount FROM payslip_publication pub
+      JOIN payslip_publication_source src ON src.PublicationID=pub.PublicationID JOIN payroll py ON py.PayrollID=src.PayrollID
+      WHERE pub.Status='Posted' AND py.Status IN ('Approved','Released')
+        AND NOT EXISTS(SELECT 1 FROM payslip_publication_source invalidSource JOIN payroll invalidPayroll ON invalidPayroll.PayrollID=invalidSource.PayrollID
+          WHERE invalidSource.PublicationID=pub.PublicationID AND invalidPayroll.Status NOT IN ('Approved','Released'))
+      GROUP BY pub.EmployeeID) published ON published.EmployeeID=e.EmployeeID`
+  const postingFilters:Record<string,string>={
+    '':'1=1',posted:'COALESCE(summary.PayrollCount,0)>0 AND COALESCE(published.PostedPayrollCount,0)=summary.PayrollCount',
+    'not-posted':'COALESCE(summary.PayrollCount,0)>COALESCE(published.PostedPayrollCount,0)',
+    partial:'COALESCE(published.PostedPayrollCount,0)>0 AND published.PostedPayrollCount<summary.PayrollCount',
+    'no-payslips':'COALESCE(summary.PayrollCount,0)=0'
+  }
+  const filter=String(query.postingStatus||'')
+  if(!Object.hasOwn(postingFilters,filter))throw createError({statusCode:400,statusMessage:'Select a valid payslip posting status.'})
   const where = `WHERE (? = 0 OR ap.AgencyID = ?) AND (? = '' OR
-    CONCAT_WS(' ', e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName) LIKE ?)`
+    CONCAT_WS(' ', e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName) LIKE ?) AND (${postingFilters[filter]})`
   const params = [agencyId, agencyId, search, `%${search}%`]
   const [[count]] = await pool.execute<any[]>(`SELECT COUNT(*) AS Total FROM employee e
-    LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID ${where}`, params)
+    LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID ${joins} ${where}`, params)
   const [items] = await pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber,
       CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
       e.Status, a.AgencyName, p.PositionName,
       DATE_FORMAT(summary.LastCutoffEnd, '%Y-%m-%d') AS LastCutoffEnd,
-      COALESCE(summary.CutoffCount, 0) AS CutoffCount
+      COALESCE(summary.CutoffCount,0) AS CutoffCount,COALESCE(summary.PayrollCount,0) AS PayrollCount,
+      COALESCE(published.PostedPayrollCount,0) AS PostedPayrollCount,
+      CASE WHEN COALESCE(summary.PayrollCount,0)=0 THEN 'No payslips'
+        WHEN published.PostedPayrollCount=summary.PayrollCount THEN 'Posted'
+        WHEN COALESCE(published.PostedPayrollCount,0)>0 THEN 'Partially posted' ELSE 'Not Posted' END AS PublicationStatus
     FROM employee e LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
     LEFT JOIN agency a ON a.AgencyID = ap.AgencyID
     LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
-    LEFT JOIN (SELECT EmployeeID, MAX(EndDate) AS LastCutoffEnd,
-      COUNT(DISTINCT StartDate, EndDate) AS CutoffCount FROM payroll
-      WHERE Status IN ('Approved', 'Released') GROUP BY EmployeeID) summary ON summary.EmployeeID = e.EmployeeID
+    ${joins}
     ${where} ORDER BY summary.LastCutoffEnd DESC, e.LastName, e.FirstName, e.EmployeeID
     LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize])
   const [agencies] = await pool.execute<any[]>(`SELECT AgencyID, AgencyName FROM agency
     WHERE Status = 'Active' ORDER BY AgencyName`)
-  return { items, agencies, pagination: { page, pageSize, total: Number(count.Total),
+  return { items, agencies, canPost:session.userType!=='Viewer'&&event.context?.moduleCanEdit!==false, pagination: { page, pageSize, total: Number(count.Total),
     pages: Math.max(1, Math.ceil(Number(count.Total) / pageSize)) } }
 }

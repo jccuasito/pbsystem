@@ -163,6 +163,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrCompactPrintView.vue`
   - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
   - `app/components/EmployeeAddressFields.vue`
+  - `app/components/EmployeePayslipSheet.vue`
   - `app/components/EmployeePositionChangeModal.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
@@ -312,6 +313,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/payroll/history` → `server/api/payroll/history.get.ts`
   - `GET /api/payroll/history/[param]` → `server/api/payroll/history/[id].get.ts`
   - `GET /api/payroll/payslips` → `server/api/payroll/payslips.get.ts`
+  - `POST /api/payroll/payslips` → `server/api/payroll/payslips.post.ts`
+  - `GET /api/payroll/payslips/account` → `server/api/payroll/payslips/account.get.ts`
+  - `POST /api/payroll/payslips/account` → `server/api/payroll/payslips/account.post.ts`
   - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
   - `POST /api/payroll/processing/[param]/deductions` → `server/api/payroll/processing/[id]/deductions.post.ts`
@@ -351,6 +355,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeAccountTransactionCrud.ts`
   - `server/utils/employeeCrud.ts`
   - `server/utils/employeeLoanDeductionCrud.ts`
+  - `server/utils/employeePortalAdmin.ts`
   - `server/utils/employeePositionCrud.ts`
   - `server/utils/employeeStatusCrud.ts`
   - `server/utils/governmentIdCrud.ts`
@@ -364,6 +369,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/payrollProgress.ts`
   - `server/utils/payslipCrud.ts`
+  - `server/utils/payslipPublication.ts`
   - `server/utils/philippineAddress.ts`
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/rateCrud.ts`
@@ -382,7 +388,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
-- Links to: `/loginscreen`, `/userprofile/viewprofile`
+- Links to: `/employee-portal`, `/loginscreen`, `/userprofile/viewprofile`
 
 ### `/deductions-loans/catalog`
 
@@ -473,6 +479,33 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Static assets:
   - None detected.
 - Links to: none detected.
+
+### `/employee-portal`
+
+- Page: `app/pages/employee-portal/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - `app/components/EmployeePayslipSheet.vue`
+  - `components/SearchableSelect.vue`
+  - `shared/utils/employeePortal.ts`
+  - `shared/utils/governmentIds.ts`
+- API calls and handlers:
+  - `POST /api/employee-portal/auth/[param]` → `server/api/employee-portal/auth/[action].post.ts`
+  - `POST /api/employee-portal/auth/logout` → `server/api/employee-portal/auth/[action].post.ts`
+  - `POST /api/employee-portal/auth/profile` → `server/api/employee-portal/auth/[action].post.ts`
+  - `GET /api/employee-portal/me` → `server/api/employee-portal/me.get.ts`
+  - `GET /api/employee-portal/payslips` → `server/api/employee-portal/payslips.get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/employeePortalAuth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/payslipCrud.ts`
+  - `shared/utils/employeePortal.ts`
+  - `shared/utils/governmentIds.ts`
+- Static assets:
+  - None detected.
+- Links to: `/employee-portal`
 
 ### `/employees`
 
@@ -822,17 +855,22 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/payroll/payslip/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `app/components/EmployeePayslipSheet.vue`
 - API calls and handlers:
   - `GET /api/payroll/payslips` → `server/api/payroll/payslips.get.ts`
+  - `POST /api/payroll/payslips` → `server/api/payroll/payslips.post.ts`
+  - `GET /api/payroll/payslips/account` → `server/api/payroll/payslips/account.get.ts`
+  - `POST /api/payroll/payslips/account` → `server/api/payroll/payslips/account.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/employeePortalAdmin.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payslipCrud.ts`
+  - `server/utils/payslipPublication.ts`
 - Static assets:
   - None detected.
-- Links to: none detected.
+- Links to: `/employee-portal`
 
 ### `/payroll/processing`
 
