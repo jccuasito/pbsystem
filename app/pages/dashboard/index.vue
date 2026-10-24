@@ -27,6 +27,7 @@ import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 import PayrollProcessingPage from '../payroll/processing/index.vue'
 import PayslipPage from '../payroll/payslip/index.vue'
 import PayrollHistoryPage from '../payroll/history/index.vue'
+import PayrollSummaryPage from '../payroll/summary/index.vue'
 import SettingsPage from '../settings/index.vue'
 import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
 import PayrollRunProgress from '../../components/PayrollRunProgress.vue'
@@ -47,13 +48,13 @@ let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-site-accounts' | 'organization-region'
-  | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history'
+  | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history' | 'payroll-summary'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
   | 'employee-loans-deductions' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-site-accounts', 'organization-region',
-  'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history',
+  'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history', 'payroll-summary',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
   'employee-loans-deductions', 'deductions-loans-contributions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
 ])
@@ -192,6 +193,7 @@ const navGroups = [
       { label: 'Payroll Processing', to: '/payroll/processing', icon: 'peso', view: 'payroll-processing' },
       { label: 'Adjustments', to: '/payroll/adjustments', icon: 'file-text', view: 'payroll-adjustments' },
       { label: 'Payslip', to: '/payroll/payslip', icon: 'file-text', view: 'payslip' },
+      { label: 'Payroll Summary', to: '/payroll/summary', icon: 'chart-bar', view: 'payroll-summary' },
       { label: 'Payroll History', to: '/payroll/history', icon: 'chart-bar', view: 'payroll-history' }
     ]
   },
@@ -293,6 +295,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'payroll-processing': PayrollProcessingPage,
   'payslip': PayslipPage,
   'payroll-history': PayrollHistoryPage,
+  'payroll-summary': PayrollSummaryPage,
   'employee-loans-deductions': EmployeeLoanDeductionPage,
   'deductions-loans-contributions': AgencyContributionsPage,
   'deductions-loans-transactions': EmployeeAccountTransactionsPage,

@@ -19,14 +19,14 @@ test('summary validates session and cutoff; route uses Payroll access rather tha
  assert.equal(permissions.moduleForPath('/api/organization/site-account'),'organization')
 })
 test('site account UI and navigation compile, use an independent name, and keep counts numeric',()=>{
- for(const file of ['app/pages/organization/site-accounts/index.vue','app/pages/organization/site/index.vue','components/OrganizationCrud.vue','app/pages/dashboard/index.vue']){
+ for(const file of ['app/pages/organization/site-accounts/index.vue','app/pages/payroll/summary/index.vue','app/pages/organization/site/index.vue','components/OrganizationCrud.vue','app/pages/dashboard/index.vue']){
   const {descriptor,errors}=sfc.parse(fs.readFileSync(file,'utf8'),{filename:file});assert.deepEqual(errors,[])
   const script=sfc.compileScript(descriptor,{id:file});assert.deepEqual(sfc.compileTemplate({source:descriptor.template.content,filename:file,id:file,compilerOptions:{bindingMetadata:script.bindings}}).errors,[])
   for(const style of descriptor.styles)assert.deepEqual(sfc.compileStyle({source:style.content,filename:file,id:file,scoped:style.scoped}).errors,[])
  }
  const page=fs.readFileSync('app/pages/organization/site-accounts/index.vue','utf8')
- assert.ok(!page.match(/key:'AgencyID'/));assert.match(page,/current Site Account assignment/)
- const navigation=fs.readFileSync('app/pages/dashboard/index.vue','utf8');assert.match(navigation,/label: 'Site Accounts'/);assert.match(navigation,/'organization-site-accounts': SiteAccountsPage/)
+ assert.ok(!page.match(/key:'AgencyID'/));assert.ok(!page.includes('/api/payroll/'));assert.ok(!page.includes('account-tabs'));assert.match(fs.readFileSync('app/pages/payroll/summary/index.vue','utf8'),/current Site Account assignment/)
+ const navigation=fs.readFileSync('app/pages/dashboard/index.vue','utf8');assert.match(navigation,/label: 'Site Accounts'/);assert.match(navigation,/'organization-site-accounts': SiteAccountsPage/);assert.ok(navigation.includes("label: 'Payroll Summary', to: '/payroll/summary', icon: 'chart-bar', view: 'payroll-summary'"));assert.match(navigation,/'payroll-summary': PayrollSummaryPage/)
  const component=fs.readFileSync('components/OrganizationCrud.vue','utf8')
  const script=sfc.parse(component).descriptor.scriptSetup.content,module={exports:{}}
  vm.runInNewContext(transformSync(script+'\nmodule.exports={display,idKey};',{loader:'ts',format:'cjs'}).code,{module,defineProps:()=>({resource:'site-account',title:'Site Accounts',fields:[],columns:[]}),defineEmits:()=>()=>{},require:name=>name==='vue'?{...vue,onMounted(){}}:name.includes('useRealtimeRefresh')?{useRealtimeRefresh(){}}:{}})
@@ -34,7 +34,7 @@ test('site account UI and navigation compile, use an independent name, and keep 
 })
 test('summary ignores stale responses and hides money when Payroll access is denied',async()=>{
  const scope=vue.effectScope(),pending=[]
- const source=sfc.parse(fs.readFileSync('app/pages/organization/site-accounts/index.vue','utf8')).descriptor.scriptSetup.content
+ const source=sfc.parse(fs.readFileSync('app/pages/payroll/summary/index.vue','utf8')).descriptor.scriptSetup.content
  const module={exports:{}}
  scope.run(()=>vm.runInNewContext(transformSync(source+'\nmodule.exports={loadSummary,report,cutoff,restricted};',{loader:'ts',format:'cjs'}).code,{module,defineEmits:()=>()=>{},require:name=>name==='vue'?{...vue,onActivated(){}}:name.includes('useRealtimeRefresh')?{useRealtimeRefresh(){}}:{},$fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject}))}))
  try{

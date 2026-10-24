@@ -190,6 +190,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/payroll/history/index.vue`
   - `app/pages/payroll/payslip/index.vue`
   - `app/pages/payroll/processing/index.vue`
+  - `app/pages/payroll/summary/index.vue`
   - `app/pages/rates/billing/index.vue`
   - `app/pages/rates/payroll/index.vue`
   - `app/pages/rates/site/index.vue`
@@ -775,13 +776,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
   - `POST /api/organization/[param]` → `server/api/organization/[resource].post.ts`
   - `PUT /api/organization/[param]` → `server/api/organization/[resource].put.ts`
-  - `GET /api/payroll/site-accounts` → `server/api/payroll/site-accounts.get.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
-  - `server/utils/siteAccountSummary.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
@@ -863,6 +862,23 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/payroll/summary`
+
+- Page: `app/pages/payroll/summary/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - `app/composables/useRealtimeRefresh.ts`
+- API calls and handlers:
+  - `GET /api/payroll/site-accounts` → `server/api/payroll/site-accounts.get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/siteAccountSummary.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
