@@ -32,6 +32,9 @@ function backend({ enrolled = false, insertConflict = false, initialEnrollment =
       }
       if (sql.startsWith('SELECT EmployeeID FROM attendance_dtr_employee')) return [enrollments.has(args.join(':')) ? [{ EmployeeID: args[1] }] : []]
       if (sql.includes('SELECT sr.SiteRateID')) return [[{ SiteRateID: 1 }]]
+      if (sql.includes('SELECT e.EmployeeID, ap.AgencyID')) return [[{ EmployeeID: 2, AgencyID: 1 }]]
+      if (sql.includes('SELECT ed.DeploymentID, ed.SiteID, ed.StartDate')) return [[]]
+      if (sql.includes('SELECT ed.SiteRateID')) return [[]]
       if (sql.includes('FROM employee_deployment') && sql.includes('SiteRateID = ? AND SiteID = ? AND IsPermanentSite = 1')) return [[{ DeploymentID: 30 }]]
       if (sql.startsWith('SELECT DeploymentID FROM employee_deployment') && sql.includes('IsPermanentSite = 1')) return [[]]
       if (sql.startsWith('SELECT StartDate FROM employee_deployment')) return [[]]
@@ -42,6 +45,7 @@ function backend({ enrolled = false, insertConflict = false, initialEnrollment =
       if (sql.startsWith('UPDATE attendance_dtr_employee SET AttendanceType')) { enrollments.get(args.slice(1).join(':')).type = args[0]; return [{ affectedRows: 1 }] }
       if (sql.startsWith('UPDATE attendance SET AttendanceType')) return [{ affectedRows: 0 }]
       if (sql.startsWith('UPDATE employee_deployment')) return [{ affectedRows: 1 }]
+      if (sql.startsWith('DELETE FROM attendance_dtr_employee_exclusion')) return [{ affectedRows: 0 }]
       if (sql.includes('FROM employee_deployment') && sql.includes('WHERE ed.IsPermanentSite = 1')) return [[]]
       if (sql.startsWith('INSERT INTO attendance_dtr_employee')) {
         if (insertConflict || enrollments.has(args.slice(0, 2).join(':'))) throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' })

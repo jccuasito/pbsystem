@@ -26,38 +26,11 @@ async function employeeFor(connection: any, employeeId: number, lock = false) {
   if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
   return employee
 }
-async function assignmentFor(connection: any, employeeId: number, date: string) {
-  const [rows] = await connection.execute<any[]>(`SELECT ed.*, DATE_FORMAT(ed.StartDate, '%Y-%m-%d') AS StartDate,
-    DATE_FORMAT(ed.EndDate, '%Y-%m-%d') AS EndDate, pr.AgencyPositionID, ap.AgencyID, s.SiteName, c.ClientName
-    FROM employee_deployment ed INNER JOIN site_rate sr ON sr.SiteRateID=ed.SiteRateID
-    INNER JOIN payroll_rate pr ON pr.PayrollRateID=sr.PayrollRateID
-    INNER JOIN agency_position ap ON ap.AgencyPositionID=pr.AgencyPositionID
-    INNER JOIN site s ON s.SiteID=ed.SiteID INNER JOIN client c ON c.ClientID=s.ClientID
-    WHERE ed.EmployeeID=? AND ed.IsPermanentSite=1 AND ed.StartDate<=? AND (ed.EndDate IS NULL OR ed.EndDate>=?)
-    ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [employeeId, date, date])
-  if (rows.length > 1) throw createError({ statusCode: 409, statusMessage: 'Overlapping fixed deployments must be corrected before changing position.' })
-  return rows[0] || null
-}
-async function rateOptions(connection: any, agencyId: number, siteId: number, date: string) {
-  const [rows] = await connection.execute<any[]>(`SELECT sr.SiteRateID, pr.AgencyPositionID, p.PositionName,
-    pr.RegularRate, br.RegularRate AS BillingRegularRate
-    FROM site_rate sr INNER JOIN site s ON s.SiteID=sr.SiteID
-    INNER JOIN payroll_rate pr ON pr.PayrollRateID=sr.PayrollRateID
-    INNER JOIN billing_rate br ON br.BillingRateID=sr.BillingRateID AND br.AgencyPositionID=pr.AgencyPositionID
-    INNER JOIN agency_position ap ON ap.AgencyPositionID=pr.AgencyPositionID
-    INNER JOIN \`position\` p ON p.PositionID=ap.PositionID
-    WHERE sr.SiteID=? AND ap.AgencyID=? AND sr.Status='Active' AND s.Status='Active'
-      AND pr.Status='Active' AND br.Status='Active' AND ap.Status='Active' AND p.Status='Active'
-      AND (pr.EffectiveDate IS NULL OR pr.EffectiveDate<=?) AND (br.EffectiveDate IS NULL OR br.EffectiveDate<=?)
-    ORDER BY p.PositionName, sr.SiteRateID`, [siteId, agencyId, date, date])
-  return rows
-}
 export async function listEmployeePositionChanges(event: any) {
   const session = requireSession(event); void session.sub
   const employeeId = id(getRouterParam(event, 'id'), 'Employee')
   const date = effectiveDate(getQuery(event).effectiveDate || todayInPhilippines())
   const employee = await employeeFor(pool, employeeId)
-  const assignment = await assignmentFor(pool, employeeId, date)
   const [positions] = await pool.execute<any[]>(`SELECT ap.AgencyPositionID, p.PositionName
     FROM agency_position ap INNER JOIN \`position\` p ON p.PositionID=ap.PositionID
     WHERE ap.AgencyID=? AND ap.Status='Active' AND p.Status='Active' ORDER BY p.PositionName`, [employee.AgencyID])
@@ -75,12 +48,12 @@ export async function listEmployeePositionChanges(event: any) {
     INNER JOIN \`position\` new_p ON new_p.PositionID=new_ap.PositionID
     LEFT JOIN \`user\` actor ON actor.UserID=h.CreatedBy
     WHERE h.EmployeeID=? ORDER BY h.EffectiveDate DESC, h.PositionChangeID DESC`, [employeeId])
-  return { employee, positions, assignment, siteRates: assignment ? await rateOptions(pool, Number(employee.AgencyID), Number(assignment.SiteID), date) : [], history, effectiveDate: date,
+  return { employee, positions, history, effectiveDate: date,
     permissions: { canEdit: session.userType !== 'Viewer' && event.context?.moduleCanEdit !== false && employee.Status === 'Active' } }
 }
 export async function changeEmployeePosition(event: any) {
   const session = requireSession(event)
-  if (session.userType === 'Viewer') throw createError({ statusCode: 403, statusMessage: 'Viewer accounts cannot change positions.' })
+  if (session.userType === 'Viewer' || event.context?.moduleCanEdit === false) throw createError({ statusCode: 403, statusMessage: 'You do not have permission to change employee positions.' })
   const employeeId = id(getRouterParam(event, 'id'), 'Employee'), body = await readBody<Record<string, unknown>>(event) || {}
   const date = effectiveDate(body.EffectiveDate), targetId = id(body.AgencyPositionID, 'New position')
   const expectedId = id(body.ExpectedAgencyPositionID, 'Current position')
@@ -101,40 +74,12 @@ export async function changeEmployeePosition(event: any) {
     if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active position under the same agency.' })
     const [[laterChange]] = await connection.execute<any[]>('SELECT PositionChangeID FROM employee_position_change WHERE EmployeeID=? AND EffectiveDate>=? LIMIT 1', [employeeId, date])
     if (laterChange) throw createError({ statusCode: 409, statusMessage: 'Effective date must be after the last recorded position change.' })
-    const checks: [string, any[], string][] = [
-      ['SELECT AttendanceID FROM attendance WHERE EmployeeID=? AND AttendanceDate>=? LIMIT 1 FOR UPDATE', [employeeId, date], 'Attendance already exists on or after this date. Review the affected DTR first or choose a later effective date.'],
-      ["SELECT PayrollID FROM payroll WHERE EmployeeID=? AND EndDate>=? AND Status<>'Cancelled' LIMIT 1 FOR UPDATE", [employeeId, date], 'Payroll already covers this date. Cancel and correct an unreleased payroll first, or choose a later effective date.'],
-      ["SELECT d.BatchID FROM attendance_dtr_employee de INNER JOIN attendance_dtr d ON d.BatchID=de.BatchID WHERE de.EmployeeID=? AND d.PeriodEnd>=? AND d.Status<>'Draft' LIMIT 1 FOR UPDATE", [employeeId, date], 'A computed or locked DTR covers this date. Return the affected DTR to Draft first.'],
-      ["SELECT BTRID FROM attendance_dtr_btr WHERE (RelieverEmployeeID=? OR ReplacedEmployeeID=?) AND AttendanceDate>=? AND Status='Active' LIMIT 1 FOR UPDATE", [employeeId, employeeId, date], 'BTR coverage already exists on or after this date. Review it before changing position.'],
-      ['SELECT DeploymentID FROM employee_deployment WHERE EmployeeID=? AND IsPermanentSite=1 AND StartDate>? LIMIT 1 FOR UPDATE', [employeeId, date], 'A later fixed deployment already exists. Review Deployment History before backdating this change.'],
-    ]
-    for (const [sql, values, message] of checks) {
-      const [[conflict]] = await connection.execute<any[]>(sql, values)
-      if (conflict) throw createError({ statusCode: 409, statusMessage: message })
-    }
-    const assignment = await assignmentFor(connection, employeeId, date)
-    let newDeploymentId: number | null = null
-    if (assignment) {
-      if (Number(assignment.AgencyID) !== Number(employee.AgencyID) || Number(assignment.AgencyPositionID) !== expectedId) throw createError({ statusCode: 409, statusMessage: 'The fixed assignment does not match the current agency position. Review Deployment History first.' })
-      if (date <= assignment.StartDate) throw createError({ statusCode: 400, statusMessage: 'Choose an effective date after the current fixed deployment start date.' })
-      const siteRateId = id(body.SiteRateID, 'New position site rate')
-      const rates = await rateOptions(connection, Number(employee.AgencyID), Number(assignment.SiteID), date)
-      if (!rates.some(row => Number(row.SiteRateID) === siteRateId && Number(row.AgencyPositionID) === targetId)) throw createError({ statusCode: 400, statusMessage: 'Select an active payroll and billing rate for the new position at the same site, effective on the chosen date.' })
-      await connection.execute('UPDATE employee_deployment SET EndDate=DATE_SUB(?, INTERVAL 1 DAY) WHERE DeploymentID=?', [date, assignment.DeploymentID])
-      const [created] = await connection.execute<any>(`INSERT INTO employee_deployment
-        (EmployeeID, SiteRateID, SiteID, SiteShiftID, DeploymentType, IsPermanentSite, StartDate, EndDate, Remarks, CreatedBy)
-        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`, [employeeId, siteRateId, assignment.SiteID, assignment.SiteShiftID, assignment.DeploymentType, date, assignment.EndDate, `Position change: ${reason}`, session.sub])
-      newDeploymentId = Number(created.insertId)
-      await connection.execute(`UPDATE attendance_dtr_employee de INNER JOIN attendance_dtr d ON d.BatchID=de.BatchID
-        SET de.DeploymentID=? WHERE de.EmployeeID=? AND de.DeploymentID=? AND d.Status='Draft'
-          AND d.SiteID=? AND d.PeriodEnd>=? AND d.PeriodStart<=COALESCE(?, '9999-12-31')`, [newDeploymentId, employeeId, assignment.DeploymentID, assignment.SiteID, date, assignment.EndDate])
-    } else if (body.SiteRateID) throw createError({ statusCode: 400, statusMessage: 'No fixed site assignment needs a rate on this date. Refresh the form.' })
     await connection.execute('UPDATE employee SET AgencyPositionID=?, UpdatedBy=? WHERE EmployeeID=?', [targetId, session.sub, employeeId])
     const [result] = await connection.execute<any>(`INSERT INTO employee_position_change
-      (EmployeeID, OldAgencyPositionID, NewAgencyPositionID, EffectiveDate, Reason, OldDeploymentID, NewDeploymentID, CreatedBy)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, expectedId, targetId, date, reason, assignment?.DeploymentID || null, newDeploymentId, session.sub])
+      (EmployeeID, OldAgencyPositionID, NewAgencyPositionID, EffectiveDate, Reason, CreatedBy)
+      VALUES (?, ?, ?, ?, ?, ?)`, [employeeId, expectedId, targetId, date, reason, session.sub])
     await connection.commit()
-    return { success: true, id: Number(result.insertId), newDeploymentId }
+    return { success: true, id: Number(result.insertId) }
   } catch (error: any) {
     await connection.rollback()
     if (['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT'].includes(error?.code)) throw createError({ statusCode: 409, statusMessage: 'Another employee update is in progress. Refresh and try again.' })

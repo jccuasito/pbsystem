@@ -11,7 +11,11 @@ function backend(execute) {
     async commit() { calls.push('commit') },
     async rollback() { calls.push('rollback') },
     release() { calls.push('release') },
-    async execute(sql, args) { calls.push({ sql, args }); return execute(sql, args) },
+    async execute(sql, args) {
+      calls.push({ sql, args })
+      if (sql.includes('SELECT e.EmployeeID, ap.AgencyID')) return [[{ EmployeeID: args[0], AgencyID: 1 }]]
+      return execute(sql, args)
+    },
   }
   const module = { exports: {} }
   const source = fs.readFileSync('server/utils/dtrCrud.ts', 'utf8') + '\nmodule.exports.promoteForTest = promoteDtrEmployeeToPermanentSite;'
@@ -30,6 +34,7 @@ function backend(execute) {
 test('deleting a draft removes only its unshared DTR-created fixed history', async () => {
   const h = backend((sql, args) => {
     if (sql.includes('SELECT Status, PeriodStart, PeriodEnd FROM attendance_dtr')) return [[{ Status: 'Draft', PeriodStart: '2026-08-16', PeriodEnd: '2026-08-31' }]]
+    if (sql.includes('SELECT EventID FROM dtr_workflow_event')) return [[]]
     if (sql.includes('SELECT ed.DeploymentID')) return [[{ DeploymentID: 40 }]]
     if (sql.startsWith('UPDATE attendance SET BatchID = NULL')) return [{ affectedRows: 2 }]
     if (sql.startsWith('DELETE FROM attendance')) return [{ affectedRows: 12 }]
@@ -52,6 +57,8 @@ test('deleting a draft removes only its unshared DTR-created fixed history', asy
 test('a backdated fixed assignment ends before the next original deployment', async () => {
   const h = backend((sql, args) => {
     if (sql.includes('SELECT sr.SiteRateID')) return [[{ SiteRateID: 7 }]]
+    if (sql.includes('SELECT ed.SiteRateID')) return [[]]
+    if (sql.includes('SELECT ed.DeploymentID, ed.SiteID, ed.StartDate')) return [[]]
     if (sql.includes('SELECT DeploymentID FROM employee_deployment') && sql.includes('SiteID <> ?')) return [[]]
     if (sql.includes('SELECT StartDate FROM employee_deployment')) return [[{ StartDate: '2026-09-01' }]]
     if (sql.includes('SELECT DeploymentID FROM employee_deployment')) return [[]]
@@ -69,6 +76,7 @@ test('a backdated fixed assignment ends before the next original deployment', as
 test('a later original deployment inside the same cutoff blocks a conflicting fixed assignment', async () => {
   const h = backend((sql) => {
     if (sql.includes('SELECT sr.SiteRateID')) return [[{ SiteRateID: 7 }]]
+    if (sql.includes('SELECT ed.SiteRateID')) return [[]]
     if (sql.includes('SELECT DeploymentID FROM employee_deployment') && sql.includes('SiteID <> ?')) return [[]]
     if (sql.includes('SELECT StartDate FROM employee_deployment')) return [[{ StartDate: '2026-08-25' }]]
     throw new Error('Unexpected query: ' + sql)
@@ -80,10 +88,13 @@ test('a later original deployment inside the same cutoff blocks a conflicting fi
   assert.equal(h.calls.some(call => call.sql?.startsWith('INSERT INTO employee_deployment')), false)
 })
 
-test('a DTR cannot replace an original fixed deployment at another site', async () => {
+test('a new fixed posting cannot shorten previous-post attendance from the new cutoff onward', async () => {
   const h = backend((sql) => {
     if (sql.includes('SELECT sr.SiteRateID')) return [[{ SiteRateID: 7 }]]
-    if (sql.includes('SELECT DeploymentID FROM employee_deployment') && sql.includes('SiteID <> ?')) return [[{ DeploymentID: 32 }]]
+    if (sql.includes('SELECT ed.SiteRateID')) return [[]]
+    if (sql.includes('SELECT StartDate FROM employee_deployment')) return [[]]
+    if (sql.includes('SELECT ed.DeploymentID, ed.SiteID, ed.StartDate')) return [[{ DeploymentID: 32, SiteID: 2, AgencyID: 1, StartDate: '2026-08-01' }]]
+    if (sql.includes('SELECT AttendanceID FROM attendance')) return [[{ AttendanceID: 1 }]]
     throw new Error('Unexpected query: ' + sql)
   })
   await assert.rejects(

@@ -1124,19 +1124,23 @@ export async function transferEmployee(event: any) {
     const [[dateRow]] = await connection.execute<any[]>("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS CurrentDate")
     const today = String(dateRow.CurrentDate)
     if (startDate > today) throw createError({ statusCode: 400, statusMessage: 'Future-dated transfers are not supported yet.' })
-    const [[employee]] = await connection.execute<any[]>('SELECT EmployeeID FROM employee WHERE EmployeeID = ? AND Status = \'Active\' FOR UPDATE', [employeeId])
+    const [[employee]] = await connection.execute<any[]>(`SELECT e.EmployeeID, ap.AgencyID FROM employee e
+      INNER JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
+      WHERE e.EmployeeID=? AND e.Status='Active' FOR UPDATE`, [employeeId])
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
 
     const [[target]] = await connection.execute<any[]>(
-      `SELECT pr.AgencyPositionID, sr.SiteID
+      `SELECT pr.AgencyPositionID, ap.AgencyID, sr.SiteID
        FROM site_rate sr
        INNER JOIN site s ON s.SiteID = sr.SiteID
        INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+       INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
        WHERE sr.SiteRateID = ? AND sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active'
        LIMIT 1`,
       [siteRateId]
     )
     if (!target) throw createError({ statusCode: 400, statusMessage: 'Select an active site rate.' })
+    if (Number(target.AgencyID) === Number(employee.AgencyID)) throw createError({ statusCode: 400, statusMessage: 'Select a different agency for an agency transfer. For a new fixed post in the same agency, add the employee as Regular / Fixed in the new site DTR.' })
 
     if (Number(target.SiteID) !== Number(siteId)) throw createError({ statusCode: 400, statusMessage: 'The selected site does not match this site rate.' })
     const [[site]] = await connection.execute<any[]>('SELECT SiteID FROM site WHERE SiteID = ? AND Status = \'Active\' LIMIT 1', [siteId])
@@ -1147,9 +1151,9 @@ export async function transferEmployee(event: any) {
     }
 
     const [[current]] = await connection.execute<any[]>(
-      `SELECT DeploymentID, StartDate
+      `SELECT DeploymentID, DATE_FORMAT(StartDate, '%Y-%m-%d') AS StartDate
        FROM employee_deployment
-       WHERE EmployeeID = ? AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
+       WHERE EmployeeID = ? AND IsPermanentSite=1 AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
        ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`,
       [employeeId, startDate, startDate]
     )

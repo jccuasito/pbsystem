@@ -559,7 +559,8 @@ async function syncPermanentSiteEmployees(connection: any, batch: any, createdBy
     INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
     WHERE ed.IsPermanentSite = 1 AND ed.DeploymentType = 'Regular' AND e.Status = 'Active' AND ap.AgencyID = ? AND sr.SiteID = ? AND ed.SiteID = ?
       AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
-    ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [batch.AgencyID, batch.SiteID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+      AND NOT EXISTS (SELECT 1 FROM attendance_dtr_employee_exclusion excluded WHERE excluded.BatchID=? AND excluded.EmployeeID=ed.EmployeeID)
+    ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`, [batch.AgencyID, batch.SiteID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart, batch.BatchID])
   const synchronized = new Set<number>()
   for (const employee of permanentEmployees) {
     if (synchronized.has(Number(employee.EmployeeID))) continue
@@ -642,16 +643,12 @@ async function applyWorkPositionDates(connection: any, batch: any, employeeId: n
 }
 
 async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, employeeId: number, deploymentType: 'Regular' | 'Reliever', currentDeploymentId: number | null, createdBy: unknown) {
+  // The employee lock serializes fixed-post changes across different site DTRs.
+  const [[employee]] = await connection.execute<any[]>(`SELECT e.EmployeeID, ap.AgencyID FROM employee e
+    INNER JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
+    WHERE e.EmployeeID=? AND e.Status='Active' FOR UPDATE`, [employeeId])
+  if (!employee || Number(employee.AgencyID) !== Number(batch.AgencyID)) throw createError({ statusCode: 400, statusMessage: 'Select an active employee under this DTR agency. Agency transfers are managed from Employee List.' })
   const rate = await matchingDtrRate(connection, employeeId, batch)
-  const [[otherFixed]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
-    WHERE EmployeeID = ? AND IsPermanentSite = 1 AND StartDate <= ?
-      AND (EndDate IS NULL OR EndDate >= ?)
-      AND (SiteID <> ? OR SiteRateID <> ?)
-    ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`,
-  [employeeId, batch.PeriodEnd, batch.PeriodStart, batch.SiteID, rate.SiteRateID])
-  if (otherFixed) {
-    throw createError({ statusCode: 409, statusMessage: 'This employee already has a fixed deployment during this cutoff. Use Deployment History to change their permanent site.' })
-  }
   // A backdated cutoff cannot turn into an ongoing assignment across a later
   // original deployment. Its fixed period ends immediately before that move.
   const [[nextPermanent]] = await connection.execute<any[]>(`SELECT StartDate FROM employee_deployment
@@ -660,6 +657,39 @@ async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, em
   const nextPermanentStart = nextPermanent ? databaseDate(nextPermanent.StartDate) : null
   if (nextPermanentStart && nextPermanentStart <= databaseDate(batch.PeriodEnd)) {
     throw createError({ statusCode: 409, statusMessage: 'A later fixed deployment already starts within this DTR cutoff.' })
+  }
+  const [otherFixed] = await connection.execute<any[]>(`SELECT ed.DeploymentID, ed.SiteID, ed.StartDate, ap.AgencyID
+    FROM employee_deployment ed INNER JOIN site_rate sr ON sr.SiteRateID=ed.SiteRateID
+    INNER JOIN payroll_rate pr ON pr.PayrollRateID=sr.PayrollRateID
+    INNER JOIN agency_position ap ON ap.AgencyPositionID=pr.AgencyPositionID
+    WHERE ed.EmployeeID=? AND ed.IsPermanentSite=1 AND ed.StartDate<=?
+      AND (ed.EndDate IS NULL OR ed.EndDate>=?) AND (ed.SiteID<>? OR ed.SiteRateID<>?)
+    ORDER BY ed.StartDate DESC, ed.DeploymentID DESC FOR UPDATE`,
+  [employeeId, batch.PeriodStart, batch.PeriodStart, batch.SiteID, rate.SiteRateID])
+  if (otherFixed.length > 1) throw createError({ statusCode: 409, statusMessage: 'Overlapping fixed postings must be reviewed in Deployment History before adding a new fixed post.' })
+  for (const previous of otherFixed) {
+    if (Number(previous.AgencyID) !== Number(batch.AgencyID)) throw createError({ statusCode: 409, statusMessage: 'The existing fixed posting belongs to another agency. Use Employee List for an agency transfer.' })
+    if (databaseDate(previous.StartDate) >= databaseDate(batch.PeriodStart)) throw createError({ statusCode: 409, statusMessage: 'Another fixed posting starts on this cutoff start date. Review its deployment dates before adding a second fixed post.' })
+    const checks: [string, any[], string][] = [
+      ['SELECT AttendanceID FROM attendance WHERE DeploymentID=? AND AttendanceDate>=? LIMIT 1 FOR UPDATE', [previous.DeploymentID, batch.PeriodStart], 'Attendance already exists at the previous fixed posting on or after this cutoff starts. Review it before adding the new fixed post.'],
+      ["SELECT PayrollID FROM payroll WHERE DeploymentID=? AND EndDate>=? AND Status<>'Cancelled' LIMIT 1 FOR UPDATE", [previous.DeploymentID, batch.PeriodStart], 'Payroll already covers the previous fixed posting from this cutoff onward. Review it before adding the new fixed post.'],
+      ["SELECT d.BatchID FROM attendance_dtr_employee de INNER JOIN attendance_dtr d ON d.BatchID=de.BatchID WHERE de.EmployeeID=? AND de.DeploymentID=? AND d.PeriodEnd>=? AND d.Status<>'Draft' LIMIT 1 FOR UPDATE", [employeeId, previous.DeploymentID, batch.PeriodStart], 'A computed or locked DTR still covers the previous fixed posting from this cutoff onward. Return it to Draft before changing the fixed post.'],
+      ["SELECT b.BTRID FROM attendance_dtr_btr b INNER JOIN attendance_dtr d ON d.BatchID=b.BatchID WHERE d.SiteID=? AND b.AttendanceDate>=? AND b.Status='Active' AND (b.ReplacedEmployeeID=? OR b.RelieverEmployeeID=?) LIMIT 1 FOR UPDATE", [previous.SiteID, batch.PeriodStart, employeeId, employeeId], 'Active BTR coverage still uses the previous fixed posting from this cutoff onward. Review it before adding the new fixed post.'],
+    ]
+    for (const [sql, values, message] of checks) {
+      const [[conflict]] = await connection.execute<any[]>(sql, values)
+      if (conflict) throw createError({ statusCode: 409, statusMessage: message })
+    }
+  }
+  // Closing the earlier posting keeps its historical deployment ID and rate.
+  // Only empty future Draft roster rows can leave the old site's roster.
+  for (const previous of otherFixed) {
+    await connection.execute('UPDATE employee_deployment SET EndDate=DATE_SUB(?, INTERVAL 1 DAY) WHERE DeploymentID=?', [batch.PeriodStart, previous.DeploymentID])
+    await connection.execute(`DELETE de FROM attendance_dtr_employee de INNER JOIN attendance_dtr d ON d.BatchID=de.BatchID
+      WHERE de.EmployeeID=? AND de.DeploymentID=? AND de.IsPermanentSite=1 AND d.SiteID=? AND d.Status='Draft' AND d.PeriodStart>=?
+        AND NOT EXISTS (SELECT 1 FROM attendance at WHERE at.BatchID=de.BatchID AND at.EmployeeID=de.EmployeeID)
+        AND NOT EXISTS (SELECT 1 FROM attendance_dtr_btr b WHERE b.BatchID=de.BatchID AND b.Status='Active' AND (b.ReplacedEmployeeID=de.EmployeeID OR b.RelieverEmployeeID=de.EmployeeID))`,
+    [employeeId, previous.DeploymentID, previous.SiteID, batch.PeriodStart])
   }
   const [[existingPermanent]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
     WHERE EmployeeID = ? AND SiteRateID = ? AND SiteID = ? AND IsPermanentSite = 1
@@ -805,7 +835,7 @@ export async function listDtrRecords(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const batch = await batchDetail(connection, id)
+    const batch = await batchDetail(connection, id, true)
     if (event.context.moduleCanEdit !== false) {
       await syncPermanentSiteEmployees(connection, batch, session.sub)
       await attachPendingEmployeeStatuses(connection, batch, session.sub)
@@ -900,7 +930,7 @@ export async function listDtrEmployees(event: any) {
   const id = batchId(event), query = getQuery(event) as Record<string, string | undefined>
   const connection = await pool.getConnection()
   try {
-    const batch = await batchDetail(connection, id)
+    const batch = await batchDetail(connection, id, true)
     const values: any[] = [id, batch.SiteID, batch.PeriodEnd, batch.PeriodStart, id, batch.AgencyID, batch.SiteID]
     let searchSql = ''
     if (query.search?.trim()) {
@@ -961,6 +991,7 @@ export async function addDtrEmployee(event: any) {
       if (error?.code === 'ER_DUP_ENTRY') throw alreadyAdded()
       throw error
     }
+    await connection.execute('DELETE FROM attendance_dtr_employee_exclusion WHERE BatchID=? AND EmployeeID=?', [id, employeeId])
     if (isPermanentSite) await syncPermanentSiteEmployees(connection, batch, session.sub)
     await connection.commit(); return { success: true, deploymentId }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
@@ -973,7 +1004,7 @@ export async function removeDtrEmployee(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const batch = await batchDetail(connection, id, true); assertEditableBatch(batch)
     const [[enrollment]] = await connection.execute<any[]>(
       'SELECT EmployeeID, DeploymentID, IsPermanentSite FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE',
       [id, employeeId],
@@ -990,19 +1021,10 @@ export async function removeDtrEmployee(event: any) {
     )
     const [attendanceResult] = await connection.execute<any>('DELETE FROM attendance WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
     await connection.execute('DELETE FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ?', [id, employeeId])
-    // A fixed assignment created from this DTR otherwise enrolls the person again
-    // as soon as the Draft roster is refreshed. Retire only this DTR-owned fixed
-    // deployment when no other DTR or attendance record depends on it.
-    if (Number(enrollment.IsPermanentSite) === 1) {
-      const [retired] = await connection.execute<any>(`UPDATE employee_deployment ed
-        SET ed.IsPermanentSite = 0, ed.EndDate = DATE(?)
-        WHERE ed.DeploymentID = ? AND ed.EmployeeID = ? AND ed.IsPermanentSite = 1
-          AND ed.Remarks IN ('Created from DTR attendance assignment', 'Set as permanent from DTR assignment')
-          AND NOT EXISTS (SELECT 1 FROM attendance_dtr_employee de WHERE de.DeploymentID = ed.DeploymentID)
-          AND NOT EXISTS (SELECT 1 FROM attendance at WHERE at.DeploymentID = ed.DeploymentID)`,
-      [batch.PeriodEnd, enrollment.DeploymentID, employeeId])
-      if (!retired.affectedRows) throw createError({ statusCode: 409, statusMessage: 'This fixed assignment is shared with another record or was created outside this DTR. Change its fixed-site deployment before removing the employee here.' })
-    }
+    // Removal is local to this cutoff. Keep shared fixed-site history intact and
+    // suppress only this roster's automatic enrollment until explicitly re-added.
+    await connection.execute(`INSERT INTO attendance_dtr_employee_exclusion (BatchID, EmployeeID, RemovedBy)
+      VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE RemovedBy=VALUES(RemovedBy), RemovedAt=CURRENT_TIMESTAMP`, [id, employeeId, session.sub])
     await connection.commit()
     return { success: true, deletedAttendanceRows: attendanceResult.affectedRows, preservedEmployeeStatusDays: preservedResult.affectedRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
@@ -1019,7 +1041,7 @@ export async function updateDtrEmployeeType(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const batch = await batchDetail(connection, id); assertEditableBatch(batch)
+    const batch = await batchDetail(connection, id, true); assertEditableBatch(batch)
     const [[enrollment]] = await connection.execute<any[]>('SELECT DeploymentID, AttendanceType, IsPermanentSite FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (!enrollment) throw createError({ statusCode: 404, statusMessage: 'Employee is not added to this DTR.' })
     const effectiveType = deploymentType || (enrollment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular')

@@ -16,7 +16,7 @@ const source = parse(fs.readFileSync('app/pages/employees/index.vue', 'utf8')).d
 function workspace(fetch) {
   const scope = vue.effectScope()
   let refreshOptions
-  const state = scope.run(() => evaluate(source + '\nmodule.exports={load,loading,items,filters,search,filteredItems,error,modalOpen};', {
+  const state = scope.run(() => evaluate(source + '\nmodule.exports={load,loading,items,filters,search,filteredItems,error,modalOpen,transferring,transferSiteRates,filteredTransferSiteRates};', {
     require: name => name === 'vue' ? { ...vue, onMounted() {}, onBeforeUnmount() {} } : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh: (_, options) => { refreshOptions = options } } : name.includes('utils/employee') ? employeeUtils : name.includes('alertmessage/messages') ? messages : {},
     defineEmits: () => () => {}, $fetch: fetch,
   }))
@@ -27,6 +27,16 @@ const result = { items: [
   { EmployeeID: 2, FirstName: 'Ben', LastName: 'Test', AgencyID: 2, PositionID: 10 },
   { EmployeeID: 3, FirstName: 'Cara', LastName: 'Test', AgencyID: 2, PositionID: 20 },
 ], agencies: [], positions: [], agencyPositions: [] }
+
+test('Agency transfer offers only rates belonging to another agency', () => {
+  const harness = workspace(async () => result)
+  try {
+    harness.state.transferring.value = { EmployeeID: 1, AgencyID: 1 }
+    harness.state.transferSiteRates.value = [{ SiteRateID: 1, AgencyID: 1 }, { SiteRateID: 2, AgencyID: 2 }]
+    assert.equal(harness.state.filteredTransferSiteRates.value.length, 1)
+    assert.equal(harness.state.filteredTransferSiteRates.value[0].SiteRateID, 2)
+  } finally { harness.close() }
+})
 
 test('initial load shares one pending request and retains rows during later refresh', async () => {
   const pending = [], requests = []

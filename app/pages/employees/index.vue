@@ -391,7 +391,7 @@ const filteredTransferSiteRates = computed(() => {
   const query = rateSearch.value.trim().toLowerCase()
   const results = transferSiteRates.value.filter((item) => {
     const matchesSearch = !query || [item.SiteName, item.ClientName, item.AgencyName, item.PositionName].some((value) => String(value || '').toLowerCase().includes(query))
-    return matchesSearch
+    return matchesSearch && (!transferring.value || String(item.AgencyID) !== String(transferring.value.AgencyID))
   })
   return results.slice(0, 8)
 })
@@ -894,7 +894,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
               </button>
               <button class="action-icon action-icon--position" type="button" aria-label="Change position and view history" title="Change position / history" @click="positionEmployeeId = Number(item.EmployeeID)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6M5 20h14"/></svg></button>
-              <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee" title="Transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
+              <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee to another agency" title="Agency transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
               </button>
               <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
@@ -938,7 +938,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
             </button>
             <button class="action-icon action-icon--position" type="button" aria-label="Change position and view history" title="Change position / history" @click="positionEmployeeId = Number(item.EmployeeID)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6M5 20h14"/></svg></button>
-            <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee" title="Transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
+            <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee to another agency" title="Agency transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
             </button>
             <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
@@ -1186,9 +1186,9 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
       <div v-if="transferOpen" class="backdrop" @click.self="!transferBusy && (transferOpen = false)">
         <form class="modal" @submit.prevent="saveTransfer">
           <button class="close" type="button" @click="transferOpen = false">x</button>
-          <h2>Transfer employee</h2>
+          <h2>Agency transfer</h2>
           <p class="transfer-subtitle">{{ transferring ? formatEmployeeName(transferring) : '' }}</p>
-          <p class="transfer-note">The current deployment closes the day before the effective date. Previous attendance and payroll remain under that deployment.</p>
+          <p class="transfer-note">Move this employee to another agency. For a new fixed posting within the same agency, add them as Regular / Fixed in the new site DTR. Previous attendance and payroll stay under their original deployment.</p>
 
           <label class="rate-picker" @click.stop>Find site rate
             <input v-model="rateSearch" type="search" autocomplete="off" placeholder="Search site, client, agency, or position" @focus="ratePickerOpen = true" @input="onRateSearchInput" />
