@@ -10,6 +10,7 @@ import AgencyPage from '../organization/agency/index.vue'
 import PositionPage from '../organization/position/index.vue'
 import ClientPage from '../organization/client/index.vue'
 import SitePage from '../organization/site/index.vue'
+import SiteAccountsPage from '../organization/site-accounts/index.vue'
 import RegionPage from '../organization/region/index.vue'
 import PayrollRatePage from '../rates/payroll/index.vue'
 import BillingRatePage from '../rates/billing/index.vue'
@@ -28,6 +29,7 @@ import PayslipPage from '../payroll/payslip/index.vue'
 import PayrollHistoryPage from '../payroll/history/index.vue'
 import SettingsPage from '../settings/index.vue'
 import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
+import PayrollRunProgress from '../../components/PayrollRunProgress.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -44,13 +46,13 @@ const isBooting = ref(true)
 let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
-  | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-region'
+  | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-site-accounts' | 'organization-region'
   | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
   | 'employee-loans-deductions' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
-  'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-region',
+  'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-site-accounts', 'organization-region',
   'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
   'employee-loans-deductions', 'deductions-loans-contributions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
@@ -171,6 +173,7 @@ const navGroups = [
       { label: 'Position', to: '/organization/position', icon: 'user', view: 'organization-position' },
       { label: 'Client', to: '/organization/client', icon: 'user', view: 'organization-client' },
       { label: 'Site', to: '/organization/site', icon: 'building', view: 'organization-site' },
+      { label: 'Site Accounts', to: '/organization/site-accounts', icon: 'building', view: 'organization-site-accounts' },
       { label: 'Region', to: '/organization/region', icon: 'building', view: 'organization-region' }
     ]
   },
@@ -277,6 +280,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'organization-position': PositionPage,
   'organization-client': ClientPage,
   'organization-site': SitePage,
+  'organization-site-accounts': SiteAccountsPage,
   'organization-region': RegionPage,
   'rates-payroll': PayrollRatePage,
   'rates-billing': BillingRatePage,
@@ -584,6 +588,8 @@ onBeforeUnmount(() => {
               <div class="dash-stat-card__label">{{ stat.label }}</div>
             </article>
           </section>
+
+          <PayrollRunProgress />
 
           <section class="dash-panels">
             <div class="dash-panel">

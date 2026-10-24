@@ -166,6 +166,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePositionChangeModal.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
+  - `app/components/PayrollRunProgress.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
   - `app/pages/attendance/dtr-reliever/index.vue`
@@ -183,6 +184,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/organization/client/index.vue`
   - `app/pages/organization/position/index.vue`
   - `app/pages/organization/region/index.vue`
+  - `app/pages/organization/site-accounts/index.vue`
   - `app/pages/organization/site/index.vue`
   - `app/pages/payroll/adjustments/index.vue`
   - `app/pages/payroll/history/index.vue`
@@ -246,6 +248,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/auth/me` → `server/api/auth/me.get.ts`
   - `POST /api/auth/update-profile` → `server/api/auth/update-profile.post.ts`
   - `POST /api/auth/upload-avatar` → `server/api/auth/upload-avatar.post.ts`
+  - `GET /api/dashboard/payroll-progress` → `server/api/dashboard/payroll-progress.get.ts`
   - `GET /api/dashboard/recent-activity` → `server/api/dashboard/recent-activity.get.ts`
   - `GET /api/dashboard/recent-payroll` → `server/api/dashboard/recent-payroll.get.ts`
   - `GET /api/dashboard/stats` → `server/api/dashboard/stats.get.ts`
@@ -311,6 +314,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
   - `POST /api/payroll/processing/[param]/deductions` → `server/api/payroll/processing/[id]/deductions.post.ts`
+  - `GET /api/payroll/site-accounts` → `server/api/payroll/site-accounts.get.ts`
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
@@ -357,6 +361,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payrollDeductionOverrideCrud.ts`
   - `server/utils/payrollHistoryCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
+  - `server/utils/payrollProgress.ts`
   - `server/utils/payslipCrud.ts`
   - `server/utils/philippineAddress.ts`
   - `server/utils/positionAssignmentCrud.ts`
@@ -365,6 +370,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`
   - `server/utils/settingsAccess.ts`
+  - `server/utils/siteAccountSummary.ts`
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
@@ -751,6 +757,31 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/organization/site-accounts`
+
+- Page: `app/pages/organization/site-accounts/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
+  - `components/OrganizationCrud.vue`
+  - `components/SearchableSelect.vue`
+- API calls and handlers:
+  - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
+  - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
+  - `POST /api/organization/[param]` → `server/api/organization/[resource].post.ts`
+  - `PUT /api/organization/[param]` → `server/api/organization/[resource].put.ts`
+  - `GET /api/payroll/site-accounts` → `server/api/payroll/site-accounts.get.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/organizationCrud.ts`
+  - `server/utils/siteAccountSummary.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.

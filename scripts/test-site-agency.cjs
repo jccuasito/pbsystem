@@ -45,24 +45,24 @@ async function run() {
       GROUP BY ap.AgencyID, ap.AgencyPositionID ORDER BY ap.AgencyID`)
     const first = positions[0], second = positions.find(row => row.AgencyID !== first?.AgencyID)
     assert.ok(client && region && first && second, 'Two active agencies with positions, an active client, and a region are required')
-    const body = { ClientID: client.ClientID, RegionID: region.RegionID, SiteName: `SITE AGENCY TEST ${Date.now()}`, SiteAddress: '', Status: 'Active', AgencyIDs: [first.AgencyID, second.AgencyID] }
+    const account = await organization.createOrganizationResource({ resource: 'site-account', body: { SiteAccountName: `SITE AGENCY TEST ${Date.now()}` } })
+    const body = { ClientID: client.ClientID, RegionID: region.RegionID, SiteName: `SITE AGENCY TEST ${Date.now()}`, SiteAddress: '', Status: 'Active', AgencyIDs: [first.AgencyID], SiteAccountID: account.id }
     await assert.rejects(organization.createOrganizationResource({ resource: 'site', body: { ...body, AgencyIDs: [] } }), error => error.statusCode === 400)
     const { id } = await organization.createOrganizationResource({ resource: 'site', body })
     let site = (await organization.listOrganizationResource({ resource: 'site' })).items.find(row => row.SiteID === id)
-    assert.deepEqual([...site.AgencyIDs].sort(), [first.AgencyID, second.AgencyID].sort())
-    await organization.updateOrganizationResource({ resource: 'site', body: { ...body, id, AgencyIDs: [first.AgencyID] } })
+    assert.deepEqual([...site.AgencyIDs], [first.AgencyID])
+    await organization.updateOrganizationResource({ resource: 'site', body: { ...body, id, AgencyIDs: [first.AgencyID], AgencyAccounts:[{AgencyID:first.AgencyID,SiteAccountID:account.id}] } })
     site = (await organization.listOrganizationResource({ resource: 'site' })).items.find(row => row.SiteID === id)
     assert.deepEqual(Array.from(site.AgencyIDs), [first.AgencyID])
-    const [[removed]] = await connection.execute('SELECT Status FROM site_agency WHERE SiteID = ? AND AgencyID = ?', [id, second.AgencyID])
-    assert.equal(removed.Status, 'Inactive')
+    await assert.rejects(organization.updateOrganizationResource({ resource:'site', body:{...body,id,AgencyIDs:[second.AgencyID]} }), error=>error.statusCode===409)
     const [[ratePair]] = await connection.execute(`SELECT pr.PayrollRateID, br.BillingRateID FROM payroll_rate pr
       INNER JOIN billing_rate br ON br.AgencyPositionID = pr.AgencyPositionID
       WHERE pr.AgencyPositionID = ? LIMIT 1`, [first.AgencyPositionID])
     if (ratePair) {
       await connection.execute("INSERT INTO site_rate (SiteID, PayrollRateID, BillingRateID, Status) VALUES (?, ?, ?, 'Active')", [id, ratePair.PayrollRateID, ratePair.BillingRateID])
-      await assert.rejects(organization.updateOrganizationResource({ resource: 'site', body: { ...body, id, AgencyIDs: [second.AgencyID] } }), error => error.statusCode === 409)
+      await assert.rejects(organization.updateOrganizationResource({ resource: 'site', body: { ...body, id, AgencyIDs: [second.AgencyID], AgencyAccounts:[{AgencyID:second.AgencyID,SiteAccountID:account.id}] } }), error => error.statusCode === 409)
     }
-    console.log('Site agency create, list, and edit checks passed (rolled back).')
+    console.log('Single-agency site create, list, and edit checks passed (rolled back).')
   } finally {
     await connection.rollback()
     await connection.end()

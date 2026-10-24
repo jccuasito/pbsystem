@@ -150,8 +150,9 @@ async function lookups() {
       INNER JOIN client c ON c.ClientID = s.ClientID
       WHERE sr.Status = 'Active' AND s.Status = 'Active' AND pr.Status = 'Active' AND c.Status = 'Active'
       ORDER BY c.ClientName`).then(([rows]) => rows),
-    pool.execute<any[]>(`SELECT s.SiteID, s.ClientID, s.SiteName, c.ClientName
+    pool.execute<any[]>(`SELECT s.SiteID, s.ClientID, s.SiteName, c.ClientName, owner.AgencyID
       FROM site s INNER JOIN client c ON c.ClientID = s.ClientID
+      INNER JOIN site_agency owner ON owner.SiteID=s.SiteID AND owner.Status='Active'
       WHERE s.Status = 'Active' AND c.Status = 'Active' ORDER BY c.ClientName, s.SiteName`).then(([rows]) => rows)
   ])
   return { agencies, clients, sites }

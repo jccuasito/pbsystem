@@ -8,6 +8,7 @@ type Field = { key: string; label: string; type?: 'text' | 'email' | 'date' | 's
 type Column = { key: string; label: string }
 
 const props = defineProps<{ resource: string; title: string; fields: Field[]; columns: Column[]; description?: string; searchPlaceholder?: string }>()
+const canEdit = ref(false)
 const items = ref<any[]>([])
 const lookups = ref<Record<string, any[]>>({})
 const modalOpen = ref(false)
@@ -33,12 +34,13 @@ const primaryColumn = computed(() => props.columns.find(column => !['Logo', 'Sta
 const cardColumns = computed(() => props.columns.filter(column => !['Logo', 'Status', primaryColumn.value?.key].includes(column.key)))
 const formGroups = computed(() => props.resource === 'site' ? [
   { key: 'details', eyebrow: 'SITE DETAILS', title: 'Location and client', fields: props.fields.filter(field => ['ClientID', 'RegionID', 'SiteName', 'SiteAddress'].includes(field.key)) },
-  { key: 'agencies', eyebrow: 'AGENCY COVERAGE', title: 'Assigned agencies', fields: props.fields.filter(field => field.key === 'AgencyIDs') },
+  { key: 'agencies', eyebrow: 'AGENCY & ACCOUNT', title: 'Site ownership', fields: props.fields.filter(field => ['AgencyID','SiteAccountID'].includes(field.key)) },
   { key: 'settings', eyebrow: 'BRANDING & AVAILABILITY', title: 'Logo and status', fields: props.fields.filter(field => ['LogoData', 'Status'].includes(field.key)) },
-] : [{ key: 'general', eyebrow: '', title: '', fields: props.fields }])
+] : [{ key: 'general', eyebrow: '', title: '', fields: props.fields.filter(field => props.resource !== 'site-account' || editing.value || field.key !== 'Status') }])
+const displayItems = computed(() => props.resource !== 'site' ? items.value : items.value.map(item => ({...item,SiteAccountName:item.AgencyAccounts?.[0]?.SiteAccountName || ''})))
 const filteredItems = computed(() => {
   const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  return items.value.filter(item => {
+  return displayItems.value.filter(item => {
     const searchable = props.columns.map(column => item[column.key]).filter(value => typeof value !== 'object').join(' ').toLocaleLowerCase()
     return words.every(word => searchable.includes(word)) && (!statusFilter.value || item.Status === statusFilter.value)
       && (!agencyFilter.value || (Array.isArray(item.AgencyIDs) && item.AgencyIDs.some((id: number) => String(id) === agencyFilter.value)))
@@ -51,6 +53,10 @@ function resetForm(item: any = null) {
     const value = item?.[field.key] ?? (field.type === 'multiselect' ? [] : field.key === 'Status' ? 'Active' : '')
     return [field.key, field.type === 'date' && typeof value === 'string' ? value.slice(0, 10) : Array.isArray(value) ? [...value] : value]
   }))
+  if (props.resource === 'site') {
+    form.value.AgencyID = item?.AgencyAccounts?.[0]?.AgencyID || ''
+    form.value.SiteAccountID = item?.AgencyAccounts?.[0]?.SiteAccountID || ''
+  }
   logoPreview.value = item?.HasLogo ? logoUrl(item) : ''
   error.value = ''
 }
@@ -64,12 +70,13 @@ function optionValue(field: Field, option: any) {
 }
 
 function optionLabel(option: any) {
-  return option.RegionName || option.ClientName || option.AgencyName || option.PositionName || option.SiteName || option.ShiftName || option.Name
+  return option.SiteAccountName ? option.SiteAccountName + (option.Status === 'Inactive' ? ' (Inactive)' : '') : option.RegionName || option.ClientName || option.AgencyName || option.PositionName || option.SiteName || option.ShiftName || option.Name
 }
 
 function searchableOptions(field: Field) {
-  return (lookups.value[field.optionsKey || ''] || []).map(option => ({ value: optionValue(field, option), label: optionLabel(option) }))
+  return (lookups.value[field.optionsKey || ''] || []).filter(option => field.key !== 'SiteAccountID' || option.Status === 'Active' || String(option.SiteAccountID) === String(form.value.SiteAccountID)).map(option => ({ value: optionValue(field, option), label: optionLabel(option) }))
 }
+
 
 async function selectLogo(event: Event) {
   const input = event.target as HTMLInputElement
@@ -110,6 +117,7 @@ async function load(silent = false) {
   try {
     const response: any = await $fetch(`/api/organization/${props.resource}`)
     items.value = response.items || []
+    canEdit.value = response.canEdit !== false
     lookups.value = response
   } catch (cause: any) {
     error.value = cause.data?.statusMessage || 'Unable to load records.'
@@ -119,19 +127,20 @@ async function load(silent = false) {
 }
 
 function add() { resetForm(); modalOpen.value = true }
-function edit(item: any) { resetForm(item); modalOpen.value = true }
+function edit(item: any) { resetForm(props.resource === 'site' ? items.value.find(site => site.SiteID === item.SiteID) : item); modalOpen.value = true }
 function clearFilters() { search.value = ''; statusFilter.value = ''; agencyFilter.value = '' }
 
 async function save() {
   if (busy.value) return
-  if (props.resource === 'site' && (!Array.isArray(form.value.AgencyIDs) || !form.value.AgencyIDs.length)) {
-    error.value = 'Select at least one agency for this site.'
+  if (props.resource === 'site' && !form.value.AgencyID) {
+    error.value = 'Select the agency for this site.'
     return
   }
   busy.value = true
   error.value = ''
   try {
-    const body = editing.value ? { id: editing.value[idKey.value], ...form.value } : form.value
+    const body = editing.value ? { id: editing.value[idKey.value], ...form.value } : { ...form.value }
+    if (props.resource === 'site') body.AgencyIDs = [form.value.AgencyID]
     await $fetch(`/api/organization/${props.resource}`, { method: editing.value ? 'PUT' : 'POST', body })
     modalOpen.value = false
     await load()
@@ -152,6 +161,17 @@ async function deactivate(item: any) {
   }
 }
 
+async function activate(item: any) {
+  if (busy.value) return
+  busy.value = true
+  try {
+    const {AgencyAccounts,SiteAccountID,...saved} = item
+    await $fetch(`/api/organization/${props.resource}`, {method:'PUT',body:{...saved,id:item[idKey.value],Status:'Active'}})
+    await load()
+  } catch (cause: any) { error.value=cause.data?.statusMessage || 'Unable to activate record.' }
+  finally { busy.value=false }
+}
+
 function formatDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
   if (!match) return value
@@ -161,6 +181,7 @@ function formatDate(value: string) {
 function display(item: any, column: Column) {
   const value = item[column.key]
   if (value === null || value === undefined || value === '') return '—'
+  if (column.key === 'SiteCount') return Number(value).toLocaleString('en-PH')
   if (typeof value === 'boolean' || value === 0 || value === 1) return Number(value) ? 'Yes' : 'No'
   if (/Date|Start|End/.test(column.key) && typeof value === 'string') return formatDate(value)
   return value
@@ -174,7 +195,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
   <main class="organization-page" :class="{ 'organization-page--site': resource === 'site' }">
     <header class="page-head">
       <div><p>ORGANIZATION</p><h1>{{ title }}</h1><small v-if="description">{{ description }}</small></div>
-      <button class="primary" type="button" @click="add">+ Add {{ singular }}</button>
+      <button v-if="canEdit" class="primary" type="button" @click="add">+ Add {{ singular }}</button>
     </header>
     <p v-if="error && !modalOpen" class="error" role="alert">{{ error }}</p>
 
@@ -183,16 +204,16 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       <label v-if="resource === 'site'"><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in lookups.agencies || []" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
-    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `Showing ${filteredItems.length} of ${items.length} ${title.toLowerCase()}` }}</span><button v-if="search || statusFilter || agencyFilter" type="button" @click="clearFilters">Clear filters</button></div>
+    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `Showing ${filteredItems.length} of ${displayItems.length} ${title.toLowerCase()}` }}</span><button v-if="search || statusFilter || agencyFilter" type="button" @click="clearFilters">Clear filters</button></div>
 
     <div class="desktop-table">
       <table><thead><tr><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th class="actions-heading">Actions</th></tr></thead>
         <tbody>
           <tr v-if="loading" class="table-message"><td :colspan="columns.length + 1">Loading {{ title.toLowerCase() }}…</td></tr>
           <tr v-else-if="!filteredItems.length" class="table-message"><td :colspan="columns.length + 1">No {{ title.toLowerCase() }} match the current filters.</td></tr>
-          <tr v-for="item in filteredItems" :key="item[idKey]">
+          <tr v-for="item in filteredItems" :key="item.rowKey || item[idKey]">
             <td v-for="column in columns" :key="column.key"><img v-if="column.key === 'Logo' && item.HasLogo" class="table-logo" :src="logoUrl(item)" alt="Saved logo"><span v-else-if="column.key === 'Logo'">—</span><span v-else-if="column.key === 'Status'" class="status" :class="`status--${item.Status?.toLowerCase()}`">{{ item.Status }}</span><strong v-else-if="column.key === primaryColumn?.key">{{ display(item, column) }}</strong><template v-else>{{ display(item, column) }}</template></td>
-            <td><div class="actions"><button type="button" @click="edit(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></div></td>
+            <td><div v-if="canEdit" class="actions"><button type="button" @click="edit(item)">Edit</button><button v-if="resource === 'site' && item.Status === 'Inactive'" type="button" :disabled="busy" @click="activate(item)">Activate</button><button v-else type="button" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></div><span v-else>View only</span></td>
           </tr>
         </tbody>
       </table>
@@ -200,27 +221,27 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <section class="mobile-list" :aria-label="title">
       <p v-if="loading" class="mobile-message">Loading {{ title.toLowerCase() }}…</p><p v-else-if="!filteredItems.length" class="mobile-message">No {{ title.toLowerCase() }} match the current filters.</p>
-      <article v-for="item in filteredItems" :key="item[idKey]" class="record-card">
+      <article v-for="item in filteredItems" :key="item.rowKey || item[idKey]" class="record-card">
         <header><div class="record-card__identity"><img v-if="item.HasLogo" :src="logoUrl(item)" alt="Saved logo"><strong>{{ display(item, primaryColumn) }}</strong></div><span class="status" :class="`status--${item.Status?.toLowerCase()}`">{{ item.Status }}</span></header>
         <dl><div v-for="column in cardColumns" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ display(item, column) }}</dd></div></dl>
-        <footer><button type="button" @click="edit(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></footer>
+        <footer v-if="canEdit"><button type="button" @click="edit(item)">Edit</button><button v-if="resource === 'site' && item.Status === 'Inactive'" type="button" :disabled="busy" @click="activate(item)">Activate</button><button v-else type="button" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></footer>
       </article>
     </section>
 
-    <Teleport to="body"><div v-if="modalOpen" class="modal-backdrop" @click.self="!busy && (modalOpen = false)"><form class="modal organization-crud-modal" :class="{ 'organization-crud-modal--site': resource === 'site' }" role="dialog" aria-modal="true" aria-labelledby="organization-modal-title" @submit.prevent="save">
+    <Teleport to="body"><div v-if="modalOpen" class="modal-backdrop" :class="{ 'organization-modal-backdrop--account': resource === 'site-account' }" @click.self="!busy && (modalOpen = false)"><form class="modal organization-crud-modal" :class="{ 'organization-crud-modal--site': resource === 'site', 'organization-crud-modal--account': resource === 'site-account' }" role="dialog" aria-modal="true" aria-labelledby="organization-modal-title" @submit.prevent="save">
       <button type="button" class="close" aria-label="Close" :disabled="busy" @click="modalOpen = false">×</button>
-      <div class="modal-heading"><p>ORGANIZATION</p><h2 id="organization-modal-title">{{ modalTitle }}</h2><span>{{ resource === 'site' ? 'Set the site details and the agencies that may use this site for rates.' : 'Complete the details below, then save your changes.' }}</span></div>
+      <div class="modal-heading"><p>ORGANIZATION</p><h2 id="organization-modal-title">{{ modalTitle }}</h2><span>{{ resource === 'site-account' ? (editing ? 'Update the account name or availability.' : 'Create a name to group your sites.') : resource === 'site' ? 'Set the site details, its agency and its Site Account.' : 'Complete the details below, then save your changes.' }}</span></div>
       <section v-for="group in formGroups" :key="group.key" class="organization-form-section" :class="{ 'organization-form-section--plain': resource !== 'site' }">
-        <div v-if="group.title" class="organization-form-section__heading"><div><span>{{ group.eyebrow }}</span><h3>{{ group.title }}</h3></div><small v-if="group.key === 'agencies'">A site can be assigned to more than one agency.</small></div>
+        <div v-if="group.title" class="organization-form-section__heading"><div><span>{{ group.eyebrow }}</span><h3>{{ group.title }}</h3></div><small v-if="group.key === 'agencies'">One agency per site. For another agency, add a separate site record.</small></div>
         <div class="form-grid">
         <template v-for="field in group.fields" :key="field.key">
           <label v-if="field.type === 'textarea'" class="form-field form-field--wide"><span>{{ field.label }}</span><textarea v-model="form[field.key]" :required="field.required" /></label>
           <ModernDateField v-else-if="field.type === 'date'" v-model="form[field.key]" :label="field.label" :required="field.required" />
           <fieldset v-else-if="field.type === 'multiselect'" class="agency-choices form-field--wide"><legend>{{ field.label }}</legend><div class="agency-choices__grid"><label v-for="option in lookups[field.optionsKey || ''] || []" :key="optionValue(field, option)"><input v-model="form[field.key]" type="checkbox" :value="optionValue(field, option)"><span>{{ optionLabel(option) }}</span></label></div><p v-if="!(lookups[field.optionsKey || ''] || []).length">No active agencies available.</p></fieldset>
-          <SearchableSelect v-else-if="field.type === 'searchable-select'" v-model="form[field.key]" class="form-searchable" :label="field.label" :options="searchableOptions(field)" :placeholder="`Search ${field.label.toLowerCase()}`" :required="field.required" :empty-text="`No matching ${field.label.toLowerCase()}s.`" />
+          <SearchableSelect v-else-if="field.type === 'searchable-select'" v-model="form[field.key]" class="form-searchable" :label="field.label" :options="searchableOptions(field)" :placeholder="`Search ${field.label.toLowerCase()}`" :required="field.required" :disabled="resource === 'site' && field.key === 'AgencyID' && Boolean(editing?.AgencyIDs?.length)" :empty-text="`No matching ${field.label.toLowerCase()}s.`" />
           <label v-else-if="field.type === 'select'" class="form-field"><span>{{ field.label }}</span><select v-model="form[field.key]" :required="field.required"><option value="">Select {{ field.label }}</option><template v-if="field.optionsKey"><option v-for="option in lookups[field.optionsKey] || []" :key="optionValue(field, option)" :value="optionValue(field, option)">{{ optionLabel(option) }}</option></template><template v-else><option>Active</option><option>Inactive</option></template></select></label>
           <label v-else-if="field.type === 'file'" class="form-field form-field--wide"><span>{{ field.label }}</span><input type="file" accept="image/png,image/jpeg,image/webp" @change="selectLogo"><small>PNG, JPG, or WEBP, up to 2 MB.</small><div v-if="logoPreview" class="logo-editor"><img :src="logoPreview" alt="Logo preview"><button type="button" @click="removeLogo">Remove logo</button></div></label>
-          <label v-else class="form-field"><span>{{ field.label }}</span><input v-model="form[field.key]" :type="field.type || 'text'" :required="field.required"></label>
+          <label v-else class="form-field"><span>{{ field.label }}</span><input v-model="form[field.key]" :type="field.type || 'text'" :required="field.required" :placeholder="resource === 'site-account' && field.key === 'SiteAccountName' ? 'e.g. DJA OtherPosts Accounts' : undefined" :maxlength="resource === 'site-account' && field.key === 'SiteAccountName' ? 150 : undefined"></label>
         </template>
         </div>
       </section>
@@ -262,6 +283,22 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 .organization-crud-modal--site .modal-footer>button{min-height:42px;padding:9px 18px;font-size:.88rem}
 @media(max-width:900px){.organization-page--site .filters{grid-template-columns:repeat(2,minmax(0,1fr))}.organization-page--site .search-field{grid-column:1/-1}}
 @media(max-width:600px){.organization-page--site .filters{grid-template-columns:1fr}.organization-page--site .search-field{grid-column:auto}.organization-crud-modal--site{padding:22px 14px}.organization-crud-modal--site .organization-form-section{padding:14px}.organization-form-section__heading{align-items:flex-start;flex-direction:column;gap:7px}.organization-form-section__heading>small{text-align:left}.agency-choices__grid{grid-template-columns:1fr}.organization-crud-modal--site .modal-footer{bottom:-22px;margin:0 -14px -22px;padding:12px 14px}}
+.organization-modal-backdrop--account{align-items:center;padding:20px}
+.organization-crud-modal--account{--account-line:#e2e9f3;--account-footer:#f8faff;width:min(100%,520px);max-height:calc(100dvh - 40px);gap:0;padding:0;border-radius:18px;overscroll-behavior:contain}
+.organization-crud-modal--account .close{top:20px;right:20px;width:34px;height:34px}
+.organization-crud-modal--account .modal-heading{padding:26px 66px 22px 26px;border-bottom:1px solid var(--account-line)}
+.organization-crud-modal--account .modal-heading h2{margin:7px 0 8px;font-size:1.5rem;line-height:1.25}
+.organization-crud-modal--account .modal-heading>span{display:block;line-height:1.5}
+.organization-crud-modal--account .organization-form-section{padding:24px 26px;gap:0}
+.organization-crud-modal--account .form-grid{grid-template-columns:minmax(0,1fr);gap:18px}
+.organization-crud-modal--account .form-field{gap:9px}
+.organization-crud-modal--account .form-field>span{font-size:.83rem}
+.organization-crud-modal--account .form-field input,.organization-crud-modal--account .form-field select{min-height:48px;padding:12px 14px;font-size:.9rem}
+.organization-crud-modal--account .modal-error{margin:0;padding:0 26px 20px;font-size:.82rem;line-height:1.5}
+.organization-crud-modal--account .modal-footer{position:static;bottom:auto;display:flex;justify-content:flex-end;gap:10px;margin:0;padding:18px 26px;border-top:1px solid var(--account-line);background:var(--account-footer)}
+.organization-crud-modal--account .modal-footer>button{min-height:42px;padding:10px 18px;font-size:.83rem}
+@media(max-width:600px){.organization-modal-backdrop--account{padding:16px}.organization-crud-modal--account{max-height:calc(100dvh - 32px);border-radius:16px}.organization-crud-modal--account .modal-heading{padding:24px 58px 20px 22px}.organization-crud-modal--account .organization-form-section{padding:22px}.organization-crud-modal--account .close{top:18px;right:16px}.organization-crud-modal--account .modal-error{padding:0 22px 18px}.organization-crud-modal--account .modal-footer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:16px 22px}.organization-crud-modal--account .modal-footer>button{width:100%}}
+@media(max-width:380px){.organization-crud-modal--account .modal-footer{grid-template-columns:1fr}.organization-crud-modal--account .modal-heading h2{font-size:1.3rem}}
 </style>
 
 <style>
@@ -315,4 +352,5 @@ html[data-theme='dark'] .organization-crud-modal--site .form-searchable .searcha
 html[data-theme='dark'] .organization-crud-modal--site .agency-choices legend{color:#c5d1e5}
 html[data-theme='dark'] .organization-crud-modal--site .agency-choices__grid label{border-color:#405273;background:#1b2946;color:#d3deef}
 html[data-theme='dark'] .organization-crud-modal--site .agency-choices__grid label:has(input:checked){border-color:#6685b6;background:#243b69;color:#fff}
+html[data-theme='dark'] .organization-crud-modal--account{--account-line:#334562;--account-footer:#14213a}
 </style>
