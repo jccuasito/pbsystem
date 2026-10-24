@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import EmployeePositionChangeModal from '~/components/EmployeePositionChangeModal.vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import SearchableSelect from '~~/components/SearchableSelect.vue'
+import EmployeeAddressFields from '~/components/EmployeeAddressFields.vue'
+import { addressFromEmployee, addressToEmployee, type EmployeeAddress } from '~/utils/philippineAddress'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 import { alertMessages, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../../components/alertmessage/messages'
@@ -81,6 +83,8 @@ const form = ref({
   Birthday: '',
   Gender: '',
   CivilStatus: '',
+  Height: '' as string | number,
+  Weight: '' as string | number,
   Address: '',
   Email: '',
   ContactNumber: '',
@@ -116,6 +120,14 @@ const form = ref({
   EmergencyContactNo: ''
 })
 const transferForm = ref({ SiteRateID: '', SiteID: '', SiteShiftID: '', StartDate: '', Remarks: '' })
+const permanentAddress = computed<EmployeeAddress>({
+  get: () => addressFromEmployee(form.value,'Permanent'),
+  set: value => Object.assign(form.value,addressToEmployee(value,'Permanent')),
+})
+const presentAddress = computed<EmployeeAddress>({
+  get: () => addressFromEmployee(form.value,'Present'),
+  set: value => Object.assign(form.value,addressToEmployee(value,'Present')),
+})
 const siteShiftForm = ref({ ShiftCodeID: '', ShiftCode: '', ShiftName: '', ShiftType: 'Day', TimeIn: '08:00', TimeOut: '17:00', RegularHours: '8', RegularOTCap: '4' })
 
 function beneficiariesFromEmployee(item: any): BeneficiaryEntry[] {
@@ -169,6 +181,8 @@ function reset(item: any = null) {
     Birthday: item?.Birthday?.slice?.(0, 10) ?? item?.Birthday ?? '',
     Gender: canonicalOption(item?.Gender, genderOptions),
     CivilStatus: canonicalOption(item?.CivilStatus, civilStatusOptions),
+    Height: item?.Height ?? '',
+    Weight: item?.Weight ?? '',
     Address: item?.Address ?? '',
     Email: item?.Email ?? '',
     ContactNumber: item?.ContactNumber ?? '',
@@ -1005,6 +1019,11 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             </div>
           </section>
 
+          <section class="employee-form-section">
+            <div class="employee-form-section__heading"><div><span>PHYSICAL DETAILS</span><h3>Height and weight</h3></div><small>Optional · shown in Employee Profile</small></div>
+            <div class="grid"><label>Height (cm)<input v-model="form.Height" type="number" min="0.01" max="300" step="0.01" inputmode="decimal" placeholder="Example: 165" /></label><label>Weight (kg)<input v-model="form.Weight" type="number" min="0.01" max="999.99" step="0.01" inputmode="decimal" placeholder="Example: 60.5" /></label></div>
+          </section>
+
           <section class="employee-form-section payroll-disbursement-section">
             <div class="employee-form-section__heading">
               <div><span>PAYROLL DISBURSEMENT</span><h3>Salary payment method</h3></div>
@@ -1057,19 +1076,13 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>PERMANENT ADDRESS</span><h3>Permanent residence</h3></div></div>
-            <div class="grid"><label>Unit/House number<input v-model="form.PermanentUnitHouseNumber" /></label><label>Province<input v-model="form.PermanentProvince" /></label></div>
-            <div class="grid"><label>Street<input v-model="form.PermanentStreet" /></label><label>City/Municipality<input v-model="form.PermanentCityMunicipality" /></label></div>
-            <div class="grid"><label>Subdivision<input v-model="form.PermanentSubdivision" /></label><label>Barangay<input v-model="form.PermanentBarangay" /></label></div>
-            <div class="grid"><label>Region<input v-model="form.PermanentRegion" /></label><label>Postal code<input v-model="form.PermanentPostalCode" inputmode="numeric" /></label></div>
+            <EmployeeAddressFields v-model="permanentAddress" />
           </section>
 
           <section class="employee-form-section">
             <div class="employee-form-section__heading"><div><span>PRESENT ADDRESS</span><h3>Current residence</h3></div><label class="checkbox-row"><input type="checkbox" :checked="sameAsPermanentAddress" @change="toggleSameAsPermanentAddress" /> Same as permanent address</label></div>
             <div class="present-address-fields" :class="{ 'fields-disabled': sameAsPermanentAddress }">
-              <div class="grid"><label>Unit/House number<input v-model="form.PresentUnitHouseNumber" :disabled="sameAsPermanentAddress" /></label><label>Province<input v-model="form.PresentProvince" :disabled="sameAsPermanentAddress" /></label></div>
-              <div class="grid"><label>Street<input v-model="form.PresentStreet" :disabled="sameAsPermanentAddress" /></label><label>City/Municipality<input v-model="form.PresentCityMunicipality" :disabled="sameAsPermanentAddress" /></label></div>
-              <div class="grid"><label>Subdivision<input v-model="form.PresentSubdivision" :disabled="sameAsPermanentAddress" /></label><label>Barangay<input v-model="form.PresentBarangay" :disabled="sameAsPermanentAddress" /></label></div>
-              <div class="grid"><label>Region<input v-model="form.PresentRegion" :disabled="sameAsPermanentAddress" /></label><label>Postal code<input v-model="form.PresentPostalCode" inputmode="numeric" :disabled="sameAsPermanentAddress" /></label></div>
+              <EmployeeAddressFields v-model="presentAddress" :disabled="sameAsPermanentAddress" />
             </div>
           </section>
 

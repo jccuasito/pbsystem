@@ -82,6 +82,8 @@ const profileGroups = computed(() => {
       { label: 'Birthday', value: profileDate(person.Birthday) },
       { label: 'Gender', value: person.Gender },
       { label: 'Civil status', value: person.CivilStatus },
+      { label: 'Height', value: Number(payment.Height) > 0 ? `${Number(payment.Height)} cm` : null },
+      { label: 'Weight', value: Number(payment.Weight) > 0 ? `${Number(payment.Weight)} kg` : null },
       { label: 'Email', value: person.Email },
       { label: 'Contact number', value: person.ContactNumber },
     ] },

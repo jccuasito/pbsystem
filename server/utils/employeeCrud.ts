@@ -97,6 +97,21 @@ function parseNumber(value: unknown, field: string) {
   return number
 }
 
+function profileMeasurements(body: Record<string, unknown>) {
+  const measurements: Record<string, number | null> = {}
+  for (const field of ['Height', 'Weight']) {
+    if (!Object.prototype.hasOwnProperty.call(body, field)) continue
+    const raw = body[field], value = typeof raw === 'string' ? raw.trim() : raw
+    if (value === '' || value == null) { measurements[field] = null; continue }
+    const number = Number(value), maximum = field === 'Height' ? 300 : 999.99
+    if (!['string','number'].includes(typeof value) || !Number.isFinite(number) || number < 0.01 || number > maximum) {
+      throw createError({ statusCode: 400, statusMessage: `${field} must be between 0.01 and ${maximum} ${field === 'Height' ? 'cm' : 'kg'}, or left blank.` })
+    }
+    measurements[field] = Math.round(number * 100) / 100
+  }
+  return measurements
+}
+
 function parseInteger(value: unknown, field: string, optional = false) {
   if (value === null || value === undefined || value === '') {
     if (optional) return null
@@ -391,6 +406,13 @@ async function savePayrollDisbursement(connection: any, employeeId: number, body
     )
   }
 
+  const measurements = profileMeasurements(body)
+  const measurementFields = Object.keys(measurements)
+  if (measurementFields.length) await connection.execute(
+    `UPDATE employee_profile SET ${measurementFields.map(field => `${field}=?`).join(',')} WHERE EmployeeID=? ORDER BY ProfileID DESC LIMIT 1`,
+    [...measurementFields.map(field => measurements[field]), employeeId],
+  )
+
   const [[activeBank]] = await connection.execute(
     "SELECT BankID, AccountName, BankName, AccountNumber, AccountType FROM bank WHERE EmployeeID = ? AND Status = 'Active' ORDER BY BankID DESC LIMIT 1 FOR UPDATE",
     [employeeId],
@@ -601,7 +623,7 @@ function sectionConfig(section: string) {
 function sectionValues(config: SectionConfig, body: Record<string, unknown>, employeeId: number) {
   return config.fields.map((field) => {
     if (field === 'EmployeeID') return employeeId
-    if (field === 'Height' || field === 'Weight') return parseNumber(body[field], field)
+    if (field === 'Height' || field === 'Weight') return profileMeasurements(body)[field] ?? null
     if (field === 'YearGraduated') return body[field] ? Number(body[field]) : null
     if (field === 'IssuedDate' || field === 'ExpiryDate' || field === 'CompletedDate' || field === 'EntryDate' || field === 'PaymentMethodEffectiveDate') return parseDate(body[field])
     if (field === 'PaymentMethod') return parseEmployeeChoice(body[field], 'Salary payment method', employeePaymentMethodOptions)
@@ -636,7 +658,7 @@ function employeeListSql(filters: string[]) {
     '  e.BeneficiaryNotApplicable, e.Beneficiary1, e.Beneficiary1Relationship, e.Beneficiary2, e.Beneficiary2Relationship, e.Beneficiaries,',
     '  e.EmergencyName, e.EmergencyRelationship, e.EmergencyAddress, e.EmergencyContactNo,',
     "  ep.PaymentMethod, DATE_FORMAT(ep.PaymentMethodEffectiveDate, '%Y-%m-%d') AS PaymentMethodEffectiveDate,",
-    '  eb.AccountName, eb.BankName, eb.AccountNumber, eb.AccountType,',
+    '  ep.Height, ep.Weight, eb.AccountName, eb.BankName, eb.AccountNumber, eb.AccountType,',
     '  ap.AgencyID, a.AgencyName, ap.PositionID, p.PositionName,',
     '  ld.DeploymentID AS CurrentDeploymentID,',
     '  ld.DeploymentType AS CurrentDeploymentType,',
@@ -809,6 +831,7 @@ export async function createEmployee(event: any) {
   const photo = parseEmployeePhoto(body.PhotoDataUrl)
   const values = employeeValues(body, beneficiaries)
   payrollDisbursementDetails(body)
+  profileMeasurements(body)
   let employeeId = 0
   const connection = await pool.getConnection()
   try {
@@ -845,6 +868,7 @@ export async function updateEmployee(event: any) {
   const photo = parseEmployeePhoto(body.PhotoDataUrl)
   const removePhoto = parseBooleanFlag(body.RemovePhoto) === 1
   payrollDisbursementDetails(body)
+  profileMeasurements(body)
   const duplicateReview = await employeeDuplicateReview(body, employeeId)
   assertEmployeeIsNotDuplicate(duplicateReview, parseBooleanFlag(body.ConfirmPossibleDuplicate) === 1)
   const connection = await pool.getConnection()

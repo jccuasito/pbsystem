@@ -156,6 +156,26 @@ test('employee create stores a normalized bank-transfer disbursement record', as
   assert.deepEqual(bankInsert.values, [12, 'JUAN SANTOS DELA CRUZ', 'BDO', '123456789012', 'Savings'])
 })
 
+test('employee create saves optional height and weight in the profile transaction', async () => {
+  const {api,calls}=harness({...validEmployee,Height:'165.25',Weight:'60.50'})
+  await api.createEmployee({})
+  const measurement=calls.find(call=>call.sql.startsWith('UPDATE employee_profile SET Height='))
+  assert.deepEqual(measurement.values,[165.25,60.5,12])
+  assert.ok(!calls.find(call=>call.sql.startsWith('INSERT INTO employee')).sql.includes('Height'),'Measurements belong to the existing employee_profile table')
+  const blank=harness({...validEmployee,Height:'',Weight:null});await blank.api.createEmployee({})
+  assert.deepEqual(blank.calls.find(call=>call.sql.startsWith('UPDATE employee_profile SET Height=')).values,[null,null,12])
+  const legacy=harness(validEmployee);await legacy.api.createEmployee({})
+  assert.ok(!legacy.calls.some(call=>call.sql.startsWith('UPDATE employee_profile SET Height=')),'Older callers do not clear existing measurements')
+})
+
+test('invalid measurements are rejected before any database queries', async () => {
+  for(const changes of [{Height:-1},{Height:0},{Height:'abc'},{Height:301},{Height:0.001},{Height:true},{Weight:-1},{Weight:1000},{Weight:'NaN'}]){
+    const {api,calls}=harness({...validEmployee,...changes})
+    await assert.rejects(()=>api.createEmployee({}),error=>error.statusCode===400&&/Height|Weight/.test(error.message))
+    assert.equal(calls.length,0)
+  }
+})
+
 test('employee create requires complete bank details only for bank transfer', async () => {
   const { api, calls } = harness({ ...validEmployee, PaymentMethod: 'Bank Transfer', BankName: 'BDO' })
   await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /bank transfer details/.test(error.message))

@@ -100,7 +100,10 @@ test('payment and beneficiary details reuse saved data, and profile cannot open 
     assert.equal(h.state.profileBeneficiaries.value[0].Name, 'Legacy beneficiary')
     h.state.employee.value.BeneficiaryNotApplicable = 1
     assert.equal(h.state.profileBeneficiaries.value.length, 0)
-    h.state.bundle.value = { profile: { PaymentMethod: 'Cash', PaymentMethodEffectiveDate: '2026-10-01' } }
+    h.state.bundle.value = { profile: { PaymentMethod: 'Cash', PaymentMethodEffectiveDate: '2026-10-01', Height: '165.25', Weight: '60.50' } }
+    const personal = h.state.profileGroups.value.find(group => group.key === 'personal').fields
+    assert.equal(personal.find(field => field.label === 'Height').value, '165.25 cm')
+    assert.equal(personal.find(field => field.label === 'Weight').value, '60.5 kg')
     const payment = h.state.profileGroups.value.find(group => group.key === 'payment').fields
     assert.equal(payment[0].value, 'Cash'); assert.equal(payment[1].value, 'Oct 1, 2026')
     assert.equal(h.state.documentSections.value.length, 7)

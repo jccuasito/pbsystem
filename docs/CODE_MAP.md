@@ -162,6 +162,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrBtrModal.vue`
   - `app/components/DtrCompactPrintView.vue`
   - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
+  - `app/components/EmployeeAddressFields.vue`
   - `app/components/EmployeePositionChangeModal.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
@@ -192,6 +193,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/rates/site/index.vue`
   - `app/pages/settings/index.vue`
   - `app/utils/employee.ts`
+  - `app/utils/philippineAddress.ts`
   - `components/alertmessage/logoutalert.vue`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
@@ -274,6 +276,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.get.ts`
   - `POST /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.post.ts`
   - `POST /api/employees/[param]/transfer` → `server/api/employees/[id]/transfer.post.ts`
+  - `GET /api/employees/address-options` → `server/api/employees/address-options.get.ts`
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
   - `POST /api/employees/deployments` → `server/api/employees/deployments/index.post.ts`
   - `DELETE /api/employees/documents` → `server/api/employees/documents.delete.ts`
@@ -329,6 +332,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `DELETE /api/settings/users/[param]` → `server/api/settings/users/[id].delete.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
+  - `server/assets/addresses/philippines.json`
   - `server/connection/dbconnect.ts`
   - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
@@ -354,6 +358,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payrollHistoryCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/payslipCrud.ts`
+  - `server/utils/philippineAddress.ts`
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersionCrud.ts`
@@ -467,9 +472,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/employees/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
+  - `app/components/EmployeeAddressFields.vue`
   - `app/components/EmployeePositionChangeModal.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
+  - `app/utils/philippineAddress.ts`
   - `components/alertmessage/messages.ts`
   - `components/ModernDateField.vue`
   - `components/SearchableSelect.vue`
@@ -482,12 +489,14 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.get.ts`
   - `POST /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.post.ts`
   - `POST /api/employees/[param]/transfer` → `server/api/employees/[id]/transfer.post.ts`
+  - `GET /api/employees/address-options` → `server/api/employees/address-options.get.ts`
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
   - `POST /api/employees/duplicates` → `server/api/employees/duplicates.post.ts`
   - `POST /api/employees/site-shifts` → `server/api/employees/site-shifts.post.ts`
   - `GET /api/organization/site-shift` → `server/api/organization/[resource].get.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
+  - `server/assets/addresses/philippines.json`
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
@@ -495,6 +504,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
+  - `server/utils/philippineAddress.ts`
   - `server/utils/rateVersions.ts`
   - `shared/utils/governmentIds.ts`
   - `shared/utils/rateFields.ts`
