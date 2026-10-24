@@ -11,6 +11,7 @@ import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmploy
 const items = ref<any[]>([]), dtrAssignments = ref<any[]>([]), agencies = ref<any[]>([]), employees = ref<any[]>([]), siteRates = ref<any[]>([]), sites = ref<any[]>([]), shiftCodes = ref<any[]>([])
 const loading = ref(true), busy = ref(false), error = ref(''), modalOpen = ref(false), detailsOpen = ref(false), rosterOpen = ref(false)
 const selectedEmployee = ref<any | null>(null), selectedRoster = ref<any | null>(null)
+const historyCutoff = ref(''), historyAssignment = ref('')
 const employeeSearch = ref(''), agencyFilter = ref(''), clientFilter = ref(''), siteFilter = ref(''), cutoffFilter = ref('')
 const historyView = ref<'deployments' | 'dtr'>('deployments')
 const form = ref({ EmployeeID: '', SiteRateID: '', SiteID: '', ShiftCodeID: '', DeploymentType: 'Regular', StartDate: '', EndDate: '', Remarks: '' })
@@ -88,6 +89,26 @@ const filteredEmployees = computed(() => {
   })
 })
 const selectedEmployeeDtrHistory = computed(() => selectedEmployee.value ? dtrAssignments.value.filter(row => String(row.EmployeeID) === String(selectedEmployee.value.EmployeeID)).sort((a, b) => String(b.PeriodStart).localeCompare(String(a.PeriodStart))) : [])
+const employeeHistoryCutoffs = computed(() => {
+  const values = new Map<string, { key: string; start: string; end: string }>()
+  for (const row of selectedEmployeeDtrHistory.value) {
+    const start = String(row.PeriodStart).slice(0, 10), end = String(row.PeriodEnd).slice(0, 10), key = `${start}|${end}`
+    if (!values.has(key)) values.set(key, { key, start, end })
+  }
+  return Array.from(values.values()).sort((a, b) => b.start.localeCompare(a.start))
+})
+const historyFiltersActive = computed(() => Boolean(historyCutoff.value || historyAssignment.value))
+const selectedHistoryCutoff = computed(() => employeeHistoryCutoffs.value.find(item => item.key === historyCutoff.value))
+function matchesHistoryCutoff(startValue: any, endValue: any) {
+  const cutoff = selectedHistoryCutoff.value
+  if (!cutoff) return true
+  const start = String(startValue || '').slice(0, 10), end = String(endValue || '').slice(0, 10)
+  return (!start || start <= cutoff.end) && (!end || end >= cutoff.start)
+}
+const filteredFixedHistory = computed(() => (selectedEmployee.value?.history || []).filter((item: any) => matchesHistoryCutoff(item.StartDate, item.EndDate) && (!historyAssignment.value || item.DeploymentType === historyAssignment.value)))
+const filteredEmployeeDtrHistory = computed(() => selectedEmployeeDtrHistory.value.filter(item => (!historyCutoff.value || `${String(item.PeriodStart).slice(0, 10)}|${String(item.PeriodEnd).slice(0, 10)}` === historyCutoff.value) && (!historyAssignment.value || item.AttendanceType === historyAssignment.value)))
+function clearHistoryFilters() { historyCutoff.value = ''; historyAssignment.value = '' }
+watch(employeeHistoryCutoffs, options => { if (historyCutoff.value && !options.some(item => item.key === historyCutoff.value)) historyCutoff.value = '' })
 const selectedFormEmployee = computed(() => employees.value.find(employee => String(employee.EmployeeID) === String(form.value.EmployeeID)) || null)
 const availableSiteRates = computed(() => selectedFormEmployee.value?.AgencyPositionID ? siteRates.value.filter(rate => String(rate.AgencyPositionID) === String(selectedFormEmployee.value.AgencyPositionID) && String(rate.AgencyID) === String(selectedFormEmployee.value.AgencyID)) : [])
 const selectedSiteRate = computed(() => availableSiteRates.value.find(rate => String(rate.SiteRateID) === String(form.value.SiteRateID)) || null)
@@ -172,7 +193,7 @@ function historyStatus(item: any, history: any[]) {
   const newer = history.find((candidate: any) => String(candidate.StartDate) > String(item.StartDate))
   return newer && (newer.AgencyID !== item.AgencyID || newer.SiteRateID !== item.SiteRateID || newer.SiteID !== item.SiteID) ? 'Transferred' : 'Ended'
 }
-function openDetails(group: any) { selectedEmployee.value = group; detailsOpen.value = true }
+function openDetails(group: any) { clearHistoryFilters(); selectedEmployee.value = group; detailsOpen.value = true }
 function openEmployeeDetails(person: any) {
   const group = employeeGroups.value.find(candidate => String(candidate.EmployeeID) === String(person.EmployeeID))
   // A reliever can exist only in a cutoff DTR roster and have no permanent
@@ -304,39 +325,52 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
     <Teleport to="body"><div v-if="rosterOpen && selectedRoster" class="backdrop" @click.self="rosterOpen = false"><section class="modal roster-modal"><button class="close" type="button" @click="rosterOpen = false">×</button><p>SITE DTR ROSTER</p><h2>{{ selectedRoster.ClientName }} — {{ selectedRoster.SiteName }}</h2><small>{{ selectedRoster.AgencyName }} · {{ cutoffLabel(selectedRoster.PeriodStart, selectedRoster.PeriodEnd) }} · {{ selectedRoster.DtrStatus }}</small><div class="roster-summary"><span>{{ selectedRoster.people.length }} assigned</span><span class="type type--regular">{{ selectedRoster.regularCount }} Regular</span><span class="type type--reliever">{{ selectedRoster.relieverCount }} Reliever</span></div><div class="table-wrap"><table><thead><tr><th>Employee ID</th><th>Employee no.</th><th>Name</th><th>Position</th><th>DTR type</th><th>History</th></tr></thead><tbody><tr v-for="person in selectedRoster.people" :key="person.EmployeeID"><td class="employee-id">{{ formatEmployeeId(person.EmployeeID) }}</td><td>{{ formatEmployeeNumber(person.EmployeeNumber) }}</td><td>{{ person.EmployeeName }}</td><td>{{ display(person.PositionName) }}</td><td><span class="type" :class="`type--${String(person.AttendanceType).toLowerCase()}`">{{ person.AttendanceType }}</span></td><td><button class="details" @click="openEmployeeDetails(person)">Employee details</button></td></tr></tbody></table></div><footer><button type="button" @click="rosterOpen = false">Close</button></footer></section></div></Teleport>
     <Teleport to="body">
       <div v-if="detailsOpen && selectedEmployee" class="backdrop" @click.self="detailsOpen = false">
-        <section class="modal history-modal">
+        <section class="modal history-modal" role="dialog" aria-modal="true" aria-labelledby="employee-history-title" @keydown.esc.stop="detailsOpen = false">
           <button class="close" type="button" aria-label="Close deployment history" @click="detailsOpen = false">×</button>
           <header class="history-header">
             <p>EMPLOYEE DEPLOYMENT HISTORY</p>
-            <h2>{{ formatEmployeeName(selectedEmployee) }}</h2>
+            <h2 id="employee-history-title">{{ formatEmployeeName(selectedEmployee) }}</h2>
             <span class="employee-id">{{ formatEmployeeId(selectedEmployee.EmployeeID) }} · {{ formatEmployeeNumber(selectedEmployee.EmployeeNumber) }}</span>
           </header>
-          <h3>Fixed deployment history</h3>
-          <div class="timeline">
-            <article v-for="item in selectedEmployee.history" :key="item.DeploymentID" class="timeline-item">
-              <div class="timeline-head"><strong>{{ display(item.ClientName) }} · {{ display(item.SiteName) }}</strong><span class="status">{{ historyStatus(item, selectedEmployee.history) }}</span></div>
-              <div class="history-card-meta">
-                <span><small>Agency / position</small>{{ display(item.AgencyName) }} · {{ display(item.PositionName) }}</span>
-                <span><small>Deployment type</small><span class="type" :class="`type--${String(item.DeploymentType || '').toLowerCase()}`">{{ display(item.DeploymentType) }}</span></span>
-                <span><small>Site status</small><span class="site-status" :class="Number(item.IsPermanentSite)===1?'site-status--permanent':'site-status--cutoff'">{{ Number(item.IsPermanentSite)===1?'Fixed':'Cutoff-only' }}</span></span>
-                <span><small>Shift</small>{{ shiftDisplay(item) }}</span>
+          <div class="history-content">
+            <form class="history-filters" @submit.prevent>
+              <label class="history-cutoff-filter">Cutoff<select v-model="historyCutoff" :disabled="!employeeHistoryCutoffs.length" aria-describedby="history-filter-help"><option value="">All recorded cutoffs</option><option v-for="cutoff in employeeHistoryCutoffs" :key="cutoff.key" :value="cutoff.key">{{ cutoffLabel(cutoff.start, cutoff.end) }}</option></select></label>
+              <label>Assignment<select v-model="historyAssignment" aria-describedby="history-filter-help"><option value="">All assignments</option><option value="Regular">Regular</option><option value="Reliever">Reliever</option></select></label>
+              <button class="history-clear" type="button" :disabled="!historyFiltersActive" @click="clearHistoryFilters">Clear filters</button>
+              <p id="history-filter-help" class="history-filter-help">Filters both lists by cutoff and assignment.</p>
+            </form>
+            <section aria-labelledby="fixed-history-title">
+              <div class="history-section-heading"><h3 id="fixed-history-title">Fixed deployment history</h3><span>{{ filteredFixedHistory.length }}<template v-if="historyFiltersActive"> of {{ selectedEmployee.history.length }}</template> {{ selectedEmployee.history.length === 1 ? 'record' : 'records' }}</span></div>
+              <p v-if="!filteredFixedHistory.length" class="empty-history">{{ selectedEmployee.history.length ? 'No fixed deployments match these filters.' : 'No fixed deployment recorded.' }}</p>
+              <div v-else class="history-list-scroll" role="region" aria-label="Fixed deployment history list" tabindex="0">
+                <table class="history-list">
+                  <thead><tr><th scope="col">Period</th><th scope="col">Client / site</th><th scope="col">Agency / position</th><th scope="col">Assignment / shift</th><th scope="col">Status</th></tr></thead>
+                  <tbody><tr v-for="item in filteredFixedHistory" :key="item.DeploymentID">
+                    <td class="history-period"><strong>{{ formatDeploymentDate(item.StartDate) }}</strong><span class="history-secondary">to {{ item.EndDate ? formatDeploymentDate(item.EndDate) : 'Ongoing' }}</span></td>
+                    <td><strong>{{ display(item.SiteName) }}</strong><span class="history-secondary">{{ display(item.ClientName) }}</span><details v-if="item.Remarks" class="history-row-remarks"><summary>Remarks</summary><p>{{ item.Remarks }}</p></details></td>
+                    <td><strong>{{ display(item.PositionName) }}</strong><span class="history-secondary">{{ display(item.AgencyName) }}</span></td>
+                    <td><span>{{ display(item.DeploymentType) }} / {{ Number(item.IsPermanentSite)===1?'Fixed':'Cutoff-only' }}</span><span class="history-secondary">{{ shiftDisplay(item) }}</span></td>
+                    <td><span class="status">{{ historyStatus(item, selectedEmployee.history) }}</span></td>
+                  </tr></tbody>
+                </table>
               </div>
-              <p class="deployment-period"><span>Deployment period</span><strong>{{ deploymentPeriod(item.StartDate, item.EndDate) }}</strong></p>
-              <p v-if="item.Remarks" class="history-remarks"><span>Remarks</span>{{ item.Remarks }}</p>
-            </article>
-          </div>
-          <h3 class="dtr-heading">DTR attendance history</h3>
-          <p v-if="!selectedEmployeeDtrHistory.length" class="empty-history">No DTR attendance assignment yet.</p>
-          <div v-else class="timeline">
-            <article v-for="entry in selectedEmployeeDtrHistory" :key="`${entry.BatchID}-${entry.EmployeeID}`" class="timeline-item dtr-item">
-              <div class="timeline-head"><strong>{{ entry.ClientName }} · {{ entry.SiteName }}</strong><span class="type" :class="`type--${String(entry.AttendanceType).toLowerCase()}`">{{ entry.AttendanceType }}</span></div>
-              <div class="history-card-meta">
-                <span><small>Agency / position</small>{{ entry.AgencyName }} · {{ display(entry.PositionName) }}</span>
-                <span><small>Site status</small><span class="site-status" :class="Number(entry.IsPermanentSite)===1?'site-status--permanent':'site-status--cutoff'">{{ Number(entry.IsPermanentSite)===1?'Fixed':'Cutoff-only' }}</span></span>
-                <span><small>Cutoff</small>{{ cutoffLabel(entry.PeriodStart, entry.PeriodEnd) }}</span>
-                <span><small>DTR status</small>{{ entry.DtrStatus }}</span>
+            </section>
+            <section aria-labelledby="dtr-history-title">
+              <div class="history-section-heading"><h3 id="dtr-history-title">DTR attendance history</h3><span>{{ filteredEmployeeDtrHistory.length }}<template v-if="historyFiltersActive"> of {{ selectedEmployeeDtrHistory.length }}</template> {{ selectedEmployeeDtrHistory.length === 1 ? 'record' : 'records' }}</span></div>
+              <p v-if="!filteredEmployeeDtrHistory.length" class="empty-history">{{ selectedEmployeeDtrHistory.length ? 'No DTR assignments match these filters.' : 'No DTR attendance assignment yet.' }}</p>
+              <div v-else class="history-list-scroll" role="region" aria-label="DTR attendance history list" tabindex="0">
+                <table class="history-list">
+                  <thead><tr><th scope="col">Cutoff</th><th scope="col">Client / site</th><th scope="col">Agency / position</th><th scope="col">Assignment</th><th scope="col">DTR status</th></tr></thead>
+                  <tbody><tr v-for="entry in filteredEmployeeDtrHistory" :key="`${entry.BatchID}-${entry.EmployeeID}`">
+                    <td class="history-period"><strong>{{ cutoffLabel(entry.PeriodStart, entry.PeriodEnd) }}</strong></td>
+                    <td><strong>{{ display(entry.SiteName) }}</strong><span class="history-secondary">{{ display(entry.ClientName) }}</span></td>
+                    <td><strong>{{ display(entry.PositionName) }}</strong><span class="history-secondary">{{ display(entry.AgencyName) }}</span></td>
+                    <td><span class="type" :class="`type--${String(entry.AttendanceType).toLowerCase()}`">{{ entry.AttendanceType }}</span><span class="history-secondary">{{ Number(entry.IsPermanentSite)===1?'Fixed':'Cutoff-only' }}</span></td>
+                    <td>{{ entry.DtrStatus }}</td>
+                  </tr></tbody>
+                </table>
               </div>
-            </article>
+            </section>
           </div>
           <footer><button type="button" @click="detailsOpen = false">Close</button></footer>
         </section>
@@ -374,10 +408,42 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
 .ongoing-toggle{display:flex!important;align-items:center;gap:10px;width:max-content;max-width:100%;padding:8px 10px;border-radius:8px;cursor:pointer}
 .deployment-form .ongoing-toggle input{width:18px;min-height:18px;margin:0;accent-color:#2349e6}
 .ongoing-toggle span{display:grid;gap:1px}.ongoing-toggle strong{color:#23395d;font-size:.82rem}.ongoing-toggle small{color:#6b7a90;font-weight:500;font-size:.72rem}
-.deployments-page{padding:32px;max-width:1500px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p,.modal>p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0;font-size:1.8rem}.page-head small,.view-note{color:#64748b}.primary,.ghost,.details{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost,.details{background:#eef3ff;color:#2043cc}.filters{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:0 0 16px}.filters label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters input,.filters select{min-height:40px;min-width:180px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff;font:inherit}.filters label:first-child input{min-width:300px}.view-note{margin:0 0 12px;font-size:.9rem}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.employee-id{font-weight:800;color:#1f3fcf}.status,.type{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700;white-space:nowrap}.status{background:#e0e7ff;color:#3730a3}.type--regular{background:#e0e7ff;color:#3730a3}.type--reliever{background:#fef3c7;color:#92400e}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,800px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.4rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}.modal footer button:not(.primary){min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:0 14px;background:#fff;font-weight:700;cursor:pointer}.timeline{display:grid;gap:10px;margin-top:8px}.timeline-item{border:1px solid #dce3ee;border-left:4px solid #5b7df0;border-radius:10px;padding:12px}.timeline-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.timeline-item p{margin:5px 0 0;color:#526174;font-size:.88rem}.history-modal,.roster-modal{width:min(100%,880px)}.roster-summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:#475569;font-weight:700;font-size:.88rem}@media(max-width:760px){.deployments-page{padding:20px}.grid{grid-template-columns:1fr}.page-head,.filters{flex-direction:column;align-items:stretch}.filters input,.filters select,.filters label:first-child input{min-width:0;width:100%}.primary,.ghost{width:100%}}
+.deployments-page{padding:32px;max-width:1500px;margin:auto;color:#162033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p,.modal>p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#5271a5}.page-head h1{margin:4px 0;font-size:1.8rem}.page-head small,.view-note{color:#64748b}.primary,.ghost,.details{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost,.details{background:#eef3ff;color:#2043cc}.filters{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:0 0 16px}.filters label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#56657b}.filters input,.filters select{min-height:40px;min-width:180px;border:1px solid #ccd5e4;border-radius:8px;padding:8px 10px;background:#fff;font:inherit}.filters label:first-child input{min-width:300px}.view-note{margin:0 0 12px;font-size:.9rem}.table-wrap{overflow:auto;border:1px solid #dce3ee;border-radius:14px;background:#fff}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid #edf1f6;font-size:.88rem;white-space:nowrap}th{background:#f8fafc;color:#526174;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.employee-id{font-weight:800;color:#1f3fcf}.status,.type{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700;white-space:nowrap}.status{background:#e0e7ff;color:#3730a3}.type--regular{background:#e0e7ff;color:#3730a3}.type--reliever{background:#fef3c7;color:#92400e}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,800px);max-height:90vh;overflow:auto;background:#fff;border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:#475569}.modal input,.modal select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:9px 10px;font:inherit}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.4rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}.modal footer button:not(.primary){min-height:40px;border:1px solid #cfd8e6;border-radius:8px;padding:0 14px;background:#fff;font-weight:700;cursor:pointer}.roster-modal{width:min(100%,880px)}.roster-summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:#475569;font-weight:700;font-size:.88rem}@media(max-width:760px){.deployments-page{padding:20px}.grid{grid-template-columns:1fr}.page-head,.filters{flex-direction:column;align-items:stretch}.filters input,.filters select,.filters label:first-child input{min-width:0;width:100%}.primary,.ghost{width:100%}}
 .site-status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700;white-space:nowrap}.site-status--permanent{background:#dcfce7;color:#166534}.site-status--cutoff{background:#f1f5f9;color:#475569}
-.history-modal{width:min(100%,820px);gap:8px;font-family:'Plus Jakarta Sans','Inter',system-ui,sans-serif}.history-header{padding-right:34px}.history-header h2{color:#122a50}.history-modal h3{margin:14px 0 0;font-size:1rem}.history-modal .timeline{gap:10px;margin-top:2px}.history-modal .timeline-item{border:1px solid #dce3ee;border-left:4px solid #5b7df0;border-radius:10px;padding:14px}.history-modal .timeline-head{align-items:flex-start}.history-card-meta{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(120px,.7fr);gap:10px 18px;margin-top:12px;color:#526174;font-size:.82rem}.history-card-meta>span{display:flex;align-items:flex-start;gap:7px;flex-wrap:wrap;line-height:1.5}.history-card-meta small{display:block;flex-basis:100%;color:#8290a3;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}.history-modal .timeline-item .deployment-period{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:13px 0 0;padding:10px 12px;border-radius:8px;background:#f1f5fb;color:#1f365c;font-size:.84rem}.deployment-period span{color:#64748b;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}.deployment-period strong{font-size:.88rem}.history-modal .timeline-item .history-remarks{display:grid;margin:10px 0 0;color:#526174;font-size:.82rem}.history-remarks span{color:#8290a3;font-size:.68rem;font-weight:700;text-transform:uppercase}.history-modal .dtr-heading{margin-top:16px}.history-modal .empty-history{margin:0;color:#64748b;font-size:.88rem}
+.history-modal{box-sizing:border-box;width:min(1160px,100%);max-height:90dvh;display:flex;flex-direction:column;gap:0;padding:0;overflow:hidden;color:#183352;font-family:'Plus Jakarta Sans','Inter',system-ui,sans-serif}
+.history-modal>.close{top:16px;right:18px;z-index:1}
+.history-header{flex-shrink:0;padding:22px 58px 18px 24px;border-bottom:1px solid #e1e8f1}
+.history-header h2{margin:0 0 5px;color:#122a50;font-size:1.35rem;line-height:1.3;overflow-wrap:anywhere}
+.history-header .employee-id{font-size:.85rem}
+.history-content{min-height:0;overflow:auto;scrollbar-gutter:stable;padding:20px 24px;display:flex;flex-direction:column;gap:24px}
+.history-filters{flex-shrink:0;display:grid;grid-template-columns:minmax(220px,1.8fr) minmax(150px,1fr) auto;align-items:end;gap:10px 12px;margin:0;padding:14px;border:1px solid #dce5f2;border-radius:10px;background:#f8faff}
+.history-modal .history-filters label{min-width:0;font-size:.74rem}
+.history-modal .history-filters select{min-width:0;font-size:.77rem;background:#fff}
+.history-clear{min-height:40px;padding:8px 12px;border:1px solid #cfd8e6;border-radius:8px;background:#fff;color:#31518a;font:inherit;font-size:.74rem;font-weight:700;white-space:nowrap;cursor:pointer}
+.history-clear:disabled{opacity:.45;cursor:default}
+.history-filter-help{grid-column:1 / -1;margin:0;font-size:.71rem;line-height:1.45;color:#64748b}
+@media(max-width:760px){.history-filters{grid-template-columns:minmax(0,1fr);padding:12px}.history-clear{justify-self:end}}
+.history-content>section{flex-shrink:0;min-width:0}
+.history-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.history-modal .history-section-heading h3{margin:0;color:#183352;font-size:.95rem}
+.history-section-heading>span{flex-shrink:0;color:#718096;font-size:.74rem}
+.history-list-scroll{width:100%;overflow:auto;border:1px solid #dce3ee;border-radius:10px}
+.history-list-scroll:focus-visible{outline:2px solid #3863d8;outline-offset:3px}
+.history-list{table-layout:fixed;width:100%;min-width:820px}
+.history-list th:nth-child(1){width:18%}.history-list th:nth-child(2),.history-list th:nth-child(3){width:25%}.history-list th:nth-child(4){width:18%}.history-list th:nth-child(5){width:14%}
+.history-modal .history-list th,.history-modal .history-list td{padding:11px 12px;white-space:normal;vertical-align:top;font-size:.78rem;line-height:1.45;overflow-wrap:anywhere}
+.history-modal .history-list th{padding-top:10px;padding-bottom:10px;color:#62738b;font-size:.65rem;letter-spacing:.03em}
+.history-list td>strong{display:block;color:#1d3557;font-weight:700}
+.history-secondary{display:block;margin-top:3px;color:#6b7a90;font-size:.72rem;line-height:1.45}
+.history-list tbody tr:last-child td{border-bottom:0}.history-list tbody tr:hover{background:#f8faff}
+.history-list .status,.history-list .type{display:inline-block;font-size:.67rem;padding:3px 7px}
+.history-row-remarks{margin-top:5px;color:#526174;font-size:.72rem}
+.history-row-remarks summary{width:max-content;max-width:100%;color:#315fcc;cursor:pointer}
+.history-row-remarks p{margin:6px 0 0;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.history-modal .empty-history{margin:0;padding:16px;border:1px dashed #dce3ee;border-radius:9px;color:#64748b;font-size:.82rem}
+.history-modal>footer{flex-shrink:0;margin:0;padding:13px 24px;border-top:1px solid #e1e8f1;background:#fff}
+@media(max-width:760px){.history-modal{max-height:92dvh}.history-header{padding:18px 48px 14px 16px}.history-header h2{font-size:1.12rem}.history-header .employee-id{font-size:.75rem}.history-content{padding:16px;gap:20px}.history-modal>footer{padding:12px 16px}}
 .records-wrap{overflow:hidden}.responsive-table{table-layout:fixed}.responsive-table th,.responsive-table td{white-space:normal;vertical-align:middle;line-height:1.35}.deployment-records-table th:nth-child(1){width:21%}.deployment-records-table th:nth-child(2){width:20%}.deployment-records-table th:nth-child(3){width:20%}.deployment-records-table th:nth-child(4){width:19%}.deployment-records-table th:nth-child(5){width:8%}.deployment-records-table th:nth-child(6){width:12%}.cutoff-rosters-table th:nth-child(1){width:22%}.cutoff-rosters-table th:nth-child(2){width:21%}.cutoff-rosters-table th:nth-child(3){width:18%}.cutoff-rosters-table th:nth-child(4){width:19%}.cutoff-rosters-table th:nth-child(5){width:8%}.cutoff-rosters-table th:nth-child(6){width:12%}.record-name,.record-client{display:block;color:#172b4d;font-size:.88rem}.record-meta{display:flex;align-items:center;gap:5px;margin-top:4px;color:#6b7a90;font-size:.72rem}.record-meta b{color:#2349e6}.period-cell{color:#334155}.action-cell{text-align:right}.action-cell .details{white-space:nowrap;padding:9px 12px}.roster-count{display:block;font-size:.78rem;font-weight:700;color:#334155}.roster-breakdown{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.roster-breakdown .type{font-size:.67rem;padding:2px 6px}
 @media(max-width:900px){.records-wrap{overflow:visible;border:0;background:transparent}.responsive-table,.responsive-table tbody{display:block;width:100%}.responsive-table thead{display:none}.responsive-table tbody{display:grid;gap:10px}.responsive-table tr:not(.message-row){display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;padding:14px;border:1px solid #dce3ee;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(28,48,80,.04)}.responsive-table td{display:block;padding:0;border:0;min-width:0}.responsive-table td::before{content:attr(data-label);display:block;margin-bottom:3px;color:#7b8799;font-size:.64rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.responsive-table td:first-child{grid-column:1 / -1;padding-bottom:10px;border-bottom:1px solid #edf1f6}.responsive-table .period-cell{grid-column:1 / -1}.responsive-table .action-cell{grid-column:1 / -1;text-align:stretch}.responsive-table .action-cell::before{display:none}.responsive-table .action-cell .details{width:100%;min-height:40px}.responsive-table .message-row{display:block;padding:16px;border:1px solid #dce3ee;border-radius:12px;background:#fff}.responsive-table .message-row td{display:block}.responsive-table .message-row td::before{display:none}.record-name,.record-client{font-size:.84rem}.record-meta{font-size:.7rem}.cutoff-rosters-table td:nth-child(2),.deployment-records-table td:nth-child(2){grid-column:1 / -1}.roster-breakdown{margin-top:5px}}
-@media(max-width:760px){.deployment-form{padding:20px}.history-tabs{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}.assignment-grid,.date-range,.history-card-meta{grid-template-columns:1fr}.date-arrow{transform:rotate(90deg)}.ongoing-toggle{width:auto}.history-modal .timeline-item .deployment-period{align-items:flex-start;flex-direction:column;gap:3px}}
+@media(max-width:760px){.deployment-form{padding:20px}.history-tabs{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}.assignment-grid,.date-range{grid-template-columns:1fr}.date-arrow{transform:rotate(90deg)}.ongoing-toggle{width:auto}}
 </style>
