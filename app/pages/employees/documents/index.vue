@@ -6,7 +6,7 @@ import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmploy
 type SectionKey = 'profile' | 'government' | 'education' | 'license' | 'training' | 'clearance' | 'bank' | 'insurance'
 
 const sections: Array<{ key: SectionKey; label: string; idKey: string; fields: Array<{ key: string; label: string; type?: string }> }> = [
-  { key: 'profile', label: 'Employee Profile', idKey: 'ProfileID', fields: [{ key: 'Height', label: 'Height', type: 'number' }, { key: 'Weight', label: 'Weight', type: 'number' }, { key: 'PostalCode', label: 'Postal code' }, { key: 'PaymentMethod', label: 'Payment method' }, { key: 'PaymentMethodEffectiveDate', label: 'Payment method effective date', type: 'date' }, { key: 'EntryDate', label: 'Entry date', type: 'date' }] },
+  { key: 'profile', label: 'Employee Profile', idKey: 'EmployeeID', fields: [] },
   { key: 'government', label: 'Government IDs', idKey: 'GovernmentID', fields: [{ key: 'GovernmentType', label: 'Type' }, { key: 'GovernmentNumber', label: 'Number' }] },
   { key: 'education', label: 'Education', idKey: 'EducationID', fields: [{ key: 'EducationLevel', label: 'Level' }, { key: 'School', label: 'School' }, { key: 'Course', label: 'Course' }, { key: 'YearGraduated', label: 'Year graduated', type: 'number' }, { key: 'Attachment', label: 'Attachment' }] },
   { key: 'license', label: 'License', idKey: 'LicenseID', fields: [{ key: 'LicenseName', label: 'License name' }, { key: 'LicenseNumber', label: 'License number' }, { key: 'IssuedDate', label: 'Issued date', type: 'date' }, { key: 'ExpiryDate', label: 'Expiry date', type: 'date' }, { key: 'Attachment', label: 'Attachment' }] },
@@ -37,6 +37,61 @@ const editingId = ref<number | null>(null)
 const form = ref<Record<string, any>>({})
 
 const activeSectionDef = computed(() => sections.find((section) => section.key === activeSection.value) || sections[0])
+const documentSections = computed(() => sections.filter(section => section.key !== 'profile'))
+const profilePhoto = computed(() => employee.value?.PhotoUrl || employee.value?.PhotoPath || '')
+const profileInitials = computed(() => [employee.value?.FirstName, employee.value?.LastName].filter(Boolean).map(name => String(name).trim().charAt(0)).join('').toUpperCase() || 'EMP')
+const profileGroups = computed(() => {
+  const person = employee.value || {}
+  const payment = rowsFor('profile')[0] || {}
+  return [
+    { key: 'employment', title: 'Employment details', fields: [
+      { label: 'Employee ID', value: formatEmployeeId(person.EmployeeID) },
+      { label: 'Employee number', value: formatEmployeeNumber(person.EmployeeNumber) },
+      { label: 'Agency', value: person.AgencyName },
+      { label: 'Position', value: person.PositionName },
+      { label: 'Date hired', value: profileDate(person.DateHired) },
+      { label: 'Status', value: person.Status },
+    ] },
+    { key: 'personal', title: 'Personal information', fields: [
+      { label: 'First name', value: person.FirstName },
+      { label: 'Middle name', value: person.MiddleName },
+      { label: 'Last name', value: person.LastName },
+      { label: 'Nickname', value: person.Nickname },
+      { label: 'Birthday', value: profileDate(person.Birthday) },
+      { label: 'Gender', value: person.Gender },
+      { label: 'Civil status', value: person.CivilStatus },
+      { label: 'Email', value: person.Email },
+      { label: 'Contact number', value: person.ContactNumber },
+    ] },
+    { key: 'addresses', title: 'Addresses', fields: [
+      { label: 'Permanent address', value: profileAddress('Permanent') || person.Address },
+      { label: 'Present address', value: profileAddress('Present') },
+    ] },
+    { key: 'payment', title: 'Payment information', fields: [
+      { label: 'Payment method', value: payment.PaymentMethod },
+      { label: 'Effective date', value: profileDate(payment.PaymentMethodEffectiveDate) },
+    ] },
+    { key: 'emergency', title: 'Emergency contact', fields: [
+      { label: 'Full name', value: person.EmergencyName },
+      { label: 'Relationship', value: person.EmergencyRelationship },
+      { label: 'Contact number', value: person.EmergencyContactNo },
+      { label: 'Address', value: person.EmergencyAddress },
+    ] },
+  ]
+})
+const profileBeneficiaries = computed(() => {
+  const person = employee.value || {}
+  if (Number(person.BeneficiaryNotApplicable) === 1) return []
+  let entries = person.Beneficiaries
+  if (typeof entries === 'string') {
+    try { entries = JSON.parse(entries) } catch { entries = null }
+  }
+  if (!Array.isArray(entries)) entries = [
+    { Name: person.Beneficiary1, Relationship: person.Beneficiary1Relationship },
+    { Name: person.Beneficiary2, Relationship: person.Beneficiary2Relationship },
+  ]
+  return entries.filter((entry: any) => entry && (entry.Name || entry.Relationship))
+})
 
 const filteredEmployees = computed(() => {
   const query = search.value.trim().toLowerCase()
@@ -73,6 +128,18 @@ function blankForm(section: SectionKey) {
 
 function display(value: any) {
   return value === null || value === undefined || value === '' ? '\u2014' : value
+}
+
+function profileDate(value: unknown) {
+  const day = String(value || '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return display(value)
+  const parsed = new Date(`${day}T00:00:00`)
+  return Number.isNaN(parsed.getTime()) ? display(value) : new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }).format(parsed)
+}
+
+function profileAddress(prefix: 'Permanent' | 'Present') {
+  return ['UnitHouseNumber', 'Street', 'Subdivision', 'Barangay', 'CityMunicipality', 'Province', 'Region', 'PostalCode']
+    .map(key => String(employee.value?.[`${prefix}${key}`] ?? '').trim()).filter(Boolean).join(', ')
 }
 
 function recordLabel(section: SectionKey, item: any) {
@@ -112,11 +179,13 @@ async function selectEmployee(item: any) {
 }
 
 async function openView(item: any) {
+  activeSection.value = 'profile'
   await selectEmployee(item)
   detailOpen.value = true
 }
 
-async function openAdd(item: any, section: SectionKey = 'profile') {
+async function openAdd(item: any, section: SectionKey = 'government') {
+  if (section === 'profile') section = 'government'
   await selectEmployee(item)
   formFromDetail.value = detailOpen.value
   detailOpen.value = false
@@ -127,6 +196,7 @@ async function openAdd(item: any, section: SectionKey = 'profile') {
 }
 
 function openEdit(section: SectionKey, item: any) {
+  if (section === 'profile') return
   formFromDetail.value = detailOpen.value
   detailOpen.value = false
   activeSection.value = section
@@ -149,6 +219,7 @@ function closeForm() {
 }
 
 async function save(section: SectionKey) {
+  if (section === 'profile') return
   saving.value = true
   error.value = ''
   try {
@@ -170,6 +241,7 @@ async function save(section: SectionKey) {
 }
 
 async function remove(section: SectionKey, item: any) {
+  if (section === 'profile') return
   if (!confirm('Delete this record?')) return
   const definition = sections.find((entry) => entry.key === section) || sections[0]
   try {
@@ -264,16 +336,38 @@ useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: ()
             <button class="close" type="button" aria-label="Close employee documents" @click="detailOpen = false">×</button>
           </header>
           <div class="drawer-body">
-            <div v-if="employee" class="contact-strip">
+            <div v-if="employee && activeSection !== 'profile'" class="contact-strip">
               <span><strong>Email</strong>{{ display(employee.Email) }}</span>
               <span><strong>Contact</strong>{{ display(employee.ContactNumber) }}</span>
             </div>
             <nav class="tabs" aria-label="Document sections">
               <button v-for="section in sections" :key="section.key" type="button" :aria-current="activeSection === section.key ? 'page' : undefined" :class="{ active: activeSection === section.key }" @click="activeSection = section.key">
-                {{ section.label }} <span>{{ recordCount(section.key) }}</span>
+                {{ section.label }} <span v-if="section.key !== 'profile'">{{ recordCount(section.key) }}</span>
               </button>
             </nav>
-            <section class="records-panel">
+            <section v-if="activeSection === 'profile' && employee" class="records-panel profile-view" aria-labelledby="employee-profile-title">
+              <header class="profile-intro">
+                <img v-if="profilePhoto" class="profile-photo" :src="profilePhoto" :alt="`${formatEmployeeName(employee)} profile photo`" />
+                <span v-else class="profile-photo profile-photo--placeholder" aria-hidden="true">{{ profileInitials }}</span>
+                <div><p class="eyebrow">EMPLOYEE PROFILE</p><h3 id="employee-profile-title">Basic information</h3><p class="profile-source">Saved in Employee List. Update profile details there.</p></div>
+                <span class="profile-readonly">View only</span>
+              </header>
+              <section v-for="group in profileGroups" :key="group.key" class="profile-group" :aria-labelledby="`profile-${group.key}-title`">
+                <h4 :id="`profile-${group.key}-title`">{{ group.title }}</h4>
+                <dl class="profile-fields" :class="{ 'profile-fields--addresses': group.key === 'addresses' }">
+                  <div v-for="field in group.fields" :key="field.label"><dt>{{ field.label }}</dt><dd>{{ display(field.value) }}</dd></div>
+                </dl>
+              </section>
+              <section class="profile-group" aria-labelledby="profile-beneficiaries-title">
+                <h4 id="profile-beneficiaries-title">Beneficiaries</h4>
+                <p v-if="Number(employee.BeneficiaryNotApplicable) === 1" class="profile-source">Not applicable</p>
+                <dl v-else-if="profileBeneficiaries.length" class="profile-fields">
+                  <div v-for="(beneficiary, index) in profileBeneficiaries" :key="index"><dt>Beneficiary {{ index + 1 }}</dt><dd>{{ display(beneficiary.Name) }}<small>{{ display(beneficiary.Relationship) }}</small></dd></div>
+                </dl>
+                <p v-else class="profile-source">No beneficiaries provided.</p>
+              </section>
+            </section>
+            <section v-else class="records-panel">
               <div class="panel-head">
                 <div><p class="eyebrow">DOCUMENT TYPE</p><h3>{{ activeSectionDef.label }}</h3><small>{{ recordCount(activeSection) }} record{{ recordCount(activeSection) === 1 ? '' : 's' }}</small></div>
                 <button class="primary" type="button" @click="openAdd(employee, activeSection)">+ Add record</button>
@@ -312,7 +406,7 @@ useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: ()
           <div class="form-body">
             <label>Document type
               <select v-model="activeSection" :disabled="editingId !== null" @change="onSectionChanged">
-                <option v-for="section in sections" :key="section.key" :value="section.key">{{ section.label }}</option>
+                <option v-for="section in documentSections" :key="section.key" :value="section.key">{{ section.label }}</option>
               </select>
             </label>
             <div class="form-grid">
@@ -396,4 +490,5 @@ td strong{font-weight:750}.employee-id{font-weight:750;color:#1856c4}
 .error{padding:11px 13px;border:1px solid #fecaca;border-radius:8px;background:#fff1f1;color:#9c2525;font-size:.8rem}
 @media(max-width:850px){.documents-page{padding:24px 16px}.toolbar{grid-template-columns:1fr}.row-actions{flex-direction:row}.profile-card,.form-head{flex-direction:row;align-items:flex-start}.profile-meta{flex-wrap:wrap}.form-grid{grid-template-columns:1fr}}
 @media(max-width:650px){.page-head{flex-direction:column}.backdrop{padding:0}.drawer,.modal{width:100%;max-height:100vh;height:100vh;border-radius:0}.profile-card,.form-head,.drawer-body,.form-body,.drawer-footer,.form-footer{padding-left:18px;padding-right:18px}.profile-card h2,.form-head h2{font-size:1.35rem}.profile-meta{display:none}.tabs{flex-wrap:nowrap;overflow:auto}.tabs button{flex:none}.section-grid{grid-template-columns:1fr}.record-card__head{align-items:flex-start;flex-direction:column}.row-actions{flex-wrap:wrap}}
+.profile-intro{display:flex;align-items:center;gap:16px;padding-bottom:22px;border-bottom:1px solid #e5edf8}.profile-photo{display:block;flex:none;width:80px;height:80px;object-fit:cover;border:1px solid #d5e1f2;border-radius:14px;background:#edf3fc}.profile-photo--placeholder{display:grid;place-items:center;color:#315486;font-size:1.35rem;font-weight:800}.profile-intro h3{margin:6px 0;font-size:1.2rem}.profile-source{margin:0;color:#657d9f;font-size:.8rem;line-height:1.5}.profile-readonly{flex:none;margin-left:auto;padding:6px 10px;border:1px solid #d5e1f2;border-radius:99px;color:#526c92;font-size:.71rem;font-weight:750}.profile-group{padding-top:22px}.profile-group+.profile-group{margin-top:22px;border-top:1px solid #e5edf8}.profile-group h4{margin:0 0 16px;font-size:.95rem}.profile-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px 24px;margin:0}.profile-fields--addresses{grid-template-columns:repeat(2,minmax(0,1fr))}.profile-fields>div{min-width:0}.profile-fields dt{color:#657d9f;font-size:.72rem;font-weight:650}.profile-fields dd{margin:6px 0 0;color:#112b53;font-size:.84rem;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere}.profile-fields dd small{display:block;margin-top:3px;color:#657d9f;font-size:.75rem}@media(max-width:850px){.profile-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.profile-intro{flex-wrap:wrap;gap:12px}.profile-intro>div{flex:1;min-width:0}.profile-photo{width:60px;height:60px}.profile-readonly{margin-left:72px}.profile-fields,.profile-fields--addresses{grid-template-columns:minmax(0,1fr);gap:16px}.profile-view{padding:18px}}
 </style>
