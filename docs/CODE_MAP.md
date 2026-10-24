@@ -46,6 +46,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
   - `shared/utils/attendanceStatuses.ts`
+  - `shared/utils/dtrActionMenu.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
@@ -203,6 +204,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/WorkspaceLoading.vue`
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/deployment.ts`
+  - `shared/utils/dtrActionMenu.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`

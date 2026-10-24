@@ -5,6 +5,7 @@ import DtrBtrModal from '~/components/DtrBtrModal.vue'
 import DtrCompactPrintView from '~/components/DtrCompactPrintView.vue'
 import DtrEmployeeAttendanceDetailsModal from '~/components/DtrEmployeeAttendanceDetailsModal.vue'
 import PayrollAdjustmentsPanel from '~/components/PayrollAdjustmentsPanel.vue'
+import { dtrActionMenuPosition } from '~~/shared/utils/dtrActionMenu'
 type Agency={AgencyID:number,AgencyName:string}; type Client={AgencyID:number,ClientID:number,ClientName:string}; type Site={SiteID:number,ClientID:number,SiteName:string}; type Dtr={BatchID:number,AgencyID:number,AgencyName:string,AgencyHasLogo?:number,ClientID:number,ClientName:string,SiteID:number,SiteName:string,SiteHasLogo?:number,PeriodStart:string,PeriodEnd:string,Status:string,CreatedAt:string,PeopleCount:number}
 const failedLogos=ref(new Set<string>())
 const btrWorkspace=ref<Dtr|null>(null)
@@ -73,6 +74,43 @@ function closeActions(event:Event,restoreFocus=false){
   menu?.removeAttribute('open')
   if(restoreFocus)menu?.querySelector('summary')?.focus()
 }
+function closeAllActions(){
+  document.querySelectorAll<HTMLDetailsElement>('.dtr-action-menu[open]').forEach(menu=>menu.open=false)
+}
+function toggleActions(event:MouseEvent){
+  const menu=(event.currentTarget as HTMLElement).closest('details') as HTMLDetailsElement|null
+  const panel=menu?.querySelector<HTMLElement>('.dtr-action-options')
+  if(!menu||!panel)return
+  if(menu.open){menu.open=false;return}
+  closeAllActions()
+  const anchor=menu.getBoundingClientRect()
+  const viewport={width:document.documentElement.clientWidth,height:window.innerHeight}
+  // Measure while bounded, then choose a side before the browser paints.
+  panel.style.maxHeight=Math.max(0,viewport.height-16)+'px'
+  menu.open=true
+  const position=dtrActionMenuPosition(anchor,viewport,panel.scrollHeight+2)
+  panel.style.width=position.width+'px'
+  panel.style.left=position.left+'px'
+  panel.style.right='auto'
+  panel.style.top=position.opensUp?'auto':'calc(100% + 6px)'
+  panel.style.bottom=position.opensUp?'calc(100% + 6px)':'auto'
+  panel.style.maxHeight=position.maxHeight+'px'
+}
+function dismissActions(event:Event){
+  const target=event.target
+  if(target instanceof Element&&target.closest(event.type==='scroll'?'.dtr-action-options':'.dtr-action-menu'))return
+  closeAllActions()
+}
+onMounted(()=>{
+  document.addEventListener('pointerdown',dismissActions)
+  document.addEventListener('scroll',dismissActions,true)
+  window.addEventListener('resize',closeAllActions)
+})
+onBeforeUnmount(()=>{
+  document.removeEventListener('pointerdown',dismissActions)
+  document.removeEventListener('scroll',dismissActions,true)
+  window.removeEventListener('resize',closeAllActions)
+})
 function blurActions(event:FocusEvent){
   if(!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node|null))closeActions(event)
 }
@@ -108,7 +146,7 @@ function blurActions(event:FocusEvent){
           <div class="dtr-row-actions">
             <button class="secondary" :disabled="!canEdit(i)" :aria-label="'Edit DTR-'+String(i.BatchID).padStart(4,'0')" @click="openEdit(i)">Edit</button>
             <details class="dtr-action-menu" @keydown.esc.prevent="closeActions($event,true)" @focusout="blurActions">
-              <summary class="secondary" :aria-label="'More actions for DTR-'+String(i.BatchID).padStart(4,'0')">More <span aria-hidden="true">⌄</span></summary>
+              <summary class="secondary" :aria-label="'More actions for DTR-'+String(i.BatchID).padStart(4,'0')" @click.prevent="toggleActions">More <span aria-hidden="true">⌄</span></summary>
               <div class="dtr-action-options" @click="closeActions($event)">
                 <button type="button" :disabled="detailsLoadingId===i.BatchID" @click="viewDetails(i)">{{detailsLoadingId===i.BatchID?'Loading…':'View Details'}}</button>
                 <button type="button" title="Break Time Reliever" @click="btrWorkspace=i">Add BTR</button>
@@ -176,7 +214,7 @@ function blurActions(event:FocusEvent){
 .dtr-page .dtr-action-menu { position: relative; }
 .dtr-page .dtr-action-menu summary { list-style: none; }.dtr-page .dtr-action-menu summary::-webkit-details-marker { display: none; }
 .dtr-page .dtr-action-menu[open] summary { background: #eef4ff; border-color: #9ebbee; }
-.dtr-page .dtr-action-options { position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; width: 205px; padding: 5px; background: #fff; border: 1px solid #cfd9e9; border-radius: 10px; box-shadow: 0 9px 24px rgba(22,42,75,.16); }
+.dtr-page .dtr-action-options { position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; box-sizing: border-box; width: 217px; max-height: calc(100dvh - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 5px; background: #fff; border: 1px solid #cfd9e9; border-radius: 10px; box-shadow: 0 9px 24px rgba(22,42,75,.16); }
 .dtr-page .dtr-action-options button { display: block; box-sizing: border-box; width: 100%; min-height: 40px; padding: 10px; border: 0; border-radius: 5px; background: #fff; color: #24416b; text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
 .dtr-page .dtr-action-options button:hover, .dtr-page .dtr-action-options button:focus-visible { background: #f1f5ff; }
 .dtr-page .dtr-action-options .delete-action { margin-top: 4px; border-top: 1px solid #e6edf7; border-radius: 0 0 5px 5px; color: #b42318; }
