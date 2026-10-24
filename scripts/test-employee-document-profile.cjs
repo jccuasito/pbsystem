@@ -13,9 +13,12 @@ function evaluate(source, requireMock) {
   return module.exports
 }
 const identity = evaluate(fs.readFileSync('app/utils/employee.ts', 'utf8'), () => ({}))
+const rules = evaluate(fs.readFileSync('shared/utils/governmentIds.ts', 'utf8'), () => ({}))
+const selectDescriptor = parse(fs.readFileSync('components/SearchableSelect.vue', 'utf8')).descriptor
+const selectComponent = evaluate(compileScript(selectDescriptor, { id: 'select-test', inlineTemplate: true }).content, () => vue).default
 function profile() {
   const scope = vue.effectScope()
-  const state = scope.run(() => evaluate(parse(source).descriptor.scriptSetup.content + '\nmodule.exports={employee,bundle,profileGroups,profilePhoto,profileInitials,profileBeneficiaries,documentSections,activeSection,formOpen,openAdd,openEdit,save,remove};', name => name === 'vue' ? { ...vue, onMounted() {} } : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : name.includes('utils/employee') ? identity : {}))
+  const state = scope.run(() => evaluate(parse(source).descriptor.scriptSetup.content + '\nmodule.exports={employee,bundle,profileGroups,profilePhoto,profileInitials,profileBeneficiaries,documentSections,activeSection,formOpen,openAdd,openEdit,save,remove};', name => name === 'vue' ? { ...vue, onMounted() {} } : name.includes('governmentIds') ? rules : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : name.includes('utils/employee') ? identity : {}))
   return { state, close: () => scope.stop() }
 }
 
@@ -26,7 +29,7 @@ async function renderDetails(section = 'profile') {
     .replace("const activeSection = ref<SectionKey>('profile')", `const activeSection = ref<SectionKey>('${section}')`)
   const { descriptor } = parse(prepared, { filename })
   const script = compileScript(descriptor, { id: filename, inlineTemplate: true })
-  const component = evaluate(script.content, name => name === 'vue' ? vue : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : name.includes('utils/employee') ? identity : {})
+  const component = evaluate(script.content, name => name === 'vue' ? vue : name.includes('SearchableSelect') ? selectComponent : name.includes('governmentIds') ? rules : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : name.includes('utils/employee') ? identity : {})
   const context = {}
   await require('@vue/server-renderer').renderToString(vue.createSSRApp(component.default), context)
   return context.teleports.body

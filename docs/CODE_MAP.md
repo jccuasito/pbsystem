@@ -211,6 +211,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
   - `shared/utils/employeeStatusSheet.ts`
+  - `shared/utils/governmentIds.ts`
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
@@ -279,6 +280,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/employees/documents` → `server/api/employees/documents.get.ts`
   - `POST /api/employees/documents` → `server/api/employees/documents.post.ts`
   - `PUT /api/employees/documents` → `server/api/employees/documents.put.ts`
+  - `POST /api/employees/documents/government/recognize` → `server/api/employees/documents/government/recognize.post.ts`
   - `POST /api/employees/duplicates` → `server/api/employees/duplicates.post.ts`
   - `POST /api/employees/site-shifts` → `server/api/employees/site-shifts.post.ts`
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
@@ -342,6 +344,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/employeePositionCrud.ts`
   - `server/utils/employeeStatusCrud.ts`
+  - `server/utils/governmentIdCrud.ts`
+  - `server/utils/governmentIdOcr.ts`
   - `server/utils/holidayCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
@@ -359,6 +363,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
+  - `shared/utils/governmentIdOcr.ts`
+  - `shared/utils/governmentIds.ts`
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
@@ -486,9 +492,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
   - `server/utils/employeePositionCrud.ts`
+  - `server/utils/governmentIdCrud.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/rateVersions.ts`
+  - `shared/utils/governmentIds.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
@@ -514,7 +522,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
+  - `server/utils/governmentIdCrud.ts`
   - `server/utils/jwt.ts`
+  - `shared/utils/governmentIds.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
@@ -526,17 +536,24 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
+  - `components/SearchableSelect.vue`
+  - `shared/utils/governmentIds.ts`
 - API calls and handlers:
   - `DELETE /api/employees/documents` → `server/api/employees/documents.delete.ts`
   - `GET /api/employees/documents` → `server/api/employees/documents.get.ts`
   - `POST /api/employees/documents` → `server/api/employees/documents.post.ts`
   - `PUT /api/employees/documents` → `server/api/employees/documents.put.ts`
+  - `POST /api/employees/documents/government/recognize` → `server/api/employees/documents/government/recognize.post.ts`
 - Related backend utilities:
   - `components/alertmessage/messages.ts`
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
+  - `server/utils/governmentIdCrud.ts`
+  - `server/utils/governmentIdOcr.ts`
   - `server/utils/jwt.ts`
+  - `shared/utils/governmentIdOcr.ts`
+  - `shared/utils/governmentIds.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.

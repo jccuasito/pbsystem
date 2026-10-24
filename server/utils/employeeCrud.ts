@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { listGovernmentIds, saveGovernmentId } from './governmentIdCrud'
 import { alertMessages, DEPLOYMENT_ALREADY_EXISTS, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../components/alertmessage/messages'
 
 type EmployeeSection = 'profile' | 'government' | 'education' | 'license' | 'training' | 'clearance' | 'bank' | 'insurance'
@@ -682,6 +683,9 @@ async function employeeById(employeeId: number) {
 async function sectionRows(employeeId: number) {
   const entries = await Promise.all(
     Object.entries(sectionConfigs).map(async ([section, config]) => {
+      if (section === 'government') {
+        return [section, await listGovernmentIds(employeeId)] as const
+      }
       const [rows] = await pool.execute<any[]>(`SELECT * FROM ${config.table} WHERE EmployeeID = ? ORDER BY ${config.id} DESC`, [employeeId])
       return [section, config.single ? (rows[0] || null) : rows] as const
     })
@@ -935,6 +939,7 @@ export async function saveEmployeeSection(event: any, mode: 'create' | 'update' 
   const session = requireSession(event)
   void session.sub
   const body = await readBody<Record<string, unknown>>(event) || {}
+  if (body.section === 'government') return saveGovernmentId(event, mode, body)
   const config = sectionConfig(String(body.section || ''))
   const employeeId = parseInteger(body.employeeId ?? body.EmployeeID, 'employeeId')
 
