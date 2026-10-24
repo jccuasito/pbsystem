@@ -200,7 +200,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
   // assignments at another site never carry their loan/deduction plan.
   const deductionBatchByEmployee = fixedDeductionBatchByEmployee(roster, attendance)
   const [adjustmentRows] = await connection.execute<any[]>(`SELECT pa.AdjustmentID, pa.TargetBatchID, pa.EmployeeID,
-      pa.Status, pal.AdjustmentLineID, pal.Description, pal.Direction, pal.Quantity, pal.Amount
+      pa.Status, pal.AdjustmentLineID, pal.Description, pal.Direction, pal.Quantity, pal.Amount, pal.EntrySource
     FROM payroll_adjustment pa
     LEFT JOIN payroll_adjustment_line pal ON pal.AdjustmentID = pa.AdjustmentID
     WHERE pa.TargetBatchID IN (${ids.map(() => '?').join(', ')})
@@ -304,7 +304,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       const adjustments = adjustmentRowsForPerson.filter(row =>
         ['Approved', 'Ready for Payroll'].includes(row.Status) && row.AdjustmentLineID,
       ).map(row => ({ adjustmentId: row.AdjustmentID, lineId: row.AdjustmentLineID,
-        description: row.Description, direction: row.Direction, hours: Number(row.Quantity || 0), amount: Number(row.Amount || 0) }))
+        description: row.Description, direction: row.Direction, hours: row.EntrySource === 'Manual Amount' ? 0 : Number(row.Quantity || 0), amount: Number(row.Amount || 0) }))
       for (const item of adjustments) {
         if (item.direction === 'Earning') grossCents += Math.round(item.amount * 100)
         else timeDeductionCents += Math.round(item.amount * 100)

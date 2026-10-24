@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import mysql from 'mysql2/promise'
+import { applyAmountAdjustmentSchema } from './apply-payroll-adjustment-amounts.mjs'
 
 const sql = fs.readFileSync(new URL('../database/payroll-adjustments.sql', import.meta.url), 'utf8')
 const manualSql = fs.readFileSync(new URL('../database/payroll-adjustment-manual-days.sql', import.meta.url), 'utf8')
@@ -28,6 +29,7 @@ try {
     WHERE table_schema = DATABASE() AND table_name = 'payroll_adjustment_line' AND column_name = 'SourceAttendanceID'`)
   if (attendanceColumn?.IsNullable !== 'YES') await connection.query(`ALTER TABLE payroll_adjustment_line MODIFY COLUMN SourceAttendanceID INT NULL`)
   await connection.query(manualSql)
+  await applyAmountAdjustmentSchema(connection)
   const [[claimColumn]] = await connection.query(`SELECT COUNT(*) AS ColumnCount FROM information_schema.columns
     WHERE table_schema = DATABASE() AND table_name = 'payroll_adjustment_manual_day' AND column_name = 'ClaimActive'`)
   if (!Number(claimColumn.ColumnCount)) await connection.query(`ALTER TABLE payroll_adjustment_manual_day

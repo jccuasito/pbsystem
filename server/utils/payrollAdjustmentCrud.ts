@@ -147,8 +147,8 @@ function listFilters(query: Record<string, string | undefined>) {
   }
   if (query.search?.trim()) {
     const search = `%${query.search.trim()}%`
-    filters.push(`(e.EmployeeNumber LIKE ? OR e.FirstName LIKE ? OR e.LastName LIKE ? OR pa.Reason LIKE ? OR CAST(pa.AdjustmentID AS CHAR) LIKE ?)`)
-    values.push(search, search, search, search, search)
+    filters.push(`(e.EmployeeNumber LIKE ? OR e.FirstName LIKE ? OR e.LastName LIKE ? OR pa.Reason LIKE ? OR CAST(pa.AdjustmentID AS CHAR) LIKE ? OR EXISTS (SELECT 1 FROM payroll_adjustment_line searchLine WHERE searchLine.AdjustmentID = pa.AdjustmentID AND searchLine.Description LIKE ?))`)
+    values.push(search, search, search, search, search, search)
   }
   return { filters, values }
 }
@@ -170,11 +170,11 @@ export async function listPayrollAdjustments(event: any) {
       CONCAT_WS(' ', approver.FirstName, approver.LastName) AS ApprovedByName
       FROM payroll_adjustment pa
       INNER JOIN employee e ON e.EmployeeID = pa.EmployeeID
-      INNER JOIN attendance_dtr source ON source.BatchID = pa.SourceBatchID
+      LEFT JOIN attendance_dtr source ON source.BatchID = pa.SourceBatchID
       INNER JOIN attendance_dtr target ON target.BatchID = pa.TargetBatchID
-      INNER JOIN agency sourceAgency ON sourceAgency.AgencyID = source.AgencyID
-      INNER JOIN client sourceClient ON sourceClient.ClientID = source.ClientID
-      INNER JOIN site sourceSite ON sourceSite.SiteID = source.SiteID
+      INNER JOIN agency sourceAgency ON sourceAgency.AgencyID = COALESCE(source.AgencyID, target.AgencyID)
+      INNER JOIN client sourceClient ON sourceClient.ClientID = COALESCE(source.ClientID, target.ClientID)
+      INNER JOIN site sourceSite ON sourceSite.SiteID = COALESCE(source.SiteID, target.SiteID)
       LEFT JOIN \`user\` creator ON creator.UserID = pa.CreatedBy
       LEFT JOIN \`user\` approver ON approver.UserID = pa.ApprovedBy
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
@@ -186,7 +186,7 @@ export async function listPayrollAdjustments(event: any) {
     const lineMap = new Map<number, any[]>()
     for (const line of lines) {
       const id = Number(line.AdjustmentID), current = lineMap.get(id) || []
-      current.push({ ...line, SourceDate: dateOnly(line.SourceDate) }); lineMap.set(id, current)
+      current.push({ ...line, SourceDate: line.SourceDate == null ? null : dateOnly(line.SourceDate) }); lineMap.set(id, current)
     }
     const sourceBatchId = query.sourceBatchId ? positiveId(query.sourceBatchId, 'Source DTR') : null
     const targetBatchId = query.targetBatchId ? positiveId(query.targetBatchId, 'Target DTR') : null
@@ -284,31 +284,39 @@ export async function createPayrollAdjustment(event: any) {
   const session = requireSession(event); assertCanWrite(session.userType)
   const body = await readBody<Body>(event) || {}
   const employeeId = positiveId(body.EmployeeID, 'Employee')
-  const sourceBatchId = positiveId(body.SourceBatchID, 'Source DTR')
+  const amountEntry = body.ManualAmount != null
+  const sourceBatchId = amountEntry ? null : positiveId(body.SourceBatchID, 'Source DTR')
   const targetBatchId = positiveId(body.TargetBatchID, 'Target cutoff')
   const dates = selectedDates(body.SourceDates)
   const verifiedDays = manualDays(body.ManualDays)
-  if (Boolean(dates.length) === Boolean(verifiedDays.length)) throw createError({ statusCode: 400, statusMessage: 'Select saved attendance dates or verified missed days, but not both.' })
+  if (Number(Boolean(dates.length)) + Number(Boolean(verifiedDays.length)) + Number(amountEntry) !== 1) throw createError({ statusCode: 400, statusMessage: 'Choose exactly one adjustment source: saved attendance, verified missed days, or manual amount.' })
+  const adjustmentName = amountEntry ? String(body.AdjustmentName || '').trim() : ''
+  const manualAmount = amountEntry ? Number(body.ManualAmount) : 0
+  if (amountEntry) {
+    if (body.SourceBatchID != null && body.SourceBatchID !== '') throw createError({ statusCode: 400, statusMessage: 'Manual amount adjustments do not use an original DTR.' })
+    if (adjustmentName.length < 2 || adjustmentName.length > 100) throw createError({ statusCode: 400, statusMessage: 'Enter an adjustment name between 2 and 100 characters.' })
+    if (!['string', 'number'].includes(typeof body.ManualAmount) || !Number.isFinite(manualAmount) || manualAmount <= 0 || manualAmount > 9999999999.99 || Math.abs(manualAmount * 100 - Math.round(manualAmount * 100)) > 0.0001) throw createError({ statusCode: 400, statusMessage: 'Enter a positive amount with at most two decimal places (maximum 9,999,999,999.99).' })
+  }
   const verificationReference = String(body.VerificationReference || '').trim()
   if (verificationReference.length > 255) throw createError({ statusCode: 400, statusMessage: 'Verification reference cannot exceed 255 characters.' })
-  const reason = cleanReason(body.Reason)
+  const reason = cleanReason(amountEntry && !String(body.Reason || '').trim() ? `Manual amount: ${adjustmentName}` : body.Reason)
   const submit = body.Submit === true
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction(); await assertReady(connection)
-    const [[source]] = await connection.execute<any[]>(`SELECT source.BatchID, source.AgencyID, source.SiteID, source.PeriodStart, source.PeriodEnd, source.Status,
+    const [[source]] = sourceBatchId ? await connection.execute<any[]>(`SELECT source.BatchID, source.AgencyID, source.SiteID, source.PeriodStart, source.PeriodEnd, source.Status,
       COALESCE(sp.AutoBreakEnabled, 0) AS AutoBreakEnabled,
       EXISTS (SELECT 1 FROM attendance_dtr_employee roster WHERE roster.BatchID = source.BatchID AND roster.EmployeeID = ?) AS HasEmployee
       FROM attendance_dtr source
       LEFT JOIN site_policy sp ON sp.SiteID = source.SiteID AND sp.Status = 'Active'
-      WHERE source.BatchID = ? FOR UPDATE`, [employeeId, sourceBatchId])
-    if (!source) throw createError({ statusCode: 404, statusMessage: 'Source DTR not found.' })
-    if (!Number(source.HasEmployee)) throw createError({ statusCode: 400, statusMessage: 'The employee does not belong to the source DTR.' })
+      WHERE source.BatchID = ? FOR UPDATE`, [employeeId, sourceBatchId]) : [[]]
+    if (!amountEntry && !source) throw createError({ statusCode: 404, statusMessage: 'Source DTR not found.' })
+    if (!amountEntry && !Number(source.HasEmployee)) throw createError({ statusCode: 400, statusMessage: 'The employee does not belong to the source DTR.' })
     const [[target]] = await connection.execute<any[]>(`SELECT target.BatchID, target.AgencyID, target.PeriodStart, target.PeriodEnd, target.Status,
       EXISTS (SELECT 1 FROM attendance_dtr_employee roster WHERE roster.BatchID = target.BatchID AND roster.EmployeeID = ?) AS HasEmployee
       FROM attendance_dtr target WHERE target.BatchID = ? FOR UPDATE`, [employeeId, targetBatchId])
     if (!target) throw createError({ statusCode: 404, statusMessage: 'Target cutoff not found.' })
-    if (Number(target.AgencyID) !== Number(source.AgencyID) || dateOnly(target.PeriodStart) <= dateOnly(source.PeriodEnd)) throw createError({ statusCode: 400, statusMessage: 'Choose a later cutoff under the same agency.' })
+    if (!amountEntry && (Number(target.AgencyID) !== Number(source.AgencyID) || dateOnly(target.PeriodStart) <= dateOnly(source.PeriodEnd))) throw createError({ statusCode: 400, statusMessage: 'Choose a later cutoff under the same agency.' })
     if (!Number(target.HasEmployee)) throw createError({ statusCode: 400, statusMessage: 'Add the employee to the target DTR before assigning this adjustment.' })
     if (target.Status === 'Locked') throw createError({ statusCode: 409, statusMessage: 'The target cutoff is already locked.' })
     const [[finalizedTarget]] = await connection.execute<any[]>(
@@ -331,6 +339,7 @@ export async function createPayrollAdjustment(event: any) {
     const attendanceVersions = await loadVersionMap(connection, 'payroll-rate', [...new Set(attendance.map(row => Number(row.PayrollRateID)))])
 
     const lines: any[] = []
+    if (amountEntry) lines.push({ attendanceId: null, sourceDate: null, component: 'ManualAmount', label: adjustmentName, entrySource: 'Manual Amount', direction: 'Earning', quantity: 1, rate: manualAmount, amount: manualAmount })
     for (const row of attendance) {
       const sourceDate = dateOnly(row.AttendanceDate)
       const effectiveRate = snapshotAtDate(row, attendanceVersions.get(Number(row.PayrollRateID)) || [], sourceDate)
@@ -397,7 +406,7 @@ export async function createPayrollAdjustment(event: any) {
     const status: Status = submit ? verifiedDays.length ? 'Ready for Payroll' : 'For Approval' : 'Draft'
     const [result] = await connection.execute<any>(`INSERT INTO payroll_adjustment
       (EmployeeID, SourceBatchID, TargetBatchID, AdjustmentType, Reason, VerificationReference, Status, TotalAmount, CreatedBy, SubmittedBy, SubmittedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length && verificationReference ? verificationReference : null, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, amountEntry ? 'Manual Amount' : verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length && verificationReference ? verificationReference : null, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
     for (const day of verifiedDays) await connection.execute(`INSERT INTO payroll_adjustment_manual_day
       (AdjustmentID, EmployeeID, SourceBatchID, SourceDate, ShiftCodeID, RegularHours, OTHours, OTExtHours, NightDiffHours)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [result.insertId, employeeId, sourceBatchId, day.sourceDate, day.shiftCodeId,
@@ -405,7 +414,7 @@ export async function createPayrollAdjustment(event: any) {
     for (const line of lines) {
       await connection.execute(`INSERT INTO payroll_adjustment_line
         (AdjustmentID, SourceAttendanceID, SourceDate, ComponentCode, Description, EntrySource, Direction, Quantity, Rate, Amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [result.insertId, line.attendanceId, line.sourceDate, line.component, `${line.label} - ${line.sourceDate}`, line.entrySource, line.direction, line.quantity, line.rate, line.amount])
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [result.insertId, line.attendanceId, line.sourceDate, line.component, line.sourceDate ? `${line.label} - ${line.sourceDate}` : line.label, line.entrySource, line.direction, line.quantity, line.rate, line.amount])
     }
     await connection.commit()
     return { id: result.insertId, status, totalAmount: total, lineCount: lines.length }
