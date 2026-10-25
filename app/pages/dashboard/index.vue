@@ -26,6 +26,7 @@ import EmployeeAccountTransactionsPage from '../deductions-loans/transactions/in
 import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 import PayrollProcessingPage from '../payroll/processing/index.vue'
 import PayslipPage from '../payroll/payslip/index.vue'
+import PayslipSitesPage from '../payroll/payslip-sites/index.vue'
 import PayrollHistoryPage from '../payroll/history/index.vue'
 import PayrollSummaryPage from '../payroll/summary/index.vue'
 import SettingsPage from '../settings/index.vue'
@@ -48,13 +49,13 @@ let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
   | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-site-accounts' | 'organization-region'
-  | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payroll-history' | 'payroll-summary'
+  | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payslip-sites' | 'payroll-history' | 'payroll-summary'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
   | 'employee-loans-deductions' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-site-accounts', 'organization-region',
-  'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payroll-history', 'payroll-summary',
+  'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payslip-sites', 'payroll-history', 'payroll-summary',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
   'employee-loans-deductions', 'deductions-loans-contributions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
 ])
@@ -193,6 +194,7 @@ const navGroups = [
       { label: 'Payroll Processing', to: '/payroll/processing', icon: 'peso', view: 'payroll-processing' },
       { label: 'Adjustments', to: '/payroll/adjustments', icon: 'file-text', view: 'payroll-adjustments' },
       { label: 'Payslip', to: '/payroll/payslip', icon: 'file-text', view: 'payslip' },
+      { label: 'Payslip List by Site', to: '/payroll/payslip-sites', icon: 'file-text', view: 'payslip-sites' },
       { label: 'Payroll Summary', to: '/payroll/summary', icon: 'chart-bar', view: 'payroll-summary' },
       { label: 'Payroll History', to: '/payroll/history', icon: 'chart-bar', view: 'payroll-history' }
     ]
@@ -233,7 +235,7 @@ const activeWorkspaceLabel = computed(() => {
 
 function viewModule(view: string) {
   if (view === 'settings') return 'settings'
-  if (view === 'payslip') return 'payslips'
+  if (view === 'payslip' || view === 'payslip-sites') return 'payslips'
   if (view.startsWith('employees-')) return 'employees'
   if (view.startsWith('organization-')) return 'organization'
   if (view.startsWith('attendance-')) return 'attendance'
@@ -294,6 +296,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'payroll-adjustments': PayrollAdjustmentsPage,
   'payroll-processing': PayrollProcessingPage,
   'payslip': PayslipPage,
+  'payslip-sites': PayslipSitesPage,
   'payroll-history': PayrollHistoryPage,
   'payroll-summary': PayrollSummaryPage,
   'employee-loans-deductions': EmployeeLoanDeductionPage,

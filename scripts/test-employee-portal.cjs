@@ -6,7 +6,7 @@ const government=evaluate('shared/utils/governmentIds.ts'),privacy=evaluate('sha
 const recoveryHelpers=evaluate('server/utils/employeePortalRecovery.ts',{'node:crypto':crypto})
 const publicEvent=(ip='127.0.0.5')=>({cookies:{},headers:{'content-type':'application/json',origin:'http://localhost:3000'},url:'http://localhost:3000',node:{req:{socket:{remoteAddress:ip}}}})
 test('portal pages compile and privacy terms do not waive employee rights',()=>{
- for(const file of ['app/pages/employee-portal/index.vue','app/pages/payroll/payslip/index.vue','app/components/EmployeePayslipSheet.vue']){
+ for(const file of ['app/pages/employee-portal/index.vue','app/pages/payroll/payslip/index.vue','app/pages/payroll/payslip-sites/index.vue','app/pages/dashboard/index.vue','app/components/EmployeePayslipSheet.vue']){
   const {descriptor,errors}=sfc.parse(fs.readFileSync(file,'utf8'),{filename:file});assert.deepEqual(errors,[])
   const script=sfc.compileScript(descriptor,{id:file});assert.deepEqual(sfc.compileTemplate({source:descriptor.template.content,filename:file,id:file,compilerOptions:{bindingMetadata:script.bindings}}).errors,[])
   for(const style of descriptor.styles)assert.deepEqual(sfc.compileStyle({source:style.content,filename:file,id:file,scoped:style.scoped}).errors,[])
