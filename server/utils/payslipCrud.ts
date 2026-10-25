@@ -144,7 +144,10 @@ export async function readEmployeePayslips(employeeId:number, db:any=pool) {
         ORDER BY PayrollID, TransactionRecordID`, ids),
     ])
     const cutoffs = payslipGroups(payrolls, details, deductions, transactions)
-    const [publications] = await db.execute<any[]>('SELECT PublicationID,GroupKey,Status,SnapshotJson,PostedAt FROM payslip_publication WHERE EmployeeID=?',[employeeId])
+    // Database-local DATETIME must be converted explicitly, not interpreted as UTC by the driver.
+    const [publications] = await db.execute<any[]>(`SELECT PublicationID,GroupKey,Status,SnapshotJson,
+      DATE_FORMAT(TIMESTAMPADD(SECOND,TIMESTAMPDIFF(SECOND,NOW(),UTC_TIMESTAMP()),PostedAt),'%Y-%m-%dT%H:%i:%s.000Z') AS PostedAt
+      FROM payslip_publication WHERE EmployeeID=?`,[employeeId])
     for (const cutoff of cutoffs) {
       const publication=publications.find(row=>row.GroupKey===cutoff.key)
       let saved:any=null

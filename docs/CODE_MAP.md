@@ -220,6 +220,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/governmentIds.ts`
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
+  - `shared/utils/payslipPresentation.ts`
   - `shared/utils/rateFields.ts`
 - API calls and handlers:
   - `GET /api/attendance/dtr` → `server/api/attendance/dtr/index.get.ts`
@@ -486,9 +487,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/components/EmployeePayslipSheet.vue`
+  - `app/utils/payslipImage.ts`
   - `components/SearchableSelect.vue`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
+  - `shared/utils/payslipPresentation.ts`
 - API calls and handlers:
   - `POST /api/employee-portal/auth/[param]` → `server/api/employee-portal/auth/[action].post.ts`
   - `POST /api/employee-portal/auth/logout` → `server/api/employee-portal/auth/[action].post.ts`
@@ -856,6 +859,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/components/EmployeePayslipSheet.vue`
+  - `shared/utils/payslipPresentation.ts`
 - API calls and handlers:
   - `GET /api/payroll/payslips` → `server/api/payroll/payslips.get.ts`
   - `POST /api/payroll/payslips` → `server/api/payroll/payslips.post.ts`
