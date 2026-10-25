@@ -11,6 +11,8 @@ async function buildFixture(){
  const styles=[]
  const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './app/pages/employee-portal/index.vue';const app=createApp(Portal);app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
   build.onResolve({filter:/^(~~\/|~\/)/},args=>({path:path.resolve(root,args.path.startsWith('~~/')?args.path.slice(3):'app/'+args.path.slice(2))+'.ts'}))
+  build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
+  build.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const useHead = value => { document.title = value.title }',loader:'js'}))
   build.onLoad({filter:/\.vue$/},args=>{
    if(args.path.endsWith('SearchableSelect.vue'))return{contents:"import {h} from 'vue';export default {props:['modelValue','options'],setup:()=>()=>h('select',{},[h('option','Select ID type')])}",loader:'js'}
    const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[])
@@ -49,6 +51,7 @@ test('mobile portal cards, historical sites and full PNG download work in Chromi
   for(const width of [320,375,430,1280]){
    await page.setViewportSize({width,height:850});await load()
    await assertFits('List '+width)
+   assert.equal(await page.title(),'Payslip Portal - DJA Group of Companies')
    await page.getByRole('link',{name:/Employee Portal/}).waitFor()
    assert.equal(await page.locator('.portal-mobile-payslips').isVisible(),width<=760)
    assert.equal(await page.locator('.portal-table').isVisible(),width>760)
@@ -97,6 +100,22 @@ test('mobile portal cards, historical sites and full PNG download work in Chromi
   await(await longDownloadPromise).saveAs(path.join(output,'test-payslip-long.png'))
   await load(snapshot,false);await page.getByRole('button',{name:'Create account',exact:true}).first().click();await assertFits('Sign up')
   const first=page.getByLabel('First name',{exact:true});await first.fill('test');assert.equal(await first.inputValue(),'TEST')
+  await page.getByRole('button',{name:'Sign in',exact:true}).first().click()
+  await page.getByRole('button',{name:'Forgot password? Use an HR recovery code'}).click()
+  const recoveryCode=page.locator('.portal-recovery-code')
+  await recoveryCode.fill('0a1234');assert.equal(await recoveryCode.inputValue(),'01234','Code input only accepts digits')
+  await recoveryCode.fill('000007');assert.equal(await recoveryCode.inputValue(),'000007','Leading zeroes are preserved')
+  assert.equal(await recoveryCode.getAttribute('inputmode'),'numeric')
+  await page.locator('.portal-form input[type="email"]').fill('test@example.invalid')
+  await page.locator('.portal-form input[type="password"]').nth(0).fill('RecoveryTestPassword123')
+  await page.locator('.portal-form input[type="password"]').nth(1).fill('RecoveryTestPassword123')
+  await assertFits('Recovery form')
+  await page.setViewportSize({width:375,height:850});await page.screenshot({path:path.join(output,'mobile-recovery.png'),fullPage:true})
+  await page.evaluate(()=>{window.$fetch=async(url,options)=>{window.recoverySubmission={url,body:options.body};throw{data:{statusMessage:'Synthetic recovery response'}}}})
+  await page.getByRole('button',{name:'Set new password',exact:true}).click()
+  await page.getByRole('alert').filter({hasText:'Synthetic recovery response'}).waitFor()
+  const submitted=await page.evaluate(()=>window.recoverySubmission)
+  assert.equal(submitted.url,'/api/employee-portal/auth/recovery');assert.equal(submitted.body.email,'test@example.invalid');assert.equal(submitted.body.code,'000007')
   assert.deepEqual(errors,[],'No runtime errors')
   await context.close()
  }finally{await browser.close()}

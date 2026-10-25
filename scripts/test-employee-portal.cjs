@@ -3,6 +3,7 @@ function evaluate(file,dependencies={},globals={}){const module={exports:{}};vm.
 const h3={createError:d=>Object.assign(new Error(d.statusMessage),d),getQuery:e=>e.query||{},readBody:async e=>e.body,getCookie:(e,key)=>e.cookies?.[key],setCookie:(e,key,value)=>{e.cookies??={};e.cookies[key]=value},getRequestHeader:(e,key)=>e.headers?.[key],getRequestURL:e=>new URL(e.url||'http://localhost:3000'),setHeader:(e,key,value)=>{e.responseHeaders??={};e.responseHeaders[key]=value}}
 const staffAuth={requireSession:e=>{if(!e.actor)throw h3.createError({statusCode:401});return e.actor},hashPassword:value=>bcrypt.hash(value,12),passwordMatches:(value,hash)=>bcrypt.compare(value,hash),normalizeEmail:value=>value.trim().toLowerCase(),assertPassword:value=>{if(value.length<12||!/[a-z]/i.test(value)||!/[0-9]/.test(value))throw h3.createError({statusCode:400})}}
 const government=evaluate('shared/utils/governmentIds.ts'),privacy=evaluate('shared/utils/employeePortal.ts'),presentation=evaluate('shared/utils/payslipPresentation.ts')
+const recoveryHelpers=evaluate('server/utils/employeePortalRecovery.ts',{'node:crypto':crypto})
 const publicEvent=(ip='127.0.0.5')=>({cookies:{},headers:{'content-type':'application/json',origin:'http://localhost:3000'},url:'http://localhost:3000',node:{req:{socket:{remoteAddress:ip}}}})
 test('portal pages compile and privacy terms do not waive employee rights',()=>{
  for(const file of ['app/pages/employee-portal/index.vue','app/pages/payroll/payslip/index.vue','app/components/EmployeePayslipSheet.vue']){
@@ -24,6 +25,12 @@ test('posted timestamps format the posting instant once in Philippine time',()=>
  assert.equal(presentation.payslipPostedLabel('2026-10-25T02:44:00.000Z'),'Oct 25, 2026, 10:44 AM')
  assert.equal(presentation.payslipPostedLabel('2026-10-25T10:44:00+08:00'),'Oct 25, 2026, 10:44 AM')
  assert.equal(presentation.payslipPostedLabel('invalid'),'')
+})
+
+test('numeric recovery generation preserves leading zeroes',()=>{
+ const fixed=evaluate('server/utils/employeePortalRecovery.ts',{'node:crypto':{...crypto,randomInt:()=>7}})
+ assert.equal(fixed.newPortalRecoveryCode(),'000007')
+ for(let i=0;i<20;i++)assert.match(recoveryHelpers.newPortalRecoveryCode(),/^[0-9]{6}$/)
 })
 test('portal signup/session/publication isolation and recovery use synthetic temporary tables',{skip:process.env.EMPLOYEE_PORTAL_TEST_DATABASE!=='1'},async()=>{
  const db=await require('mysql2/promise').createConnection({host:process.env.DB_HOST||'127.0.0.1',port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER||'root',password:process.env.DB_PASSWORD,database:process.env.DB_NAME||'pbsystem',dateStrings:true})
@@ -60,10 +67,10 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   await db.query("INSERT INTO payroll_processing_posting VALUES(1,1,'Active'),(2,2,'Active'),(3,1,'Active')")
   const connection={execute:(...args)=>db.execute(...args),beginTransaction:()=>db.beginTransaction(),commit:()=>db.commit(),rollback:()=>db.rollback(),release(){}}
   const database={...connection,getConnection:async()=>connection}
-  const auth=evaluate('server/utils/employeePortalAuth.ts',{'node:crypto':crypto,'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'../../shared/utils/governmentIds':government,'../../shared/utils/employeePortal':privacy})
+  const auth=evaluate('server/utils/employeePortalAuth.ts',{'node:crypto':crypto,'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'../../shared/utils/governmentIds':government,'../../shared/utils/employeePortal':privacy,'./employeePortalRecovery':recoveryHelpers})
   const slips=evaluate('server/utils/payslipCrud.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth})
   const publication=evaluate('server/utils/payslipPublication.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'./payslipCrud':slips})
-  const admin=evaluate('server/utils/employeePortalAdmin.ts',{'node:crypto':crypto,'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth})
+  const admin=evaluate('server/utils/employeePortalAdmin.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'./employeePortalRecovery':recoveryHelpers})
   const portal=evaluate('server/api/employee-portal/payslips.get.ts',{'../../connection/dbconnect':database,'../../utils/employeePortalAuth':auth,'../../utils/payslipCrud':slips}).default
   const me=evaluate('server/api/employee-portal/me.get.ts',{'../../connection/dbconnect':database,'../../utils/employeePortalAuth':auth}).default
   const body={firstName:'test',middleName:' MIDDLE ',lastName:'PERSON',email:' Test@example.invalid ',contactNumber:'09123456789',password:'PortalTestPassword123',confirmPassword:'PortalTestPassword123',governmentType:'SSS',governmentNumber:'12-3456789-0',agreementAccepted:true,agreementVersion:privacy.portalAgreementVersion}
@@ -111,9 +118,33 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   const oldToken=owner.cookies.pbs_employee_session
   await assert.rejects(()=>admin.managePortalAccount({actor:{sub:5,userType:'Encoder'},body:{employeeId:1,action:'recovery'}}),e=>e.statusCode===403)
   const recovery=await admin.managePortalAccount({...staff,body:{employeeId:1,action:'recovery'}})
+  assert.match(recovery.recoveryCode,/^[0-9]{6}$/)
+  assert.notEqual(recoveryHelpers.portalRecoveryHash(1,'012345'),recoveryHelpers.portalRecoveryHash(2,'012345'),'Short codes are bound to an account')
+  const [[reset]]=await db.query('SELECT ResetTokenHash FROM employee_portal_account WHERE EmployeeID=1');assert.notEqual(reset.ResetTokenHash,recovery.recoveryCode);assert.equal(reset.ResetTokenHash.length,64,'Only a keyed hash is stored')
   await assert.rejects(()=>auth.requireEmployeeSession({...publicEvent(),cookies:{pbs_employee_session:oldToken}}),e=>e.statusCode===401)
-  await auth.recoverEmployeeAccount(owner,{code:recovery.recoveryCode,password:body.password,confirmPassword:body.password})
-  await assert.rejects(()=>auth.recoverEmployeeAccount(publicEvent('127.0.0.7'),{code:recovery.recoveryCode,password:body.password,confirmPassword:body.password}),e=>e.statusCode===400)
+  const recoveryBody={email:'updated@example.invalid',code:recovery.recoveryCode,password:body.password,confirmPassword:body.password}
+  await assert.rejects(()=>auth.recoverEmployeeAccount(publicEvent('127.0.0.70'),{...recoveryBody,email:'other@example.invalid'}),e=>e.statusCode===400,'Another account cannot use this code')
+  await auth.recoverEmployeeAccount(owner,recoveryBody)
+  await assert.rejects(()=>auth.recoverEmployeeAccount(publicEvent('127.0.0.7'),recoveryBody),e=>e.statusCode===400,'Recovery codes are single use')
+  const superseded=await admin.managePortalAccount({...staff,body:{employeeId:1,action:'recovery'}})
+  const replacement=await admin.managePortalAccount({...staff,body:{employeeId:1,action:'recovery'}})
+  assert.notEqual(replacement.recoveryCode,superseded.recoveryCode)
+  await assert.rejects(()=>auth.recoverEmployeeAccount(publicEvent('127.0.0.71'),{...recoveryBody,code:superseded.recoveryCode}),e=>e.statusCode===400,'Reissue invalidates the previous code')
+  await db.query('UPDATE employee_portal_account SET ResetExpiresAt=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE EmployeeID=1')
+  await assert.rejects(()=>auth.recoverEmployeeAccount(publicEvent('127.0.0.72'),{...recoveryBody,code:replacement.recoveryCode}),e=>e.statusCode===400,'Expired code cannot reset the account')
+  const limited=await admin.managePortalAccount({...staff,body:{employeeId:1,action:'recovery'}})
+  const wrong=limited.recoveryCode==='000000'?'000001':'000000'
+  for(let i=0;i<5;i++){
+   await assert.rejects(()=>auth.recoverEmployeeAccount(publicEvent('127.0.0.'+(80+i)),{...recoveryBody,code:wrong}),e=>e.statusCode===400)
+   if(i===2)await db.execute('UPDATE employee_portal_attempt SET WindowStart=? WHERE LimitKey=?',[Math.floor(Date.now()/900000)-1,recoveryHelpers.recoveryAttemptKey(stored.AccountID)])
+  }
+  await assert.rejects(()=>auth.recoverEmployeeAccount(publicEvent('127.0.0.85'),{...recoveryBody,code:limited.recoveryCode}),e=>e.statusCode===400,'Five failures invalidate the code across IPs and time windows')
+  const [[invalidated]]=await db.query('SELECT ResetTokenHash,Status FROM employee_portal_account WHERE EmployeeID=1');assert.equal(invalidated.ResetTokenHash,null);assert.equal(invalidated.Status,'Active','Code exhaustion does not deactivate normal login')
+  // A fresh HR code resets that account's attempt count; include a leading zero.
+  const fixedAdmin=evaluate('server/utils/employeePortalAdmin.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'./employeePortalRecovery':{...recoveryHelpers,newPortalRecoveryCode:()=> '012345'}})
+  const fresh=await fixedAdmin.managePortalAccount({...staff,body:{employeeId:1,action:'recovery'}})
+  assert.equal(fresh.recoveryCode,'012345')
+  await auth.recoverEmployeeAccount(owner,{...recoveryBody,code:fresh.recoveryCode})
   await auth.logoutEmployee(owner);await assert.rejects(()=>auth.requireEmployeeSession(owner),e=>e.statusCode===401)
   const login=publicEvent();await auth.loginEmployee(login,{email:'updated@example.invalid',password:body.password});assert.equal((await auth.requireEmployeeSession(login)).EmployeeID,1)
   await admin.managePortalAccount({...staff,body:{employeeId:1,action:'deactivate'}});await assert.rejects(()=>auth.requireEmployeeSession(login),e=>e.statusCode===401)

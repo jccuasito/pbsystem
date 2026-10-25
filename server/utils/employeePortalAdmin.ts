@@ -1,4 +1,4 @@
-import crypto from 'node:crypto'
+import { newPortalRecoveryCode, portalRecoveryHash, recoveryAttemptKey } from './employeePortalRecovery'
 import { createError, getQuery, readBody, setHeader } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
@@ -23,12 +23,13 @@ export async function managePortalAccount(event:any){
   let recoveryCode:string|null=null
   try{
     await db.beginTransaction()
-    const [[account]]=await db.execute<any[]>('SELECT AccountID,Status FROM employee_portal_account WHERE EmployeeID=? FOR UPDATE',[employeeId])
+    const [[account]]=await db.execute<any[]>('SELECT AccountID,Status,ResetTokenHash FROM employee_portal_account WHERE EmployeeID=? FOR UPDATE',[employeeId])
     if(!account)throw createError({statusCode:404,statusMessage:'No employee portal account exists yet.'})
     if(body.action==='recovery'){
       if(account.Status!=='Active')throw createError({statusCode:409,statusMessage:'Activate this account before issuing a recovery code.'})
-      recoveryCode=crypto.randomBytes(18).toString('hex')
-      await db.execute('UPDATE employee_portal_account SET ResetTokenHash=?,ResetExpiresAt=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE) WHERE AccountID=?',[crypto.createHash('sha256').update(recoveryCode).digest('hex'),account.AccountID])
+      do{recoveryCode=newPortalRecoveryCode()}while(portalRecoveryHash(account.AccountID,recoveryCode)===account.ResetTokenHash)
+      await db.execute('UPDATE employee_portal_account SET ResetTokenHash=?,ResetExpiresAt=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE) WHERE AccountID=?',[portalRecoveryHash(account.AccountID,recoveryCode),account.AccountID])
+      await db.execute('DELETE FROM employee_portal_attempt WHERE LimitKey=?',[recoveryAttemptKey(account.AccountID)])
     }else await db.execute('UPDATE employee_portal_account SET Status=?,ResetTokenHash=NULL,ResetExpiresAt=NULL WHERE AccountID=?',[body.action==='activate'?'Active':'Inactive',account.AccountID])
     await db.execute('DELETE FROM employee_portal_session WHERE AccountID=?',[account.AccountID])
     await db.execute('INSERT INTO employee_portal_event(AccountID,Action,ActorUserID) VALUES(?,?,?)',[account.AccountID,body.action==='recovery'?'HR issued recovery code':body.action==='activate'?'HR activated account':'HR deactivated account',session.sub])

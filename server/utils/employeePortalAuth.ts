@@ -4,6 +4,7 @@ import pool from '../connection/dbconnect'
 import { hashPassword, passwordMatches, assertPassword, normalizeEmail } from './auth'
 import { governmentIdIdentity, validateGovernmentId } from '../../shared/utils/governmentIds'
 import { normalizePortalName, portalAgreementVersion, portalPrivacySections } from '../../shared/utils/employeePortal'
+import { portalRecoveryHash, recoveryAttemptKey } from './employeePortalRecovery'
 
 const cookie='pbs_employee_session'
 const digest=(value:string)=>crypto.createHash('sha256').update(value).digest('hex')
@@ -101,20 +102,36 @@ export async function logoutEmployee(event:any){
 }
 export async function recoverEmployeeAccount(event:any,body:any){
   portalMutation(event);await portalLimit(event,'recovery','',5)
-  if(typeof body?.code!=='string'||! /^[a-f0-9]{36}$/.test(body.code))throw createError({statusCode:400,statusMessage:'Enter the private recovery code provided by HR.'})
+  const Email=email(body?.email)
+  if(typeof body?.code!=='string'||! /^[0-9]{6}$/.test(body.code))throw createError({statusCode:400,statusMessage:'Enter the 6-digit recovery code provided by HR.'})
   const nextHash=await hashPassword(password(body.password,body.confirmPassword)),db=await pool.getConnection()
-  let accountId=0
+  let accountId=0,committed=false
+  const invalid=()=>createError({statusCode:400,statusMessage:'Recovery details are invalid or expired. Check your login email and code, or ask HR for a new code.'})
   try{
     await db.beginTransaction()
-    const [[account]]=await db.execute<any[]>(`SELECT a.AccountID FROM employee_portal_account a JOIN employee e ON e.EmployeeID=a.EmployeeID
-      WHERE a.ResetTokenHash=? AND a.ResetExpiresAt>UTC_TIMESTAMP() AND a.Status='Active' AND e.Status='Active' FOR UPDATE`,[digest(body.code)])
-    if(!account)throw createError({statusCode:400,statusMessage:'Recovery code is invalid or expired. Contact HR.'})
+    const [[account]]=await db.execute<any[]>(`SELECT a.AccountID,a.ResetTokenHash FROM employee_portal_account a JOIN employee e ON e.EmployeeID=a.EmployeeID
+      WHERE a.Email=? AND a.ResetTokenHash IS NOT NULL AND a.ResetExpiresAt>UTC_TIMESTAMP() AND a.Status='Active' AND e.Status='Active' FOR UPDATE`,[Email])
+    if(!account)throw invalid()
     accountId=Number(account.AccountID)
+    const key=recoveryAttemptKey(accountId),window=Math.floor(Date.now()/900000)
+    await db.execute('INSERT INTO employee_portal_attempt(LimitKey,WindowStart,Attempts) VALUES(?,?,1) ON DUPLICATE KEY UPDATE Attempts=Attempts+1',[key,window])
+    const [[attempt]]=await db.execute<any[]>('SELECT SUM(Attempts) AS Attempts FROM employee_portal_attempt WHERE LimitKey=?',[key])
+    const expected=portalRecoveryHash(accountId,body.code)
+    const matches=/^[a-f0-9]{64}$/.test(account.ResetTokenHash)&&crypto.timingSafeEqual(Buffer.from(expected,'hex'),Buffer.from(account.ResetTokenHash,'hex'))
+    if(Number(attempt.Attempts)>5||!matches){
+      // Commit failed attempts as well: changing IP or crossing a rate-limit
+      // time window cannot restore guesses against the same issued code.
+      if(Number(attempt.Attempts)>=5){
+        await db.execute('UPDATE employee_portal_account SET ResetTokenHash=NULL,ResetExpiresAt=NULL WHERE AccountID=?',[accountId])
+        await db.execute("INSERT INTO employee_portal_event(AccountID,Action) VALUES(?,'Recovery code attempt limit')",[accountId])
+      }
+      await db.commit();committed=true;throw invalid()
+    }
     await db.execute('UPDATE employee_portal_account SET PasswordHash=?,ResetTokenHash=NULL,ResetExpiresAt=NULL WHERE AccountID=?',[nextHash,accountId])
     await db.execute('DELETE FROM employee_portal_session WHERE AccountID=?',[accountId])
     await db.execute("INSERT INTO employee_portal_event(AccountID,Action) VALUES(?,'Used HR recovery code')",[accountId])
-    await db.commit()
-  }catch(error){await db.rollback();throw error}finally{db.release()}
+    await db.commit();committed=true
+  }catch(error){if(!committed)await db.rollback();throw error}finally{db.release()}
   await startEmployeeSession(event,accountId);return{success:true}
 }
 export async function updateEmployeeAccount(event:any,body:any){
