@@ -14,7 +14,7 @@ function evaluate(source, globals) {
 const load = (file, requireMock) => evaluate(fs.readFileSync(file, 'utf8'), { require: requireMock })
 
 test('adjustment form and payroll review components compile', () => {
-  for (const filename of ['app/components/PayrollAdjustmentsPanel.vue', 'app/components/PayrollProcessingDetailModal.vue']) {
+  for (const filename of ['app/components/PayrollAdjustmentsPanel.vue', 'app/components/PayrollProcessingDetailModal.vue', 'app/pages/payroll/processing/index.vue']) {
     const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
     assert.deepEqual(errors, [])
     const script = compileScript(descriptor, { id: filename })
@@ -121,7 +121,20 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
     assert.equal(line.Description, body.AdjustmentName); assert.equal(line.EntrySource, 'Manual Amount')
     assert.equal(Number(line.Quantity), 1); assert.equal(Number(line.Amount), 700.25)
     assert.equal((await db.query('SELECT COUNT(*) count FROM payroll_adjustment_manual_day'))[0][0].count, 0)
+    // Account metadata must resolve the exact site/agency pair, even when another
+    // agency is the only retained link for a site.
+    await db.query("INSERT INTO agency (AgencyID,AgencyName,Status) VALUES (2,'Other test agency','Active')")
+    await db.query("INSERT INTO site_account (SiteAccountID,SiteAccountName,Status) VALUES (1,'Test account','Active'),(2,'Other account','Active')")
+    await db.query("INSERT INTO site_agency (SiteID,AgencyID,SiteAccountID,Status) VALUES (1,2,2,'Inactive')")
     const preview = async () => (await payroll.payrollProcessingData('2026-09-16', '2026-09-30', connection)).sites[0]
+    assert.equal((await preview()).SiteAccountID, null, 'A different agency link cannot supply the account')
+    await db.query("UPDATE site_agency SET AgencyID=1,SiteAccountID=1,Status='Active' WHERE SiteID=1")
+    const accountPreview = await preview()
+    assert.equal(accountPreview.SiteAccountID, 1)
+    assert.equal(accountPreview.SiteAccountName, 'Test account')
+    await db.query('UPDATE site_agency SET SiteAccountID=NULL WHERE SiteID=1 AND AgencyID=1')
+    assert.equal((await preview()).SiteAccountID, null, 'Unassigned sites cannot borrow another agency account')
+    await db.query('UPDATE site_agency SET SiteAccountID=1 WHERE SiteID=1 AND AgencyID=1')
     assert.equal((await preview()).gross, 640, 'Unapproved amounts are excluded')
     assert.ok((await preview()).warningCount > 0)
     await assert.rejects(() => api.updatePayrollAdjustment(event({ AdjustmentID: created.id, Action: 'approve' }, { session: { sub: 1, userType: 'Encoder' } })), /Admin or Supervisor/)
@@ -131,6 +144,8 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
     assert.equal(reviewed.employees[0].adjustments[0].hours, 0, 'Flat amounts have no attendance hours')
     assert.equal(reviewed.warningCount, 0)
     await payroll.reviewPayrollProcessing(event({ action: 'finalize' }))
+    await db.query("UPDATE site_account SET SiteAccountName='Updated test account' WHERE SiteAccountID=1")
+    assert.equal((await preview()).SiteAccountName, 'Updated test account', 'Frozen payroll amounts retain current account grouping metadata')
     await assert.rejects(() => api.createPayrollAdjustment(event(body)), /already finalized/)
     const [[applied]] = await db.query('SELECT Status,TargetPayrollID FROM payroll_adjustment WHERE AdjustmentID=?', [created.id])
     assert.equal(applied.Status, 'Applied'); assert.ok(applied.TargetPayrollID)

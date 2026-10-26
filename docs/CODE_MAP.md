@@ -918,6 +918,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/components/PayrollProcessingDetailModal.vue`
   - `app/utils/employee.ts`
+  - `components/SearchableSelect.vue`
   - `shared/utils/payrollPreview.ts`
 - API calls and handlers:
   - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`

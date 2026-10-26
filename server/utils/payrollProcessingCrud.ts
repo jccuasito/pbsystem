@@ -14,7 +14,8 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     throw createError({ statusCode: 400, statusMessage: 'Select a valid payroll cutoff.' })
   }
   const [batches] = await connection.execute<any[]>(`SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName,
-      d.SiteID, s.SiteName, COALESCE(sp.AutoBreakEnabled, 0) AS AutoBreakEnabled,
+      d.SiteID, s.SiteName, coverage.SiteAccountID, account.SiteAccountName,
+      COALESCE(sp.AutoBreakEnabled, 0) AS AutoBreakEnabled,
       DATE_FORMAT(d.PeriodStart, '%Y-%m-%d') AS PeriodStart,
       DATE_FORMAT(d.PeriodEnd, '%Y-%m-%d') AS PeriodEnd, d.Status,
       EXISTS (SELECT 1 FROM payroll_processing_posting pp WHERE pp.BatchID = d.BatchID AND pp.Status = 'Active') AS IsFinalized,
@@ -27,6 +28,8 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     INNER JOIN agency a ON a.AgencyID = d.AgencyID
     INNER JOIN client c ON c.ClientID = d.ClientID
     INNER JOIN site s ON s.SiteID = d.SiteID
+    LEFT JOIN site_agency coverage ON coverage.SiteID = d.SiteID AND coverage.AgencyID = d.AgencyID
+    LEFT JOIN site_account account ON account.SiteAccountID = coverage.SiteAccountID
     LEFT JOIN site_policy sp ON sp.SiteID = d.SiteID AND sp.Status = 'Active'
     LEFT JOIN payroll_processing_review review ON review.BatchID = d.BatchID
     LEFT JOIN user approver ON approver.UserID = review.ApprovedBy
