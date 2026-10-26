@@ -492,6 +492,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/components/EmployeePayslipSheet.vue`
+  - `app/utils/bodyScrollLock.ts`
+  - `app/utils/employee.ts`
   - `app/utils/payslipImage.ts`
   - `components/SearchableSelect.vue`
   - `shared/utils/employeePortal.ts`
@@ -513,7 +515,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
 - Static assets:
-  - None detected.
+  - `public/images/logo.png`
 - Links to: `/employee-portal`
 
 ### `/employees`

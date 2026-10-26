@@ -81,6 +81,7 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   const owner=publicEvent();await auth.registerEmployee(owner,body)
   assert.ok(owner.cookies.pbs_employee_session);assert.equal(owner.cookies.pbs_session,undefined,'Portal does not grant a staff cookie')
   const profileSites=await me({...owner,query:{employeeId:2}})
+  assert.equal(profileSites.account.AgencyName,'Synthetic agency');assert.equal(profileSites.account.EmployeeNumber,'TEST-1');assert.equal(profileSites.account.PositionName,'Synthetic position','Portal profile metadata comes from the session employee, not query.employeeId')
   assert.equal(profileSites.account.CurrentSites.length,1);assert.equal(profileSites.account.CurrentSites[0].SiteName,'Fixed site','Current sites exclude other employees, ended and future deployments')
   const [[stored]]=await db.query('SELECT * FROM employee_portal_account WHERE EmployeeID=1');assert.notEqual(stored.PasswordHash,body.password);assert.ok(await bcrypt.compare(body.password,stored.PasswordHash));assert.equal(stored.Email,'test@example.invalid');assert.equal(stored.AgreementVersion,privacy.portalAgreementVersion)
   assert.equal(JSON.stringify(JSON.parse(stored.AgreementText)),JSON.stringify(privacy.portalPrivacySections),'Acceptance retains the exact server-provided notice text')
