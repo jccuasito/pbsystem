@@ -6,7 +6,7 @@ const esbuild=require('esbuild'),sfc=require('@vue/compiler-sfc')
 const root=path.resolve(__dirname,'..'),output=path.join(root,'.data','payslip-sites-tests')
 async function buildFixture(){
  const styles=[]
- const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './app/pages/payroll/payslip-sites/index.vue';const app=createApp(Portal);app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
+ const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './app/pages/payroll/payslip-sites/index.vue';const app=createApp(Portal);app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});window.siteApp=app;app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
   build.onResolve({filter:/^(~~\/|~\/)/},args=>({path:path.resolve(root,args.path.startsWith('~~/')?args.path.slice(3):'app/'+args.path.slice(2))+'.ts'}))
   build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
   build.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const useHead = value => { document.title = value.title }',loader:'js'}))
@@ -30,7 +30,7 @@ test('account review selection, included sites and shared employee posting work 
  try{
   const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));page.on('dialog',dialog=>dialog.accept())
   for(const width of [320,1280]){
-   await page.setViewportSize({width,height:850})
+   await page.evaluate(()=>window.siteApp?.unmount());await page.setViewportSize({width,height:850})
    await page.setContent('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0}</style><div id="app"></div>')
    await page.addStyleTag({content:fixture.css})
    await page.evaluate(()=>{
@@ -42,9 +42,11 @@ test('account review selection, included sites and shared employee posting work 
     window.$fetch=async(url,options={})=>{
      window.requests.push({url,...options})
      if(url.endsWith('/sites')){
-      if(options.method==='POST'){window.posted=options.body.action==='post'?[...new Set([...window.posted,...options.body.employeeIds])]:window.posted.filter(id=>!options.body.employeeIds.includes(id));return{changed:options.body.employeeIds.length,unchanged:0}}
-      if(options.query?.siteAccountId!==undefined)return{header,items:Array.from({length:27},(_,index)=>({employee:employee(index+1),cutoffs:[cutoff(index+1)]})),reviewToken:'a'.repeat(64),canPost:true}
-      return{items:[{...header,EmployeeCount:27,PayrollCount:27,PostedPayrollCount:window.posted.length,PublicationStatus:window.posted.length===27?'Posted':window.posted.length?'Partially posted':'Not Posted',GrossPay:27000,TotalDeduction:2700,NetPay:24300}],agencies:[{AgencyID:1,AgencyName:'Synthetic agency'}],cutoffs:[header],canPost:true,pagination:{page:1,pages:1,total:1}}
+      if(options.method==='POST'){if(window.conflictOnce){window.conflictOnce=false;throw{statusCode:409,data:{statusMessage:'The payroll review changed.'}}}window.posted=options.body.action==='post'?[...new Set([...window.posted,...options.body.employeeIds])]:window.posted.filter(id=>!options.body.employeeIds.includes(id));return{changed:options.body.employeeIds.length,unchanged:0}}
+      if(options.query?.siteAccountId!==undefined)return{header,items:Array.from({length:127},(_,index)=>({employee:employee(index+1),cutoffs:[cutoff(index+1)]})),reviewToken:'a'.repeat(64),canPost:true}
+      const all=Array.from({length:30},(_,index)=>({...header,Scope:{...scope,siteAccountId:10+index},SiteAccountID:10+index,SiteAccountName:'Synthetic Account '+(index+1),EmployeeCount:127,PayrollCount:127,PostedPayrollCount:window.posted.length,PublicationStatus:window.posted.length===127?'Posted':window.posted.length?'Partially posted':'Not Posted',GrossPay:127000,TotalDeduction:12700,NetPay:114300}))
+      const filtered=options.query?.search==='last'?all.slice(-1):all,currentPage=Number(options.query?.page||1)
+      return{items:filtered.slice((currentPage-1)*25,currentPage*25),agencies:[{AgencyID:1,AgencyName:'Synthetic agency'}],cutoffs:[header],canPost:true,pagination:{page:currentPage,pages:Math.ceil(filtered.length/25),total:filtered.length}}
      }
      if(url.endsWith('/account'))return{canManage:true,account:{Status:'Active',Email:'synthetic@example.invalid',ContactNumber:'09000000000',AgreementVersion:'test',AgreementAcceptedAt:'2026-10-25'}}
      if(url.endsWith('/payslips')&&options.query?.employeeId)return{employee:employee(options.query.employeeId),cutoffs:[cutoff(options.query.employeeId)],canPost:true}
@@ -52,27 +54,30 @@ test('account review selection, included sites and shared employee posting work 
     }
    })
    await page.addScriptTag({content:fixture.script})
-   await page.getByRole('button',{name:'Review account'}).click()
+   await page.getByRole('button',{name:'Review account'}).first().click()
    const dialog=page.getByRole('dialog',{name:'Synthetic Account',exact:true});await dialog.waitFor()
    await dialog.locator('.included-sites summary').click()
    assert.match(await dialog.locator('.included-sites').innerText(),/Synthetic North Site/)
    assert.match(await dialog.locator('.included-sites').innerText(),/Synthetic South Site/)
    assert.doesNotMatch(await dialog.locator('.included-sites').innerText(),/Outside account site/)
-   assert.equal(await dialog.locator('tbody tr').count(),25,'Large rosters use pages')
-   await dialog.getByRole('button',{name:'Select all filtered (27)',exact:true}).click()
+   assert.equal(await dialog.locator('tbody tr').count(),50,'Large rosters initially render a small batch')
+   assert.equal(await page.getByRole('button',{name:/^Refresh|^Previous$|^Next$/}).count(),0,'Refresh and pagination buttons are removed')
+   await dialog.getByRole('button',{name:'Select all filtered (127)',exact:true}).click()
    const post=dialog.getByRole('button',{name:'Post selected payslips',exact:true})
    assert.equal(await post.isDisabled(),true,'Combined payslip requires acknowledgement')
    await dialog.getByRole('checkbox',{name:/selected employee.*combined payslip/}).check()
    assert.equal(await post.isEnabled(),true)
-   await dialog.getByRole('button',{name:'Next',exact:true}).click()
-   assert.equal(await dialog.locator('tbody tr').count(),2)
-   assert.equal(await dialog.getByRole('checkbox',{name:'Select SYNTHETIC EMPLOYEE 27',exact:true}).isChecked(),true,'Selection spans pages')
+   for(let step=0;step<2;step++){await dialog.locator('.list-progress').scrollIntoViewIfNeeded();await page.waitForFunction(expected=>document.querySelectorAll('.roster-table tbody tr').length>=expected,step===0?100:127)}
+   assert.equal(await dialog.getByRole('checkbox',{name:'Select SYNTHETIC EMPLOYEE 127',exact:true}).isChecked(),true,'Selection includes employees before they are rendered')
+   const reviewReads=await page.evaluate(()=>window.requests.filter(row=>row.url.endsWith('/sites')&&row.query?.siteAccountId!==undefined&&!row.method).length)
+   await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+   assert.equal(await page.evaluate(()=>window.requests.filter(row=>row.url.endsWith('/sites')&&row.query?.siteAccountId!==undefined&&!row.method).length),reviewReads,'Focus does not clear an in-progress selection')
    await post.click()
    await dialog.getByRole('status').waitFor()
    const request=await page.evaluate(()=>window.requests.find(row=>row.method==='POST'))
-   assert.equal(request.body.employeeIds.length,27);assert.equal(request.body.batchId,undefined);assert.equal(request.body.siteAccountId,10);assert.equal(request.body.agencyId,1);assert.equal(request.body.periodStart,'2026-10-01');assert.equal(request.body.periodEnd,'2026-10-15');assert.equal(request.body.includeCombined,true);assert.equal(request.body.action,'post')
+   assert.equal(request.body.employeeIds.length,127);assert.equal(request.body.batchId,undefined);assert.equal(request.body.siteAccountId,10);assert.equal(request.body.agencyId,1);assert.equal(request.body.periodStart,'2026-10-01');assert.equal(request.body.periodEnd,'2026-10-15');assert.equal(request.body.includeCombined,true);assert.equal(request.body.action,'post')
    assert.equal(await post.isDisabled(),true,'Selection clears after successful post')
-   await dialog.getByRole('button',{name:'Previous',exact:true}).click()
+   await dialog.locator('.modal-body').evaluate(el=>{el.scrollTop=0})
    await dialog.getByRole('button',{name:'View payslip',exact:true}).first().click()
    const preview=page.getByRole('dialog',{name:'Payslip preview',exact:true});await preview.waitFor()
    assert.match(await preview.locator('.sheet-site').innerText(),new RegExp('Synthetic North Site / Synthetic South Site'))
@@ -83,7 +88,13 @@ test('account review selection, included sites and shared employee posting work 
    assert.equal(await profile.getByRole('button',{name:'Deactivate access',exact:true}).count(),1)
    assert.equal(await page.getByRole('heading',{name:'Payslips',exact:true}).count(),0,'Embedded profile does not render a second employee list')
    await profile.getByRole('button',{name:'Close profile'}).click();await profile.waitFor({state:'hidden'})
-   await dialog.getByRole('button',{name:'Select all filtered (27)',exact:true}).click()
+   await dialog.getByRole('button',{name:'Select all filtered (127)',exact:true}).click()
+   await dialog.getByRole('checkbox',{name:/selected employee.*combined payslip/}).check()
+   await page.evaluate(()=>{window.conflictOnce=true})
+   await dialog.getByRole('button',{name:'Withdraw selected',exact:true}).click()
+   await dialog.getByRole('alert').waitFor();assert.match(await dialog.getByRole('alert').innerText(),/current review has been reloaded/)
+   assert.equal(await dialog.getByRole('button',{name:'Withdraw selected',exact:true}).isDisabled(),true,'A stale review reloads and requires selection again')
+   await dialog.getByRole('button',{name:'Select all filtered (127)',exact:true}).click()
    await dialog.getByRole('checkbox',{name:/selected employee.*combined payslip/}).check()
    await dialog.getByRole('button',{name:'Withdraw selected',exact:true}).click()
    await dialog.getByRole('status').waitFor()
@@ -94,6 +105,16 @@ test('account review selection, included sites and shared employee posting work 
    await page.screenshot({path:path.join(output,'site-review-'+width+'.png'),fullPage:true})
    await dialog.getByRole('button',{name:'Close account payroll'}).click();await dialog.waitFor({state:'hidden'})
    assert.equal(await page.evaluate(()=>document.body.style.overflow),'')
+   assert.equal(await page.locator('.site-payslips > .table-wrap tbody tr').count(),25)
+   await page.getByPlaceholder('Site Account or agency name').fill('unsent draft')
+   await page.locator('.site-payslips > .list-progress').scrollIntoViewIfNeeded()
+   await page.waitForFunction(()=>document.querySelectorAll('.site-payslips > .table-wrap tbody tr').length===30)
+   assert.equal(await page.evaluate(()=>window.requests.filter(row=>row.query?.page===2).at(-1).query.search),'','Unsubmitted edits do not change the next-page query')
+   await page.getByPlaceholder('Site Account or agency name').fill('last')
+   await page.getByRole('button',{name:'Search',exact:true}).click()
+   await page.waitForFunction(()=>document.querySelectorAll('.site-payslips > .table-wrap tbody tr').length===1)
+   assert.match(await page.locator('.site-payslips > .table-wrap').innerText(),/Synthetic Account 30/)
+   await page.evaluate(()=>window.siteApp.unmount())
   }
   assert.deepEqual(errors,[])
  }finally{await browser.close()}
