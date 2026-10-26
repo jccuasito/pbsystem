@@ -7,11 +7,30 @@ const canManage=(session:any,event:any)=>['Admin','Supervisor'].includes(session
 export async function portalAccountStatus(event:any){
   const session=requireSession(event)
   setHeader(event,'Cache-Control','private, no-store')
-  const employeeId=Number(getQuery(event).employeeId)
+  const query=getQuery(event),employeeId=Number(query.employeeId)
   if(!Number.isSafeInteger(employeeId)||employeeId<1)throw createError({statusCode:400,statusMessage:'Select an employee.'})
   const manage=canManage(session,event)
-  const [[account]]=await pool.execute<any[]>(`SELECT AccountID,Status,Email,ContactNumber,AgreementVersion,AgreementAcceptedAt,CreatedAt FROM employee_portal_account WHERE EmployeeID=?`,[employeeId])
-  return{canManage:manage,account:account?(manage?account:{Status:account.Status}):null}
+  if(!manage){
+    const [[account]]=await pool.execute<any[]>('SELECT Status FROM employee_portal_account WHERE EmployeeID=?',[employeeId])
+    return{canManage:false,account:account||null}
+  }
+  // Account/event DATETIMEs are database-local; recovery/session expiry uses UTC.
+  const iso=(expression:string)=>`DATE_FORMAT(TIMESTAMPADD(SECOND,TIMESTAMPDIFF(SECOND,NOW(),UTC_TIMESTAMP()),${expression}),'%Y-%m-%dT%H:%i:%s.000Z')`
+  const [[account]]=await pool.execute<any[]>(`SELECT AccountID,Status,Email,ContactNumber,AgreementVersion,
+    ${iso('AgreementAcceptedAt')} AS AgreementAcceptedAt,${iso('CreatedAt')} AS CreatedAt,
+    ${iso("(SELECT MAX(login.CreatedAt) FROM employee_portal_event login WHERE login.AccountID=employee_portal_account.AccountID AND login.Action='Signed in')")} AS LastSignInAt,
+    (SELECT COUNT(*) FROM employee_portal_session ps WHERE ps.AccountID=employee_portal_account.AccountID AND ps.ExpiresAt>UTC_TIMESTAMP()) AS ActiveSessions,
+    CASE WHEN ResetTokenHash IS NOT NULL AND ResetExpiresAt>UTC_TIMESTAMP() THEN 1 ELSE 0 END AS RecoveryPending,
+    DATE_FORMAT(ResetExpiresAt,'%Y-%m-%dT%H:%i:%s.000Z') AS RecoveryExpiresAt
+    FROM employee_portal_account WHERE EmployeeID=?`,[employeeId])
+  if(!account)return{canManage:true,account:null,activity:{items:[],pagination:{page:1,pages:1,total:0}}}
+  const [[count]]=await pool.execute<any[]>('SELECT COUNT(*) AS Total FROM employee_portal_event WHERE AccountID=?',[account.AccountID])
+  const total=Number(count.Total),pageSize=10,pages=Math.max(1,Math.ceil(total/pageSize)),page=Math.max(1,Math.min(pages,Math.floor(Number(query.activityPage)||1)))
+  const [items]=await pool.execute<any[]>(`SELECT ev.EventID,ev.Action,ev.ActorUserID,
+    CONCAT_WS(' ',actor.FirstName,actor.LastName) AS ActorName,${iso('ev.CreatedAt')} AS CreatedAt
+    FROM employee_portal_event ev LEFT JOIN \`user\` actor ON actor.UserID=ev.ActorUserID
+    WHERE ev.AccountID=? ORDER BY ev.EventID DESC LIMIT ? OFFSET ?`,[account.AccountID,pageSize,(page-1)*pageSize])
+  return{canManage:true,account,activity:{items,pagination:{page,pageSize,pages,total}}}
 }
 export async function managePortalAccount(event:any){
   const session=requireSession(event)
@@ -33,6 +52,7 @@ export async function managePortalAccount(event:any){
     }else await db.execute('UPDATE employee_portal_account SET Status=?,ResetTokenHash=NULL,ResetExpiresAt=NULL WHERE AccountID=?',[body.action==='activate'?'Active':'Inactive',account.AccountID])
     await db.execute('DELETE FROM employee_portal_session WHERE AccountID=?',[account.AccountID])
     await db.execute('INSERT INTO employee_portal_event(AccountID,Action,ActorUserID) VALUES(?,?,?)',[account.AccountID,body.action==='recovery'?'HR issued recovery code':body.action==='activate'?'HR activated account':'HR deactivated account',session.sub])
-    await db.commit();return{success:true,recoveryCode}
+    const [[expiry]]=recoveryCode?await db.execute<any[]>("SELECT DATE_FORMAT(ResetExpiresAt,'%Y-%m-%dT%H:%i:%s.000Z') AS ExpiresAt FROM employee_portal_account WHERE AccountID=?",[account.AccountID]):[[null]]
+    await db.commit();return{success:true,recoveryCode,expiresAt:expiry?.ExpiresAt||null}
   }catch(error){await db.rollback();throw error}finally{db.release()}
 }

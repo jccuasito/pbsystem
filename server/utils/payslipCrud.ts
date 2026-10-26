@@ -190,57 +190,59 @@ export async function readEmployeePayslips(employeeId:number,db:any=pool){
 
 export async function listPayslips(event: any) {
   const session = requireSession(event)
-  void session.sub
   setHeader(event,'Cache-Control','private, no-store')
-  const query = getQuery(event)
-  const employeeId = Number(query.employeeId || 0)
-  if (query.employeeId !== undefined && (!Number.isInteger(employeeId) || employeeId < 1)) {
-    throw createError({ statusCode: 400, statusMessage: 'Select a valid employee.' })
-  }
-  if (employeeId) return {...await readEmployeePayslips(employeeId),canPost:session.userType!=='Viewer'&&event.context?.moduleCanEdit!==false}
-
-  const search = String(query.search || '').trim().slice(0, 100)
-  const agencyId = Number(query.agencyId || 0)
-  if (query.agencyId && (!Number.isInteger(agencyId) || agencyId < 1)) {
-    throw createError({ statusCode: 400, statusMessage: 'Select a valid agency.' })
-  }
-  const page = Math.max(1, Math.min(100000, Math.floor(Number(query.page) || 1)))
-  const pageSize = 25
-  const joins = `LEFT JOIN (SELECT EmployeeID,MAX(EndDate) AS LastCutoffEnd,COUNT(*) AS PayrollCount,
+  const query = getQuery(event), employeeId = Number(query.employeeId || 0)
+  const canPost=session.userType!=='Viewer'&&event.context?.moduleCanEdit!==false
+  // Keep contact visibility aligned with portalAccountStatus's management policy.
+  const canManageAccounts=['Admin','Supervisor'].includes(session.userType)&&event.context?.moduleCanEdit!==false
+  if(query.employeeId!==undefined&&(!Number.isSafeInteger(employeeId)||employeeId<1))throw createError({statusCode:400,statusMessage:'Select a valid employee.'})
+  if(employeeId)return{...await readEmployeePayslips(employeeId),canPost}
+  const search=String(query.search||'').trim().slice(0,190),agencyId=Number(query.agencyId||0)
+  if(query.agencyId&&(!Number.isSafeInteger(agencyId)||agencyId<1))throw createError({statusCode:400,statusMessage:'Select a valid agency.'})
+  const joins=`LEFT JOIN employee_portal_account portal ON portal.EmployeeID=e.EmployeeID
+    LEFT JOIN (SELECT EmployeeID,MAX(EndDate) AS LastCutoffEnd,COUNT(*) AS PayrollCount,
       COUNT(DISTINCT StartDate,EndDate) AS CutoffCount FROM payroll WHERE Status IN ('Approved','Released') GROUP BY EmployeeID) summary ON summary.EmployeeID=e.EmployeeID
-    LEFT JOIN (SELECT v.EmployeeID,COUNT(*) AS PostedPayrollCount FROM valid_publications v
-      JOIN finalized f ON f.EmployeeID=v.EmployeeID AND f.GroupKey=v.GroupKey
-      GROUP BY v.EmployeeID) published ON published.EmployeeID=e.EmployeeID`
+    LEFT JOIN (SELECT v.EmployeeID,COUNT(*) AS PostedPayrollCount,COUNT(DISTINCT v.GroupKey) AS PostedPayslipCount FROM valid_publications v
+      JOIN finalized f ON f.EmployeeID=v.EmployeeID AND f.GroupKey=v.GroupKey GROUP BY v.EmployeeID) published ON published.EmployeeID=e.EmployeeID`
   const postingFilters:Record<string,string>={
     '':'1=1',posted:'COALESCE(summary.PayrollCount,0)>0 AND COALESCE(published.PostedPayrollCount,0)=summary.PayrollCount',
     'not-posted':'COALESCE(summary.PayrollCount,0)>COALESCE(published.PostedPayrollCount,0)',
     partial:'COALESCE(published.PostedPayrollCount,0)>0 AND published.PostedPayrollCount<summary.PayrollCount',
     'no-payslips':'COALESCE(summary.PayrollCount,0)=0'
   }
-  const filter=String(query.postingStatus||'')
-  if(!Object.hasOwn(postingFilters,filter))throw createError({statusCode:400,statusMessage:'Select a valid payslip posting status.'})
-  const where = `WHERE (? = 0 OR ap.AgencyID = ?) AND (? = '' OR
-    CONCAT_WS(' ', e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName) LIKE ?) AND (${postingFilters[filter]})`
-  const params = [agencyId, agencyId, search, `%${search}%`]
-  const [[count]] = await pool.execute<any[]>(finalizedPayslipCte+` SELECT COUNT(*) AS Total FROM employee e
-    LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID ${joins} ${where}`, params)
-  const [items] = await pool.execute<any[]>(finalizedPayslipCte+` SELECT e.EmployeeID, e.EmployeeNumber,
-      CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, e.MiddleName)) AS EmployeeName,
-      e.Status, a.AgencyName, p.PositionName,
-      DATE_FORMAT(summary.LastCutoffEnd, '%Y-%m-%d') AS LastCutoffEnd,
-      COALESCE(summary.CutoffCount,0) AS CutoffCount,COALESCE(summary.PayrollCount,0) AS PayrollCount,
-      COALESCE(published.PostedPayrollCount,0) AS PostedPayrollCount,
-      CASE WHEN COALESCE(summary.PayrollCount,0)=0 THEN 'No payslips'
-        WHEN published.PostedPayrollCount=summary.PayrollCount THEN 'Posted'
-        WHEN COALESCE(published.PostedPayrollCount,0)>0 THEN 'Partially posted' ELSE 'Not Posted' END AS PublicationStatus
-    FROM employee e LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
-    LEFT JOIN agency a ON a.AgencyID = ap.AgencyID
-    LEFT JOIN \`position\` p ON p.PositionID = ap.PositionID
-    ${joins}
-    ${where} ORDER BY summary.LastCutoffEnd DESC, e.LastName, e.FirstName, e.EmployeeID
-    LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize])
-  const [agencies] = await pool.execute<any[]>(`SELECT AgencyID, AgencyName FROM agency
-    WHERE Status = 'Active' ORDER BY AgencyName`)
-  return { items, agencies, canPost:session.userType!=='Viewer'&&event.context?.moduleCanEdit!==false, pagination: { page, pageSize, total: Number(count.Total),
-    pages: Math.max(1, Math.ceil(Number(count.Total) / pageSize)) } }
+  const accountFilters:Record<string,string>={'':'1=1',active:"portal.Status='Active'",inactive:"portal.Status='Inactive'",unregistered:'portal.AccountID IS NULL'}
+  const posting=String(query.postingStatus||''),account=String(query.accountStatus||'')
+  if(!Object.hasOwn(postingFilters,posting)||!Object.hasOwn(accountFilters,account))throw createError({statusCode:400,statusMessage:'Select a valid status filter.'})
+  const where=`WHERE (?=0 OR ap.AgencyID=?) AND (?='' OR
+    CONVERT(CONCAT_WS(' ',e.EmployeeNumber,e.FirstName,e.MiddleName,e.LastName${canManageAccounts?',portal.Email':''}) USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ?)
+    AND (${postingFilters[posting]})`
+  const params=[agencyId,agencyId,search,'%'+search+'%']
+  const [[counts]]=await pool.execute<any[]>(finalizedPayslipCte+` SELECT COUNT(*) AS Total,
+    COALESCE(SUM(portal.Status='Active'),0) AS Active,COALESCE(SUM(portal.Status='Inactive'),0) AS Inactive,
+    COALESCE(SUM(portal.AccountID IS NULL),0) AS Unregistered
+    FROM employee e LEFT JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID ${joins} ${where}`,params)
+  const accountSummary={total:Number(counts.Total),active:Number(counts.Active),inactive:Number(counts.Inactive),unregistered:Number(counts.Unregistered)}
+  const total=account?accountSummary[account as 'active'|'inactive'|'unregistered']:accountSummary.total
+  const pageSize=25,pages=Math.max(1,Math.ceil(total/pageSize)),page=Math.max(1,Math.min(pages,Math.floor(Number(query.page)||1)))
+  const iso=(expression:string)=>`DATE_FORMAT(TIMESTAMPADD(SECOND,TIMESTAMPDIFF(SECOND,NOW(),UTC_TIMESTAMP()),${expression}),'%Y-%m-%dT%H:%i:%s.000Z')`
+  const privateFields=canManageAccounts?`portal.Email AS PortalEmail,portal.ContactNumber AS PortalContactNumber,
+    ${iso('portal.CreatedAt')} AS PortalCreatedAt,
+    ${iso("(SELECT MAX(login.CreatedAt) FROM employee_portal_event login WHERE login.AccountID=portal.AccountID AND login.Action='Signed in')")} AS PortalLastSignInAt,
+    (SELECT COUNT(*) FROM employee_portal_session ps WHERE ps.AccountID=portal.AccountID AND ps.ExpiresAt>UTC_TIMESTAMP()) AS PortalActiveSessions`
+    :'NULL AS PortalEmail,NULL AS PortalContactNumber,NULL AS PortalCreatedAt,NULL AS PortalLastSignInAt,NULL AS PortalActiveSessions'
+  const [items]=await pool.execute<any[]>(finalizedPayslipCte+` SELECT e.EmployeeID,e.EmployeeNumber,
+    CONCAT_WS(', ',e.LastName,CONCAT_WS(' ',e.FirstName,e.MiddleName)) AS EmployeeName,e.Status,a.AgencyName,p.PositionName,
+    CASE WHEN portal.AccountID IS NULL THEN 'Not registered' ELSE portal.Status END AS PortalStatus,${privateFields},
+    DATE_FORMAT(summary.LastCutoffEnd,'%Y-%m-%d') AS LastCutoffEnd,
+    COALESCE(summary.CutoffCount,0) AS CutoffCount,COALESCE(summary.PayrollCount,0) AS PayrollCount,
+    COALESCE(groups.PayslipCount,0) AS PayslipCount,COALESCE(published.PostedPayslipCount,0) AS PostedPayslipCount,
+    COALESCE(published.PostedPayrollCount,0) AS PostedPayrollCount,
+    CASE WHEN COALESCE(summary.PayrollCount,0)=0 THEN 'No payslips' WHEN published.PostedPayrollCount=summary.PayrollCount THEN 'Posted'
+      WHEN COALESCE(published.PostedPayrollCount,0)>0 THEN 'Partially posted' ELSE 'Not Posted' END AS PublicationStatus
+    FROM employee e LEFT JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
+    LEFT JOIN agency a ON a.AgencyID=ap.AgencyID LEFT JOIN \`position\` p ON p.PositionID=ap.PositionID
+    LEFT JOIN (SELECT EmployeeID,COUNT(*) AS PayslipCount FROM current_groups GROUP BY EmployeeID) groups ON groups.EmployeeID=e.EmployeeID
+    ${joins} ${where} AND (${accountFilters[account]}) ORDER BY e.LastName,e.FirstName,e.EmployeeID LIMIT ? OFFSET ?`,[...params,pageSize,(page-1)*pageSize])
+  const [agencies]=await pool.execute<any[]>("SELECT AgencyID,AgencyName FROM agency WHERE Status='Active' ORDER BY AgencyName")
+  return{items,agencies,canPost,canManageAccounts,accountSummary,pagination:{page,pageSize,total,pages}}
 }

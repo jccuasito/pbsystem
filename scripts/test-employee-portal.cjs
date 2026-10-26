@@ -39,6 +39,7 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   const schema=fs.readFileSync('database/employee-portal.sql','utf8').replaceAll('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE').replace(/^\s*CONSTRAINT[^\n]*\n/gm,'').replace(/,\s*\)/g,'\n)')
   for(const statement of schema.split(';').map(row=>row.trim()).filter(Boolean))await db.query(statement)
   for(const sql of [
+   'CREATE TEMPORARY TABLE `user`(UserID INT PRIMARY KEY,FirstName VARCHAR(100),LastName VARCHAR(100))',
    'CREATE TEMPORARY TABLE employee(EmployeeID INT PRIMARY KEY,EmployeeNumber VARCHAR(40),FirstName VARCHAR(100),MiddleName VARCHAR(100),LastName VARCHAR(100),Status VARCHAR(20),AgencyPositionID INT)',
    'CREATE TEMPORARY TABLE government(GovernmentID INT PRIMARY KEY,EmployeeID INT,GovernmentTypeKey VARCHAR(80),GovernmentNumberKey VARCHAR(50))',
    'CREATE TEMPORARY TABLE agency_position(AgencyPositionID INT PRIMARY KEY,AgencyID INT,PositionID INT)',
@@ -58,6 +59,7 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
    'CREATE TEMPORARY TABLE employee_account_transaction(TransactionRecordID INT,PayrollID INT,EntryType VARCHAR(30),ItemName VARCHAR(100),ClassificationName VARCHAR(100),Amount DECIMAL(12,2),Status VARCHAR(20))'
   ])await db.query(sql)
   await db.query("INSERT INTO employee VALUES(1,'TEST-1','TEST','MIDDLE','PERSON','Active',1),(2,'TEST-2','OTHER',NULL,'PERSON','Active',1)")
+  await db.query("INSERT INTO `user` VALUES(42,'Synthetic','HR')")
   await db.query("INSERT INTO government VALUES(11,1,'sss','1234567890'),(12,2,'sss','9876543210')")
   await db.query("INSERT INTO agency VALUES(1,'Synthetic agency','Active')");await db.query('INSERT INTO agency_position VALUES(1,1,1)');await db.query("INSERT INTO `position` VALUES(1,'Synthetic position')")
   await db.query("INSERT INTO site(SiteID,SiteName) VALUES(1,'Fixed site'),(2,'Reliever site')");await db.query("INSERT INTO client VALUES(1,'Synthetic client')")
@@ -85,6 +87,24 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   await assert.rejects(()=>auth.registerEmployee(publicEvent('127.0.0.9'),{...body,password:'Password123'+'é'.repeat(40),confirmPassword:'Password123'+'é'.repeat(40)}),e=>e.statusCode===400,'Bcrypt cannot silently truncate long UTF-8 passwords')
   await assert.rejects(()=>auth.registerEmployee(publicEvent(),{...body,email:'second@example.invalid'}),e=>e.statusCode===409)
   await assert.rejects(()=>auth.registerEmployee(publicEvent(),{...body,firstName:'OTHER',middleName:'',governmentNumber:'98-7654321-0'}),e=>e.statusCode===409,'One login email cannot claim two employees')
+  const staffTracker={actor:{sub:42,userType:'Admin'},context:{moduleCanEdit:true},query:{}}
+  const unregistered=await slips.listPayslips({...staffTracker,query:{accountStatus:'unregistered'}})
+  assert.equal(unregistered.items.length,1);assert.equal(unregistered.items[0].EmployeeID,2)
+  assert.equal(unregistered.accountSummary.active,1);assert.equal(unregistered.accountSummary.unregistered,1)
+  const emailLookup=await slips.listPayslips({...staffTracker,query:{search:'test@example.invalid',accountStatus:'active'}})
+  assert.equal(emailLookup.items.length,1);assert.equal(emailLookup.items[0].PortalEmail,'test@example.invalid')
+  assert.equal(emailLookup.items[0].PortalActiveSessions,1)
+  for(const userType of ['Encoder','Viewer']){
+    const restricted=await slips.listPayslips({...staffTracker,actor:{sub:42,userType},query:{}})
+    assert.equal(restricted.canManageAccounts,false)
+    assert.ok(restricted.items.every(row=>row.PortalEmail===null&&row.PortalContactNumber===null&&row.PortalLastSignInAt===null))
+    assert.equal((await slips.listPayslips({...staffTracker,actor:{sub:42,userType},query:{search:'test@example.invalid'}})).items.length,0,'Restricted staff cannot infer accounts by email search')
+    const status=await admin.portalAccountStatus({...staffTracker,actor:{sub:42,userType},query:{employeeId:1}})
+    assert.deepEqual(Object.keys(status.account),['Status']);assert.equal(status.activity,undefined)
+  }
+  await assert.rejects(()=>slips.listPayslips({...staffTracker,query:{accountStatus:'invalid'}}),e=>e.statusCode===400)
+  const managerReadOnly=await slips.listPayslips({...staffTracker,context:{moduleCanEdit:false},query:{}})
+  assert.equal(managerReadOnly.canManageAccounts,false);assert.equal(managerReadOnly.items[0].PortalEmail,null)
   const other=publicEvent('127.0.0.6');await auth.registerEmployee(other,{...body,firstName:'OTHER',middleName:'',governmentNumber:'98-7654321-0',email:'other@example.invalid'})
   await assert.rejects(()=>auth.requireEmployeeSession({cookies:{pbs_session:'staff-cookie'}}),e=>e.statusCode===401)
   await assert.rejects(()=>auth.registerEmployee({...publicEvent(),headers:{'content-type':'application/json',origin:'https://attacker.invalid'}},body),e=>e.statusCode===403)
@@ -119,6 +139,20 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   await assert.rejects(()=>admin.managePortalAccount({actor:{sub:5,userType:'Encoder'},body:{employeeId:1,action:'recovery'}}),e=>e.statusCode===403)
   const recovery=await admin.managePortalAccount({...staff,body:{employeeId:1,action:'recovery'}})
   assert.match(recovery.recoveryCode,/^[0-9]{6}$/)
+  assert.match(recovery.expiresAt,/Z$/)
+  assert.ok(Date.parse(recovery.expiresAt)>Date.now()&&Date.parse(recovery.expiresAt)<=Date.now()+901000)
+  let tracked=await admin.portalAccountStatus({...staff,query:{employeeId:1}})
+  assert.equal(tracked.account.RecoveryPending,1);assert.equal(tracked.account.ActiveSessions,0)
+  assert.equal(tracked.account.RecoveryExpiresAt,recovery.expiresAt)
+  assert.doesNotMatch(JSON.stringify(tracked),/PasswordHash|ResetTokenHash|AgreementText/)
+  assert.equal(tracked.activity.items[0].Action,'HR issued recovery code');assert.equal(tracked.activity.items[0].ActorName,'Synthetic HR')
+  for(let i=0;i<12;i++)await db.execute("INSERT INTO employee_portal_event(AccountID,Action) VALUES(?,'Signed in')",[stored.AccountID])
+  tracked=await admin.portalAccountStatus({...staff,query:{employeeId:1}})
+  assert.equal(tracked.activity.items.length,10);assert.ok(tracked.activity.pagination.pages>1)
+  const lastActivity=await admin.portalAccountStatus({...staff,query:{employeeId:1,activityPage:9999}})
+  assert.equal(lastActivity.activity.pagination.page,lastActivity.activity.pagination.pages)
+  const trackedList=await slips.listPayslips({...staff,query:{search:'updated@example.invalid'}})
+  assert.equal(trackedList.items[0].PortalLastSignInAt,tracked.account.LastSignInAt,'List and profile dates represent the same sign-in instant')
   assert.notEqual(recoveryHelpers.portalRecoveryHash(1,'012345'),recoveryHelpers.portalRecoveryHash(2,'012345'),'Short codes are bound to an account')
   const [[reset]]=await db.query('SELECT ResetTokenHash FROM employee_portal_account WHERE EmployeeID=1');assert.notEqual(reset.ResetTokenHash,recovery.recoveryCode);assert.equal(reset.ResetTokenHash.length,64,'Only a keyed hash is stored')
   await assert.rejects(()=>auth.requireEmployeeSession({...publicEvent(),cookies:{pbs_employee_session:oldToken}}),e=>e.statusCode===401)
@@ -148,6 +182,9 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   await auth.logoutEmployee(owner);await assert.rejects(()=>auth.requireEmployeeSession(owner),e=>e.statusCode===401)
   const login=publicEvent();await auth.loginEmployee(login,{email:'updated@example.invalid',password:body.password});assert.equal((await auth.requireEmployeeSession(login)).EmployeeID,1)
   await admin.managePortalAccount({...staff,body:{employeeId:1,action:'deactivate'}});await assert.rejects(()=>auth.requireEmployeeSession(login),e=>e.statusCode===401)
+  const inactive=await slips.listPayslips({...staff,query:{accountStatus:'inactive'}})
+  assert.equal(inactive.items.length,1);assert.equal(inactive.items[0].EmployeeID,1);assert.equal(inactive.accountSummary.inactive,1)
+  const missingAccount=await admin.portalAccountStatus({...staff,query:{employeeId:99999}});assert.equal(missingAccount.account,null)
   for(let i=0;i<3;i++)await auth.portalLimit(publicEvent('127.0.0.99'),'limit-test','',3)
   await assert.rejects(()=>auth.portalLimit(publicEvent('127.0.0.99'),'limit-test','',3),e=>e.statusCode===429)
  }finally{await db.end()}

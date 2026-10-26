@@ -1,257 +1,153 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import EmployeePayslipSheet from '../../../components/EmployeePayslipSheet.vue'
+import { payslipPostedLabel, payslipSiteNames } from '~~/shared/utils/payslipPresentation'
+import { lockBodyScroll } from '../../../utils/bodyScrollLock'
 
-type Employee = {
-  EmployeeID: number; EmployeeNumber: string | null; EmployeeName: string; Status: string
-  AgencyName: string | null; PositionName: string | null; LastCutoffEnd?: string | null; CutoffCount?: number
-  PublicationStatus?:string; PayrollCount?:number; PostedPayrollCount?:number
+type Employee={EmployeeID:number;EmployeeNumber:string|null;EmployeeName:string;Status:string;AgencyName:string|null;PositionName:string|null;PortalStatus?:string;PortalEmail?:string|null;PortalContactNumber?:string|null;PortalLastSignInAt?:string|null;PortalActiveSessions?:number|null;PayslipCount?:number;PostedPayslipCount?:number;LastCutoffEnd?:string|null}
+type Cutoff={key:string;periodStart:string;periodEnd:string;assignmentType:string;siteName:string|null;publicationStatus:string;postedAt?:string|null;gross:number;deductions:number;net:number;sources:any[];[key:string]:any}
+type Profile={employee:Employee;cutoffs:Cutoff[]}
+type Summary={total:number;active:number;inactive:number;unregistered:number}
+type List={items:Employee[];agencies:Array<{AgencyID:number;AgencyName:string}>;canManageAccounts?:boolean;accountSummary:Summary;pagination:{page:number;pages:number;total:number}}
+type AccountData={canManage:boolean;account:any;activity?:{items:Array<{EventID:number;Action:string;ActorUserID:number|null;ActorName:string;CreatedAt:string}>;pagination:{page:number;pages:number;total:number}}}
+const props=defineProps<{employee?:Employee;embedded?:boolean}>(),emit=defineEmits<{close:[]}>()
+const list=ref<List>({items:[],agencies:[],accountSummary:{total:0,active:0,inactive:0,unregistered:0},pagination:{page:1,pages:1,total:0}})
+const search=ref(''),agencyId=ref(''),accountStatus=ref(''),page=ref(1),loading=ref(false),error=ref('')
+const profile=ref<Profile|null>(null),portalAccount=ref<AccountData|null>(null),profileTab=ref('account'),profileBody=ref<HTMLElement|null>(null),profileDialog=ref<HTMLElement|null>(null)
+const historyLoading=ref(false),accountLoading=ref(false),historyError=ref(''),accountError=ref(''),actionError=ref(''),actionNotice=ref(''),accountBusy=ref(false)
+const historySearch=ref(''),historyYear=ref(''),historyStatus=ref(''),historyPage=ref(1),selectedPayslipKey=ref('')
+const recoveryCode=ref(''),recoveryExpiresAt=ref(''),copyNotice=ref('')
+let listRequest=0,profileRequest=0,accountRequest=0,listAbort:AbortController|null=null,profileAbort:AbortController|null=null,recoveryTimer:ReturnType<typeof setTimeout>|undefined
+const money=(value:number)=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(value||0))
+const date=(value?:string|null)=>value?new Date(value+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}):'-'
+const timestamp=(value?:string|null)=>payslipPostedLabel(value)||'Not recorded'
+const period=(item:Cutoff)=>date(item.periodStart)+' - '+date(item.periodEnd)
+const displayNumber=(employee:Employee)=>employee.EmployeeNumber?.trim()||'EMP-'+String(employee.EmployeeID).padStart(4,'0')
+const initials=(employee:Employee)=>employee.EmployeeName.split(/[ ,]+/).filter(Boolean).slice(0,2).map(word=>word[0]).join('').toUpperCase()
+const portalStatus=(employee:Employee)=>employee.PortalStatus||'Not registered'
+const statusClass=(status:string)=>status==='Active'||status==='Posted'?'active':status==='Inactive'?'inactive':'neutral'
+const cards=computed(()=>[{key:'',label:'All employees',value:list.value.accountSummary.total},{key:'active',label:'Active accounts',value:list.value.accountSummary.active},{key:'inactive',label:'Inactive accounts',value:list.value.accountSummary.inactive},{key:'unregistered',label:'Not registered',value:list.value.accountSummary.unregistered}])
+const historyYears=computed(()=>[...new Set(profile.value?.cutoffs.map(item=>item.periodEnd.slice(0,4))||[])].sort().reverse())
+const filteredHistory=computed(()=>profile.value?.cutoffs.filter(item=>(!historyYear.value||item.periodEnd.startsWith(historyYear.value))&&(!historyStatus.value||item.publicationStatus===historyStatus.value)&&[period(item),item.assignmentType,...payslipSiteNames(item),...item.sources.map(source=>source.clientName)].join(' ').toLowerCase().includes(historySearch.value.trim().toLowerCase()))||[])
+const historyPages=computed(()=>Math.max(1,Math.ceil(filteredHistory.value.length/10)))
+const historyRows=computed(()=>filteredHistory.value.slice((historyPage.value-1)*10,historyPage.value*10))
+const activeCutoff=computed(()=>profile.value?.cutoffs.find(item=>item.key===selectedPayslipKey.value)||null)
+const postedCount=computed(()=>profile.value?.cutoffs.filter(item=>item.publicationStatus==='Posted').length||0)
+const account=computed(()=>portalAccount.value?.account)
+const isLatest=(item:Cutoff)=>item.periodStart===profile.value?.cutoffs[0]?.periodStart&&item.periodEnd===profile.value?.cutoffs[0]?.periodEnd
+watch(historyPages,value=>{historyPage.value=Math.min(historyPage.value,value)})
+function clearRecovery(){recoveryCode.value='';recoveryExpiresAt.value='';copyNotice.value='';if(recoveryTimer)clearTimeout(recoveryTimer);recoveryTimer=undefined}
+async function load(){
+ const request=++listRequest;listAbort?.abort();listAbort=new AbortController();loading.value=true;error.value=''
+ try{const result=await $fetch<List>('/api/payroll/payslips',{query:{search:search.value.trim(),agencyId:agencyId.value||undefined,accountStatus:accountStatus.value||undefined,page:page.value},signal:listAbort.signal,timeout:15000,retry:0});if(request===listRequest){list.value=result;page.value=result.pagination.page}}
+ catch(cause:any){if(request===listRequest)error.value=cause?.data?.statusMessage||'Unable to load employee accounts. Please try again.'}
+ finally{if(request===listRequest)loading.value=false}
 }
-const props=defineProps<{employee?:Employee;embedded?:boolean}>()
-const emit=defineEmits<{close:[]}>()
-
-type Line = { section: 'earnings' | 'adjustment' | 'government' | 'other'; label: string; hours: number; amount: number }
-type Cutoff = {
-  key: string; periodStart: string; periodEnd: string; status: string; payrollIds: number[]
-  publicationStatus?:string;postedAt?:string|null
-  assignmentType: 'Regular' | 'Reliever'; siteName: string | null
-  sources: Array<{ payrollId: number; batchId: number | null; siteName: string; clientName: string; gross: number; deductions: number; net: number }>
-  gross: number; deductions: number; net: number; lines: Line[]
+async function loadAccount(employeeId:number,activityPage=1){
+ const request=++accountRequest,owner=profileRequest;accountLoading.value=true;accountError.value=''
+ try{const result=await $fetch<AccountData>('/api/payroll/payslips/account',{query:{employeeId,activityPage},signal:profileAbort?.signal,timeout:15000,retry:0});if(request===accountRequest&&owner===profileRequest)portalAccount.value=result}
+ catch(cause:any){if(request===accountRequest&&owner===profileRequest)accountError.value=cause?.data?.statusMessage||'Unable to load this portal account.'}
+ finally{if(request===accountRequest&&owner===profileRequest)accountLoading.value=false}
 }
-type ListResult = { items: Employee[]; agencies: Array<{ AgencyID: number; AgencyName: string }>; canPost?:boolean; pagination: { page: number; pageSize: number; total: number; pages: number } }
-type ProfileResult = { employee: Employee; cutoffs: Cutoff[];canPost?:boolean }
-
-const list = ref<ListResult>({ items: [], agencies: [], pagination: { page: 1, pageSize: 25, total: 0, pages: 1 } })
-const profile = ref<ProfileResult | null>(null)
-const profileBody = ref<HTMLElement | null>(null)
-const selectedPayslipKey = ref('')
-const historySearch = ref('')
-const historyYear = ref('')
-const historyPage = ref(1)
-const historyPageSize = 10
-const search = ref('')
-const agencyId = ref('')
-const postingStatus=ref(''),profilePostingStatus=ref(''),postingBusy=ref(false)
-const portalAccount=ref<any>(null),accountBusy=ref(false),recoveryCode=ref('')
-const page = ref(1)
-const loading = ref(false)
-const profileLoading = ref(false)
-const error = ref('')
-const profileError = ref('')
-const money = (value: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0))
-const date = (value?: string | null) => value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
-const period = (item: Cutoff) => `${date(item.periodStart)} – ${date(item.periodEnd)}`
-const displayNumber = (employee: Employee) => employee.EmployeeNumber?.trim() || `EMP-${String(employee.EmployeeID).padStart(4, '0')}`
-const isLatestPeriod = (item?: Cutoff) => Boolean(item && item.periodStart === profile.value?.cutoffs[0]?.periodStart && item.periodEnd === profile.value?.cutoffs[0]?.periodEnd)
-const matchesPosting=(item:Cutoff)=>!profilePostingStatus.value||item.publicationStatus===profilePostingStatus.value
-const latestCutoffs = computed(() => profile.value?.cutoffs.filter(item=>isLatestPeriod(item)&&matchesPosting(item)) || [])
-const earlierCutoffs = computed(() => profile.value?.cutoffs.filter(item => !isLatestPeriod(item)&&matchesPosting(item)) || [])
-const historyYears = computed(() => [...new Set(earlierCutoffs.value.map(item => item.periodEnd.slice(0, 4)))].sort().reverse())
-const filteredHistory = computed(() => {
-  const query = historySearch.value.trim().toLowerCase()
-  return earlierCutoffs.value.filter((item) => {
-    if (historyYear.value && !item.periodEnd.startsWith(historyYear.value)) return false
-    if (!query) return true
-    const searchable = [item.periodStart, item.periodEnd, period(item), item.assignmentType, item.siteName,
-      ...item.sources.flatMap(source => [source.siteName, source.clientName])].join(' ').toLowerCase()
-    return searchable.includes(query)
-  })
+async function openProfile(employee:Employee,tab='account'){
+ const request=++profileRequest;profileAbort?.abort();const controller=new AbortController();profileAbort=controller;profile.value={employee,cutoffs:[]};profileTab.value=tab;portalAccount.value=null
+ historySearch.value='';historyYear.value='';historyStatus.value='';historyPage.value=1;selectedPayslipKey.value='';historyError.value='';accountError.value='';actionError.value='';actionNotice.value='';clearRecovery();historyLoading.value=true;accountLoading.value=true
+ await nextTick();if(request!==profileRequest)return;profileDialog.value?.focus()
+ const history=(async()=>{try{const result=await $fetch<Profile>('/api/payroll/payslips',{query:{employeeId:employee.EmployeeID},signal:controller.signal,timeout:15000,retry:0});if(request===profileRequest)profile.value=result}catch(cause:any){if(request===profileRequest)historyError.value=cause?.data?.statusMessage||'Unable to load payslip history.'}finally{if(request===profileRequest)historyLoading.value=false}})()
+ await Promise.all([history,loadAccount(employee.EmployeeID)])
+}
+function closeProfile(force=false){if(accountBusy.value&&!force)return;profileRequest++;accountRequest++;profileAbort?.abort();clearRecovery();profile.value=null;portalAccount.value=null;selectedPayslipKey.value=''}
+async function manageAccount(action:'activate'|'deactivate'|'recovery'){
+ if(!profile.value||accountBusy.value||!portalAccount.value?.canManage)return
+ const message=action==='recovery'?'Verify this employee in person before issuing a private recovery code. This signs out existing portal sessions and replaces any previous code. Continue?':action==='deactivate'?'Deactivate this employee portal account and sign out their current sessions? Posted payslips will be retained.':'Activate this employee portal account?'
+ if(!confirm(message))return
+ const employeeId=profile.value.employee.EmployeeID,owner=profileRequest
+ accountBusy.value=true;actionError.value='';actionNotice.value='';clearRecovery()
+ try{
+  const result=await $fetch<{recoveryCode?:string;expiresAt?:string}>('/api/payroll/payslips/account',{method:'POST',body:{employeeId,action},retry:0})
+  if(owner!==profileRequest)return
+  if(result.recoveryCode){recoveryCode.value=result.recoveryCode;recoveryExpiresAt.value=result.expiresAt||'';recoveryTimer=setTimeout(clearRecovery,result.expiresAt?Math.max(0,new Date(result.expiresAt).getTime()-Date.now()):900000)}
+  actionNotice.value=action==='recovery'?'A new private recovery code is ready.':action==='activate'?'Portal access activated.':'Portal access deactivated.'
+  await loadAccount(employeeId)
+  if(!props.embedded)await load()
+ }catch(cause:any){if(owner===profileRequest)actionError.value=cause?.data?.statusMessage||'Unable to update this portal account.'}
+ finally{accountBusy.value=false}
+}
+async function copy(value:string){try{if(!navigator.clipboard?.writeText)throw new Error();await navigator.clipboard.writeText(value);copyNotice.value='Copied.'}catch{copyNotice.value='Select the text to copy it on this browser.'}}
+function switchTab(tab:string){profileTab.value=tab;selectedPayslipKey.value='';profileBody.value?.scrollTo({top:0})}
+async function viewPayslip(item:Cutoff){selectedPayslipKey.value=item.key;await nextTick();profileBody.value?.scrollTo({top:0})}
+function applyFilters(){page.value=1;void load()}
+function filterAccounts(status:string){accountStatus.value=status;applyFilters()}
+function changePage(value:number){page.value=value;void load()}
+function trapFocus(event:KeyboardEvent){
+ const controls=[...profileDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input,select,[tabindex="0"]')||[]].filter(node=>node.offsetParent!==null)
+ if(!controls.length)return
+ const first=controls[0]!,last=controls[controls.length-1]!
+ if(event.shiftKey&&(document.activeElement===first||document.activeElement===profileDialog.value)){event.preventDefault();last.focus()}
+ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+}
+let releaseScroll:(()=>void)|null=null,lastFocus:HTMLElement|null=null
+watch(()=>Boolean(profile.value),async(open,previous)=>{
+ if(open&&!previous){releaseScroll=lockBodyScroll();lastFocus=document.activeElement as HTMLElement;await nextTick();profileDialog.value?.focus()}
+ if(!open&&previous){releaseScroll?.();releaseScroll=null;lastFocus?.focus();if(props.embedded)emit('close')}
 })
-const historyPageCount = computed(() => Math.max(1, Math.ceil(filteredHistory.value.length / historyPageSize)))
-const pagedHistory = computed(() => filteredHistory.value.slice((historyPage.value - 1) * historyPageSize, historyPage.value * historyPageSize))
-const visibleCutoffs = computed(() => [...latestCutoffs.value, ...pagedHistory.value])
-const activeCutoff = computed(() => profile.value?.cutoffs.find(item => item.key === selectedPayslipKey.value) || null)
-const lines = (section: Line['section']) => activeCutoff.value?.lines.filter(item => item.section === section) || []
-const sum = (section: Line['section']) => lines(section).reduce((total, item) => total + Number(item.amount), 0)
-const governmentTotal = computed(() => sum('government'))
-const otherTotal = computed(() => sum('other'))
-
-async function load() {
-  loading.value = true; error.value = ''
-  try {
-    list.value = await $fetch<ListResult>('/api/payroll/payslips', {
-      query: { search: search.value.trim(), agencyId: agencyId.value || undefined, postingStatus:postingStatus.value||undefined,page: page.value },
-    })
-  } catch (caught: any) {
-    error.value = caught?.data?.statusMessage || caught?.message || 'Unable to load employees.'
-  } finally { loading.value = false }
-}
-
-async function openProfile(employee: Employee) {
-  profile.value = { employee, cutoffs: [] }
-  selectedPayslipKey.value = ''
-  historySearch.value = ''
-  historyYear.value = ''
-  historyPage.value = 1
-  profilePostingStatus.value='';portalAccount.value=null;recoveryCode.value=''
-  profileLoading.value = true; profileError.value = ''
-  try {
-    const result = await $fetch<ProfileResult>('/api/payroll/payslips', { query: { employeeId: employee.EmployeeID } })
-    profile.value = result
-    list.value.canPost=result.canPost===true
-    portalAccount.value=await $fetch('/api/payroll/payslips/account',{query:{employeeId:employee.EmployeeID}})
-  } catch (caught: any) {
-    profileError.value = caught?.data?.statusMessage || caught?.message || 'Unable to load payslip history.'
-  } finally { profileLoading.value = false }
-}
-
-async function postPayslip(item:Cutoff){
-  if(!profile.value||postingBusy.value)return
-  const action=item.publicationStatus==='Posted'?'withdraw':'post'
-  if(!confirm(action==='post'?'Post this finalized payslip for the employee to view in their portal?':'Withdraw this payslip from the employee portal?'))return
-  const employee=profile.value.employee,selected=selectedPayslipKey.value
-  postingBusy.value=true;profileError.value=''
-  try{
-    await $fetch('/api/payroll/payslips',{method:'POST',body:{employeeId:employee.EmployeeID,key:item.key,action}})
-    await openProfile(employee);selectedPayslipKey.value=selected;if(!props.embedded)await load()
-  }catch(cause:any){profileError.value=cause?.data?.statusMessage||'Unable to change posting status.'}
-  finally{postingBusy.value=false}
-}
-async function manageAccount(action:string){
-  if(!profile.value||accountBusy.value||!confirm(action==='recovery'?'Verify this employee in person before providing a private recovery code. Continue?':`Change this employee portal account to ${action==='activate'?'Active':'Inactive'}?`))return
-  accountBusy.value=true;recoveryCode.value=''
-  try{
-    const result:any=await $fetch('/api/payroll/payslips/account',{method:'POST',body:{employeeId:profile.value.employee.EmployeeID,action}})
-    recoveryCode.value=result.recoveryCode||''
-    portalAccount.value=await $fetch('/api/payroll/payslips/account',{query:{employeeId:profile.value.employee.EmployeeID}})
-  }catch(cause:any){profileError.value=cause?.data?.statusMessage||'Unable to update portal access.'}
-  finally{accountBusy.value=false}
-}
-
-async function viewPayslip(item: Cutoff) {
-  selectedPayslipKey.value = item.key
-  await nextTick()
-  profileBody.value?.scrollTo({ top: 0 })
-}
-
-async function backToList() {
-  selectedPayslipKey.value = ''
-  await nextTick()
-  profileBody.value?.scrollTo({ top: 0 })
-}
-
-function applyFilters() { page.value = 1; load() }
-function changePage(next: number) { page.value = next; load() }
-function changeHistoryPage(next: number) {
-  historyPage.value = Math.max(1, Math.min(next, historyPageCount.value))
-  profileBody.value?.scrollTo({ top: 0 })
-}
-onMounted(()=>{if(props.embedded&&props.employee)void openProfile(props.employee);else void load()})
 watch(()=>props.employee?.EmployeeID,()=>{if(props.embedded&&props.employee)void openProfile(props.employee)})
-watch(profile,value=>{if(props.embedded&&!value)emit('close')})
-let wasDeactivated = false
-onDeactivated(() => { wasDeactivated = true })
-onActivated(() => { if (wasDeactivated&&!props.embedded) void load(); wasDeactivated = false })
+onMounted(()=>{if(props.embedded&&props.employee)void openProfile(props.employee);else void load()})
+let wasDeactivated=false
+onDeactivated(()=>{wasDeactivated=true;listRequest++;listAbort?.abort();closeProfile(true)})
+onActivated(()=>{if(wasDeactivated&&!props.embedded)void load();wasDeactivated=false})
+onBeforeUnmount(()=>{listRequest++;profileRequest++;accountRequest++;listAbort?.abort();profileAbort?.abort();clearRecovery();releaseScroll?.();releaseScroll=null})
 </script>
 
 <template>
-  <section class="payslip-page" :class="{embedded}">
-    <template v-if="!embedded">
-    <header class="page-head"><div><p class="eyebrow">PAYROLL</p><h1>Payslips</h1><p>Review finalized payslips and post them for employee access.</p></div><NuxtLink class="secondary portal-link" to="/employee-portal" target="_blank" rel="noopener">Employee portal</NuxtLink></header>
-    <div class="notice">Regular payroll is shown by cutoff. Reliever payroll has a separate payslip for each site in the same cutoff.</div>
-    <form class="filters" @submit.prevent="applyFilters">
-      <label>Search employee<input v-model="search" type="search" placeholder="Employee name or number"></label>
-      <label>Agency<select v-model="agencyId"><option value="">All agencies</option><option v-for="agency in list.agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
-      <label>Payslip posting<select v-model="postingStatus"><option value="">All statuses</option><option value="posted">Posted</option><option value="not-posted">Not fully posted</option><option value="partial">Partially posted</option><option value="no-payslips">No payslips</option></select></label>
-      <button type="submit" class="primary">Search</button>
-    </form>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <p class="result-count">Showing {{ list.items.length }} of {{ list.pagination.total }} employees</p>
-    <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Agency / Position</th><th>Latest cutoff</th><th>Payroll cutoffs</th><th>Posting status</th><th>Action</th></tr></thead><tbody>
-      <tr v-for="employee in list.items" :key="employee.EmployeeID"><td><strong>{{ employee.EmployeeName }}</strong><small>{{ displayNumber(employee) }}</small></td><td><strong>{{ employee.AgencyName || 'Unassigned agency' }}</strong><small>{{ employee.PositionName || 'Unassigned position' }}</small></td><td>{{ date(employee.LastCutoffEnd) }}</td><td>{{ employee.CutoffCount || 0 }} cutoff{{ Number(employee.CutoffCount) === 1 ? '' : 's' }}</td><td><span class="posting-badge" :class="{posted:employee.PublicationStatus==='Posted'}">{{employee.PublicationStatus || 'Not Posted'}}</span><small>{{employee.PostedPayrollCount || 0}} / {{employee.PayrollCount || 0}} payroll records posted</small></td><td><button type="button" class="secondary" @click="openProfile(employee)">View profile</button></td></tr>
-      <tr v-if="!list.items.length"><td colspan="6" class="empty">{{ loading ? 'Loading employees…' : 'No employees match your search.' }}</td></tr>
-    </tbody></table></div>
-    <div class="pagination"><button type="button" class="secondary" :disabled="loading || page <= 1" @click="changePage(page - 1)">Previous</button><span>Page {{ list.pagination.page }} of {{ list.pagination.pages }}</span><button type="button" class="secondary" :disabled="loading || page >= list.pagination.pages" @click="changePage(page + 1)">Next</button></div>
+ <section class="payslip-page" :class="{embedded}">
+  <template v-if="!embedded">
+   <header class="page-head"><div><p class="eyebrow">PAYROLL &middot; EMPLOYEE SERVICES</p><h1>Payslips &amp; Portal Accounts</h1><p>Manage employee portal access and review individual payslip history.</p></div><div class="head-actions"><NuxtLink class="secondary" to="/dashboard?view=payslip-sites">Manage posting</NuxtLink><NuxtLink class="secondary" to="/employee-portal" target="_blank" rel="noopener">Open employee portal &nearr;</NuxtLink></div></header>
+   <div class="account-summary" aria-label="Portal account summary"><button v-for="card in cards" :key="card.key" type="button" :class="{selected:accountStatus===card.key}" :aria-pressed="accountStatus===card.key" @click="filterAccounts(card.key)"><span>{{ card.label }}</span><strong>{{ card.value }}</strong><small>{{ accountStatus===card.key?'Selected view':'View employees' }}</small></button></div>
+   <form class="filters" @submit.prevent="applyFilters"><label>Search employee<input v-model="search" type="search" :placeholder="list.canManageAccounts?'Name, employee number, or portal email':'Name or employee number'"></label><label>Agency<select v-model="agencyId"><option value="">All agencies</option><option v-for="agency in list.agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label><label>Portal access<select v-model="accountStatus"><option value="">All accounts</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="unregistered">Not registered</option></select></label><button class="primary" :disabled="loading">{{ loading?'Loading...':'Search' }}</button></form>
+   <p v-if="error" class="error" role="alert">{{ error }}</p>
+   <div class="list-meta"><span>{{ list.pagination.total }} employee{{ list.pagination.total===1?'':'s' }} &middot; Showing {{ list.items.length }}</span><span>Portal account controls and employee records</span></div>
+   <div class="table-wrap"><table class="employee-table"><thead><tr><th>Employee</th><th>Agency / Position</th><th>Portal email</th><th>Portal access</th><th>Payslip history</th><th>Action</th></tr></thead><tbody>
+    <tr v-for="employee in list.items" :key="employee.EmployeeID"><td><strong>{{ employee.EmployeeName }}</strong><small>{{ displayNumber(employee) }}<span v-if="employee.Status!=='Active'"> &middot; Employee {{ employee.Status }}</span></small></td><td>{{ employee.AgencyName || 'Unassigned agency' }}<small>{{ employee.PositionName || 'Unassigned position' }}</small></td><td><template v-if="employee.PortalEmail"><span class="email">{{ employee.PortalEmail }}</span><small>{{ employee.PortalContactNumber }}</small></template><span v-else class="muted">{{ portalStatus(employee)==='Not registered'?'No portal account':list.canManageAccounts?'Not recorded':'Restricted' }}</span></td><td><span class="badge" :class="statusClass(portalStatus(employee))">{{ portalStatus(employee) }}</span><small v-if="employee.PortalLastSignInAt">Last sign-in {{ timestamp(employee.PortalLastSignInAt) }}</small></td><td><button class="text-button" @click="openProfile(employee,'history')">{{ employee.PayslipCount || 0 }} payslip{{ Number(employee.PayslipCount)===1?'':'s' }} &rarr;</button><small>{{ employee.PostedPayslipCount || 0 }} posted<span v-if="employee.LastCutoffEnd"> &middot; Latest {{ date(employee.LastCutoffEnd) }}</span></small></td><td><button class="secondary" @click="openProfile(employee)">{{ portalStatus(employee)==='Not registered'?'View employee':'Manage account' }}</button></td></tr>
+    <tr v-if="!list.items.length"><td colspan="6" class="empty">{{ loading?'Loading employee accounts...':'No employees match these filters.' }}</td></tr>
+   </tbody></table></div>
+   <div class="pagination"><button class="secondary" :disabled="loading||page<=1" @click="changePage(page-1)">Previous</button><span>Page {{ list.pagination.page }} of {{ list.pagination.pages }}</span><button class="secondary" :disabled="loading||page>=list.pagination.pages" @click="changePage(page+1)">Next</button></div>
+  </template>
 
-    </template>
+  <div v-if="profile" class="modal-backdrop" @click.self="closeProfile()">
+   <section ref="profileDialog" class="profile-modal" role="dialog" aria-modal="true" :aria-label="'Payslips for '+profile.employee.EmployeeName" tabindex="-1" @keydown.tab="trapFocus" @keydown.esc.stop="activeCutoff?selectedPayslipKey='':closeProfile()">
+    <header class="profile-head"><div class="identity"><span class="avatar" aria-hidden="true">{{ initials(profile.employee) }}</span><div><p class="eyebrow">EMPLOYEE ACCOUNT</p><h2>{{ profile.employee.EmployeeName }}</h2><p>{{ displayNumber(profile.employee) }} &middot; {{ profile.employee.AgencyName || 'Unassigned agency' }}</p><small>{{ profile.employee.PositionName || 'Unassigned position' }}</small></div></div><button class="close" type="button" :disabled="accountBusy" aria-label="Close profile" @click="closeProfile()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button></header>
+    <nav class="profile-tabs" aria-label="Employee sections"><button v-for="tab in [{key:'account',label:'Portal account'},{key:'history',label:'Payslip history'},{key:'activity',label:'Account activity'}]" :key="tab.key" :class="{active:profileTab===tab.key}" :aria-pressed="profileTab===tab.key" @click="switchTab(tab.key)">{{ tab.label }}</button></nav>
+    <div ref="profileBody" class="profile-body">
+     <p v-if="actionError" class="error" role="alert">{{ actionError }}</p><p v-if="actionNotice" class="success" role="status">{{ actionNotice }}</p>
+     <template v-if="profileTab==='account'">
+      <p v-if="accountLoading&&!portalAccount" class="empty">Loading portal account...</p><div v-else-if="accountError" class="error" role="alert">{{ accountError }} <button class="text-button" @click="loadAccount(profile.employee.EmployeeID)">Retry</button></div>
+      <div v-else-if="!account" class="unregistered panel"><span class="empty-icon" aria-hidden="true">@</span><h3>Not registered yet</h3><p>This employee has no payslip portal account. They can create their own account using the identity details recorded by HR.</p><NuxtLink class="primary" to="/employee-portal" target="_blank" rel="noopener">Open employee portal &nearr;</NuxtLink></div>
+      <div v-else class="account-grid">
+       <div class="account-details"><section class="panel"><div class="panel-head"><div><h3>Portal account</h3><p>Registered login and contact details</p></div><span class="badge" :class="statusClass(account.Status)">{{ account.Status }}</span></div><template v-if="portalAccount?.canManage"><dl class="details-grid"><div class="full"><dt>Login email</dt><dd class="login-email">{{ account.Email }}</dd></div><div><dt>Contact number</dt><dd>{{ account.ContactNumber || '-' }}</dd></div><div><dt>Account created</dt><dd>{{ timestamp(account.CreatedAt) }}</dd></div><div><dt>Last sign-in</dt><dd>{{ timestamp(account.LastSignInAt) }}</dd></div><div><dt>Active sessions</dt><dd>{{ account.ActiveSessions || 0 }}</dd></div></dl><p class="field-note">Employees update their email and contact details through My account in the portal.</p></template><p v-else class="field-note">Only authorized Admins and Supervisors with edit access can view contact details and manage portal accounts.</p></section>
+       <section v-if="portalAccount?.canManage" class="panel agreement-panel"><div class="panel-head"><div><h3>Privacy agreement</h3><p>Acceptance recorded when the account was created</p></div><span class="record-label">Recorded</span></div><dl class="details-grid"><div><dt>Agreement version</dt><dd>{{ account.AgreementVersion || '-' }}</dd></div><div><dt>Accepted on</dt><dd>{{ timestamp(account.AgreementAcceptedAt) }}</dd></div></dl></section></div>
+       <aside class="account-controls"><section class="panel"><h3>Account access</h3><p class="field-note">{{ account.Status==='Active'?'Portal access is enabled for this account.':'Portal sign-in is disabled. Posted payslips are retained.' }}</p><p v-if="profile.employee.Status!=='Active'" class="warning">The employee record is {{ profile.employee.Status }}. Portal sign-in requires an Active employee record.</p><button v-if="portalAccount?.canManage" :class="account.Status==='Active'?'danger-outline':'primary'" :disabled="accountBusy" @click="manageAccount(account.Status==='Active'?'deactivate':'activate')">{{ account.Status==='Active'?'Deactivate access':'Activate access' }}</button></section>
+       <section v-if="portalAccount?.canManage" class="panel recovery-panel"><h3>Account recovery</h3><p class="field-note">Verify the employee's identity in person, then provide their login email and a private 6-digit recovery code.</p><p v-if="account.RecoveryPending&&!recoveryCode" class="warning">A recovery code is active until {{ timestamp(account.RecoveryExpiresAt) }}. Issuing another replaces it.</p><button class="secondary" :disabled="accountBusy||account.Status!=='Active'||profile.employee.Status!=='Active'" @click="manageAccount('recovery')">{{ accountBusy?'Please wait...':'Issue recovery code' }}</button><small v-if="account.Status!=='Active'" class="field-note">Activate portal access before issuing a code.</small><div v-if="recoveryCode" class="recovery-result" role="status"><span>Private recovery code</span><code>{{ recoveryCode }}</code><button class="secondary" @click="copy(recoveryCode)">Copy code</button><small>Expires {{ recoveryExpiresAt?timestamp(recoveryExpiresAt):'in 15 minutes' }}. One use, with 5 incorrect attempts allowed. Give this only to the verified employee. No email or SMS is sent.</small></div><small v-if="copyNotice" class="field-note" role="status">{{ copyNotice }}</small></section></aside>
+      </div>
+     </template>
 
-    <div v-if="profile" class="modal-backdrop" @click.self="profile=null">
-      <section class="profile-modal" role="dialog" aria-modal="true" :aria-label="`Payslips for ${profile.employee.EmployeeName}`">
-        <header class="profile-head"><div><p class="eyebrow">EMPLOYEE PAYSLIPS</p><h2>{{ profile.employee.EmployeeName }}</h2><p>{{ displayNumber(profile.employee) }} · {{ profile.employee.AgencyName || 'Unassigned agency' }} · {{ profile.employee.PositionName || 'Unassigned position' }}</p></div><button type="button" class="close" aria-label="Close profile" @click="profile=null">×</button></header>
-        <div ref="profileBody" class="profile-body">
-          <aside v-if="portalAccount" class="portal-account">
-            <strong>Employee portal: {{portalAccount.account?.Status || 'No account yet'}}</strong>
-            <template v-if="portalAccount.canManage && portalAccount.account"><span>{{portalAccount.account.Email}} · {{portalAccount.account.ContactNumber}}</span><small>Agreement {{portalAccount.account.AgreementVersion}} accepted {{portalAccount.account.AgreementAcceptedAt}}</small><div class="posting-actions"><button type="button" class="secondary" :disabled="accountBusy" @click="manageAccount(portalAccount.account.Status==='Active'?'deactivate':'activate')">{{portalAccount.account.Status==='Active'?'Deactivate access':'Activate access'}}</button><button v-if="portalAccount.account.Status==='Active'" type="button" class="secondary" :disabled="accountBusy" @click="manageAccount('recovery')">Issue recovery code</button></div></template>
-            <div v-if="recoveryCode" class="recovery-result" role="status"><span>6-digit recovery code</span><code>{{recoveryCode}}</code><small>Valid for 15 minutes and one use, with 5 incorrect attempts allowed. Give it directly to the verified employee together with their login email; no email or SMS is sent. Issuing a new code replaces the previous code.</small></div>
-          </aside>
-          <p v-if="profileError" class="error" role="alert">{{ profileError }}</p>
-          <p v-if="profileLoading" class="empty">Loading payslip history…</p>
-          <p v-else-if="!profile.cutoffs.length" class="empty">No finalized payslips yet for this employee.</p>
-          <template v-else>
-            <div v-if="!activeCutoff" class="history-list">
-              <label class="posting-filter">Posting status<select v-model="profilePostingStatus" @change="historyPage=1"><option value="">All payslips</option><option value="Posted">Posted</option><option value="Not Posted">Not Posted</option></select></label>
-              <div class="history-head"><div><h3>Payslip list</h3><p>Latest finalized payroll and earlier payslips for this employee.</p></div><span class="history-hint">{{ profile.cutoffs.length }} payslip{{ profile.cutoffs.length === 1 ? '' : 's' }}</span></div>
-              <div v-if="earlierCutoffs.length" class="history-filters">
-                <label>Search earlier payslips<input v-model="historySearch" type="search" placeholder="Cutoff, site, or client" @input="historyPage = 1"></label>
-                <label>Year<select v-model="historyYear" @change="historyPage = 1"><option value="">All years</option><option v-for="year in historyYears" :key="year" :value="year">{{ year }}</option></select></label>
-              </div>
-              <div class="history-table-wrap"><table class="history-table">
-                <thead><tr><th>Payroll cutoff</th><th>Assignment / site</th><th>Payroll sources</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Posting</th><th>Action</th></tr></thead>
-                <tbody>
-                  <template v-for="(item, index) in visibleCutoffs" :key="item.key">
-                    <tr v-if="index === 0" class="history-group"><td colspan="8">{{isLatestPeriod(item)?'Latest finalized cutoff':'Earlier payslips'}}</td></tr>
-                    <tr v-else-if="!isLatestPeriod(item) && isLatestPeriod(visibleCutoffs[index - 1])" class="history-group"><td colspan="8">Earlier payslips</td></tr>
-                    <tr :class="{ 'history-row--latest': isLatestPeriod(item) }">
-                      <td><strong>{{ period(item) }}</strong><span v-if="isLatestPeriod(item)" class="latest-pill">Latest</span></td>
-                      <td><strong>{{ item.assignmentType === 'Reliever' ? item.siteName || 'Unassigned site' : 'Regular' }}</strong><small v-if="item.assignmentType === 'Reliever'">Reliever</small></td>
-                      <td>{{ item.sources.length }} {{ item.sources.length === 1 ? 'record' : 'records' }}</td>
-                      <td>{{ money(item.gross) }}</td>
-                      <td>{{ money(item.deductions) }}</td>
-                      <td class="history-net">{{ money(item.net) }}</td>
-                      <td><span class="posting-badge" :class="{posted:item.publicationStatus==='Posted'}">{{item.publicationStatus}}</span><small v-if="item.publicationStatus==='Posted'">{{item.postedAt}}</small></td><td><div class="posting-actions"><button type="button" class="secondary" @click="viewPayslip(item)">View payslip</button><button v-if="list.canPost" type="button" class="secondary" :disabled="postingBusy" @click="postPayslip(item)">{{item.publicationStatus==='Posted'?'Withdraw':'Post payslip'}}</button></div></td>
-                    </tr>
-                  </template>
-                  <tr v-if="earlierCutoffs.length && !pagedHistory.length" class="history-group"><td colspan="8">Earlier payslips</td></tr>
-                  <tr v-if="earlierCutoffs.length && !pagedHistory.length" class="history-empty"><td colspan="8">No earlier payslips match your search or year.</td></tr>
-                </tbody>
-              </table></div>
-              <div v-if="earlierCutoffs.length" class="history-pagination">
-                <span>{{ filteredHistory.length ? `Showing ${(historyPage - 1) * historyPageSize + 1}–${Math.min(historyPage * historyPageSize, filteredHistory.length)} of ${filteredHistory.length} earlier payslips` : 'No matching earlier payslips' }}</span>
-                <div v-if="historyPageCount > 1"><button type="button" class="secondary" :disabled="historyPage <= 1" @click="changeHistoryPage(historyPage - 1)">Previous</button><span>Page {{ historyPage }} of {{ historyPageCount }}</span><button type="button" class="secondary" :disabled="historyPage >= historyPageCount" @click="changeHistoryPage(historyPage + 1)">Next</button></div>
-              </div>
-            </div>
-            <div v-else class="payslip-detail">
-              <div class="detail-toolbar"><button type="button" class="secondary" @click="backToList">Back to payslip list</button><button v-if="list.canPost" type="button" class="primary" :disabled="postingBusy" @click="postPayslip(activeCutoff)">{{activeCutoff.publicationStatus==='Posted'?'Withdraw payslip':'Post payslip'}}</button><span>{{activeCutoff.publicationStatus}} · {{ period(activeCutoff) }}{{ activeCutoff.assignmentType === 'Reliever' ? ` / ${activeCutoff.siteName || 'Reliever'}` : '' }}</span></div>
-              <EmployeePayslipSheet :employee="profile.employee" :cutoff="activeCutoff" />
-            </div>
-          </template>
-        </div>
-      </section>
+     <template v-else-if="profileTab==='history'">
+      <div v-if="activeCutoff" class="payslip-detail"><div class="detail-toolbar"><button class="secondary" @click="selectedPayslipKey=''">&larr; Back to history</button><span class="badge" :class="statusClass(activeCutoff.publicationStatus)">{{ activeCutoff.publicationStatus }}</span></div><EmployeePayslipSheet :employee="profile.employee" :cutoff="activeCutoff" /></div>
+      <template v-else><div class="section-head"><div><h3>Payslip history</h3><p>{{ profile.cutoffs.length }} finalized payslips &middot; {{ postedCount }} posted</p></div><span class="field-note">Posting is managed in Payslips by Site Account.</span></div><div class="history-filters"><label>Search payslips<input v-model="historySearch" type="search" placeholder="Cutoff, site, or client" @input="historyPage=1"></label><label>Year<select v-model="historyYear" @change="historyPage=1"><option value="">All years</option><option v-for="year in historyYears" :key="year">{{ year }}</option></select></label><label>Posting status<select v-model="historyStatus" @change="historyPage=1"><option value="">All payslips</option><option>Posted</option><option>Not Posted</option></select></label></div>
+       <p v-if="historyError" class="error" role="alert">{{ historyError }} <button class="text-button" @click="openProfile(profile.employee,'history')">Retry</button></p>
+       <div class="table-wrap"><table class="history-table"><thead><tr><th>Payroll cutoff</th><th>Assignment / Sites</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Posting</th><th>Action</th></tr></thead><tbody><tr v-for="item in historyRows" :key="item.key"><td><strong>{{ period(item) }}</strong><small v-if="isLatest(item)" class="latest-label">Latest cutoff</small></td><td>{{ item.assignmentType }}<small>{{ payslipSiteNames(item).join(' / ') }}</small></td><td class="amount">{{ money(item.gross) }}</td><td class="amount">{{ money(item.deductions) }}</td><td class="amount"><strong>{{ money(item.net) }}</strong></td><td><span class="badge" :class="statusClass(item.publicationStatus)">{{ item.publicationStatus }}</span><small v-if="item.publicationStatus==='Posted'">{{ timestamp(item.postedAt) }}</small></td><td><button class="secondary" @click="viewPayslip(item)">View payslip</button></td></tr><tr v-if="!historyRows.length"><td colspan="7" class="empty">{{ historyLoading?'Loading payslips...':historyError?'Payslip history is unavailable.':'No payslips match these filters.' }}</td></tr></tbody></table></div><div class="pagination"><span>{{ filteredHistory.length }} payslips</span><button class="secondary" :disabled="historyPage<=1" @click="historyPage--">Previous</button><span>{{ historyPage }} / {{ historyPages }}</span><button class="secondary" :disabled="historyPage>=historyPages" @click="historyPage++">Next</button></div>
+      </template>
+     </template>
+
+     <template v-else><div class="section-head"><div><h3>Account activity</h3><p>Registration, sign-ins, recovery and access changes.</p></div></div><p v-if="accountError" class="error" role="alert">{{ accountError }}</p><p v-else-if="!portalAccount?.canManage" class="empty">Account activity is available to authorized Admins and Supervisors with edit access.</p><p v-else-if="!account" class="empty">No portal account has been registered.</p><template v-else><div class="table-wrap"><table class="activity-table"><thead><tr><th>Activity</th><th>Performed by</th><th>Date and time</th></tr></thead><tbody><tr v-for="event in portalAccount.activity?.items||[]" :key="event.EventID"><td><strong>{{ event.Action }}</strong></td><td>{{ event.ActorUserID?(event.ActorName||'Authorized staff'):'Employee' }}</td><td>{{ timestamp(event.CreatedAt) }}</td></tr><tr v-if="!portalAccount.activity?.items.length"><td colspan="3" class="empty">{{ accountLoading?'Loading activity...':'No activity recorded.' }}</td></tr></tbody></table></div><div v-if="portalAccount.activity" class="pagination"><span>{{ portalAccount.activity.pagination.total }} events</span><button class="secondary" :disabled="accountLoading||portalAccount.activity.pagination.page<=1" @click="loadAccount(profile.employee.EmployeeID,portalAccount.activity.pagination.page-1)">Previous</button><span>{{ portalAccount.activity.pagination.page }} / {{ portalAccount.activity.pagination.pages }}</span><button class="secondary" :disabled="accountLoading||portalAccount.activity.pagination.page>=portalAccount.activity.pagination.pages" @click="loadAccount(profile.employee.EmployeeID,portalAccount.activity.pagination.page+1)">Next</button></div></template></template>
     </div>
-  </section>
+   </section>
+  </div>
+ </section>
 </template>
 
 <style scoped>
-.payslip-page.embedded{padding:0}
-.portal-link{display:flex;align-items:center;text-decoration:none}.posting-badge{display:inline-block;padding:6px 10px;border-radius:20px;background:#fff0d5;color:#8c5c00;font-size:.74rem;font-weight:700;white-space:nowrap}.posting-badge.posted{background:#ddf8ea;color:#137844}.posting-actions{display:flex;flex-wrap:wrap;gap:8px}.portal-account{display:grid;gap:10px;margin-bottom:20px;padding:16px;border:1px solid #d5e1f2;border-radius:12px;background:#eff5ff;font-size:.82rem}.portal-account small{color:#657d9f}.portal-account code{overflow-wrap:anywhere}.posting-filter{display:grid;gap:6px;width:min(260px,100%);font-size:.8rem}.posting-filter select{min-height:42px;border:1px solid #cbd9ee;border-radius:9px;padding:8px 12px;background:#fff;color:#112b53}.payslip-page .filters{grid-template-columns:minmax(220px,1fr) minmax(180px,240px) minmax(180px,220px) auto}@media(max-width:950px){.payslip-page .filters{grid-template-columns:1fr 1fr}}@media(max-width:600px){.payslip-page .filters{grid-template-columns:1fr}}
-.sheet-meta-reliever{grid-template-columns:1.5fr 1fr 1fr .8fr}
-.payslip-page{--ink:#112b53;--muted:#657d9f;--line:#d5e1f2;color:var(--ink);padding:34px 36px 48px;font-family:Inter,'Segoe UI',sans-serif}.page-head{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.eyebrow{margin:0;color:#2863db;font-size:.72rem;font-weight:850;letter-spacing:.09em}.page-head h1,.profile-head h2{margin:6px 0 5px;font-size:2rem}.page-head p:not(.eyebrow),.profile-head p:not(.eyebrow){margin:0;color:var(--muted)}.primary,.secondary{font:inherit;font-weight:750;border-radius:9px;min-height:44px;padding:0 16px;cursor:pointer}.primary{background:#2864e8;color:#fff;border:1px solid #2864e8}.secondary{background:#fff;color:#1b4b91;border:1px solid #c8d7ed}.secondary:disabled{opacity:.5;cursor:default}.notice{margin:20px 0;padding:14px 16px;background:#ebf2ff;border-left:3px solid #6895ff;border-radius:8px;color:#315486}.filters{display:grid;grid-template-columns:minmax(260px,1fr) minmax(210px,300px) auto;align-items:end;gap:14px;margin:22px 0 12px}.filters label{display:grid;gap:7px;color:#3b5478;font-size:.78rem;font-weight:750}.filters input,.filters select{min-height:48px;border:1px solid #cbd9ee;border-radius:9px;background:#fff;color:var(--ink);padding:0 14px;font:inherit;font-size:.88rem}.result-count{font-size:.78rem;color:var(--muted);margin:16px 0 10px}.error{background:#fff1f1;border:1px solid #fecaca;border-radius:8px;color:#9c2525;padding:12px}.table-wrap{overflow:auto;background:#fff;border:1px solid var(--line);border-radius:13px}.table-wrap table{width:100%;border-collapse:collapse}.table-wrap th,.table-wrap td{padding:15px 18px;text-align:left;border-bottom:1px solid #e5edf8}.table-wrap th{background:#f3f7fc;color:#526c92;font-size:.68rem;text-transform:uppercase;letter-spacing:.025em}.table-wrap td{font-size:.84rem}.table-wrap td strong,.table-wrap td small{display:block}.table-wrap td small{margin-top:4px;color:var(--muted);font-size:.72rem}.table-wrap tr:last-child td{border-bottom:0}.empty{text-align:center;color:var(--muted);padding:28px!important}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px;font-size:.78rem;color:var(--muted)}.modal-backdrop{position:fixed;inset:0;z-index:1200;background:rgba(20,36,64,.52);display:flex;align-items:center;justify-content:center;padding:24px}.profile-modal{display:flex;flex-direction:column;width:min(1500px,100%);max-height:calc(100vh - 48px);background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:0 25px 75px rgba(9,31,75,.28);overflow:hidden}.profile-head{display:flex;justify-content:space-between;gap:20px;padding:30px 36px 24px;border-bottom:1px solid var(--line)}.profile-head h2{font-size:1.7rem}.close{align-self:flex-start;width:38px;height:38px;border:0;background:transparent;color:#48648d;font-size:1.75rem;cursor:pointer}.profile-body{overflow:auto;padding:24px 36px 36px;background:#fafcff}.history-head{display:flex;justify-content:space-between;align-items:end;gap:20px}.history-head h3{margin:0 0 4px;font-size:1.15rem}.history-head p,.history-hint{margin:0;color:var(--muted);font-size:.78rem}.payslip-sheet{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}.sheet-head{display:flex;justify-content:space-between;gap:20px;background:#f0f5ff;border-bottom:1px solid var(--line);padding:24px 26px}.sheet-head h3{margin:6px 0;font-size:1.3rem}.sheet-head p:not(.eyebrow){margin:0;color:var(--muted);font-size:.83rem}.sheet-period{text-align:right;display:grid;gap:3px}.sheet-period span,.sheet-meta span{color:var(--muted);font-size:.68rem;text-transform:uppercase;font-weight:750}.sheet-period strong{font-size:.87rem}.sheet-period small{color:var(--muted)}.sheet-meta{display:grid;grid-template-columns:1.5fr 1fr .6fr;gap:14px;padding:16px 26px;border-bottom:1px solid var(--line)}.sheet-meta div{display:grid;gap:4px}.sheet-meta strong{font-size:.82rem}.sheet-columns{display:grid;grid-template-columns:1.3fr 1fr 1fr}.sheet-section{min-width:0;padding:22px 24px;border-right:1px solid var(--line);display:flex;flex-direction:column}.sheet-section:last-child{border-right:0}.sheet-section h4{margin:0 0 12px;color:#17417c;font-size:.91rem;text-transform:uppercase;letter-spacing:.03em}.line-head,.sheet-line{display:grid;grid-template-columns:minmax(0,1fr) 62px 104px;align-items:start;gap:8px}.line-head.two,.sheet-line.two{grid-template-columns:minmax(0,1fr) 104px}.line-head{padding:8px 0;border-bottom:1px solid var(--line);color:#6b83a4;text-transform:uppercase;font-size:.65rem;font-weight:800}.line-head span:last-child,.sheet-line strong{text-align:right}.sheet-line{padding:9px 0;border-bottom:1px solid #edf1f7;font-size:.75rem}.sheet-line span:nth-child(2){text-align:right;color:var(--muted)}.sheet-line strong{font-weight:750}.subheading{margin-top:16px;color:#31588c;font-size:.7rem;font-weight:800;text-transform:uppercase}.empty-line{font-size:.75rem;color:var(--muted)}.section-total{display:flex;justify-content:space-between;gap:10px;margin-top:auto;padding-top:18px;font-size:.77rem;font-weight:800}.sheet-footer{display:flex;justify-content:flex-end;align-items:center;gap:24px;padding:16px 26px;background:#eaf2ff;border-top:1px solid var(--line)}.sheet-footer>div{display:flex;align-items:center;gap:12px}.sheet-footer span{font-size:.79rem;font-weight:800}.sheet-footer strong{font-size:.94rem}.sheet-footer .net-pay{border-left:1px solid #b7cbea;padding-left:24px}.sheet-footer .net-pay strong{font-size:1.35rem;color:#12458c}.source-block{padding:21px 26px;border-top:1px solid var(--line)}.source-block h4{margin:0 0 5px;font-size:.85rem}.source-block>p,.sheet-note{margin:0 0 12px;color:var(--muted);font-size:.73rem}.source-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:22px;padding:9px 0;border-top:1px solid #edf1f7;font-size:.75rem}.source-row strong,.source-row small{display:block}.source-row small{margin-top:3px;color:var(--muted)}.sheet-note{padding:0 26px 18px}
-.history-list{display:grid;gap:18px}
-.line-head:not(.two),.sheet-line:not(.two){column-gap:20px}
-.line-head:not(.two) span:nth-child(2),.sheet-line:not(.two) span:nth-child(2){text-align:right;font-variant-numeric:tabular-nums}
-.history-filters{display:grid;grid-template-columns:minmax(240px,1fr) 190px;gap:12px;align-items:end}
-.history-filters label{display:grid;gap:6px;color:#3b5478;font-size:.76rem;font-weight:750}
-.history-filters input,.history-filters select{box-sizing:border-box;width:100%;min-height:42px;border:1px solid #cbd9ee;border-radius:9px;padding:0 12px;background:#fff;color:var(--ink);font:inherit;font-size:.83rem}
-.history-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:13px;background:#fff}
-.history-table{width:100%;min-width:950px;border-collapse:collapse}
-.history-table th,.history-table td{padding:16px 18px;border-bottom:1px solid #e5edf8;text-align:left;vertical-align:middle}
-.history-table th{background:#f3f7fc;color:#526c92;font-size:.68rem;text-transform:uppercase;letter-spacing:.025em}
-.history-table td{font-size:.82rem}
-.history-table tbody tr:last-child td{border-bottom:0}
-.history-table td strong,.history-table td small{display:block}
-.history-table td small{margin-top:4px;color:var(--muted);font-size:.72rem}
-.history-table .history-group td{padding:10px 18px;background:#eef3fb;color:#31588c;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.045em}
-.history-table .history-empty td{padding:20px 18px;color:var(--muted);text-align:center}
-.history-row--latest{background:#f3f7ff}
-.latest-pill{display:inline-block;margin-top:7px;padding:4px 8px;border-radius:999px;background:#e2edff;color:#2055bd;font-size:.68rem;font-weight:800}
-.history-net{font-weight:800;color:#12458c;white-space:nowrap}
-.history-table .secondary{min-height:37px;padding:0 12px;white-space:nowrap;font-size:.77rem}
-.history-pagination{display:flex;justify-content:space-between;align-items:center;gap:12px;color:var(--muted);font-size:.77rem}
-.history-pagination>div{display:flex;align-items:center;gap:10px}
-.history-pagination .secondary{min-height:36px;padding:0 11px;font-size:.76rem}
-.detail-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;color:var(--muted);font-size:.81rem}
-.detail-toolbar .secondary{min-height:38px;font-size:.78rem}
-@media(max-width:950px){.sheet-columns{grid-template-columns:1fr}.sheet-section{border-right:0;border-bottom:1px solid var(--line)}.sheet-section:last-child{border-bottom:0}.filters{grid-template-columns:1fr 1fr}.filters button{grid-column:1/-1}.history-hint{display:none}}
-@media(max-width:600px){.payslip-page{padding:24px 16px}.page-head{align-items:center}.page-head h1{font-size:1.6rem}.filters,.history-filters{grid-template-columns:1fr}.filters button{grid-column:auto}.modal-backdrop{padding:0}.profile-modal{max-height:100vh;height:100vh;border-radius:0}.profile-head,.profile-body{padding:20px 17px}.history-pagination{align-items:flex-start;flex-direction:column}.sheet-head,.sheet-meta{padding:18px}.sheet-head{flex-direction:column}.sheet-period{text-align:left}.sheet-meta{grid-template-columns:1fr 1fr}.sheet-footer{flex-direction:column;align-items:flex-end;gap:8px}.sheet-footer .net-pay{border-left:0;padding-left:0}.source-row{grid-template-columns:1fr auto}.source-row span:last-child{grid-column:2}}
-.recovery-result{display:grid;justify-items:start;gap:9px;padding:16px;background:#fff;border:1px solid #d5e1f2;border-radius:10px}.recovery-result>span{font-size:.75rem;color:#526e93}.recovery-result code{font-family:'JetBrains Mono',monospace;font-size:1.8rem;font-weight:700;letter-spacing:.25em;color:#174fb4;user-select:all}.recovery-result small{max-width:650px;line-height:1.6}
+.payslip-page{--ink:#142e53;--muted:#6a7e99;--line:#dce5f1;padding:32px 36px 44px;color:var(--ink);font-family:Inter,'Segoe UI',sans-serif}.payslip-page.embedded{padding:0}.payslip-page *{box-sizing:border-box}.page-head,.profile-head,.panel-head,.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}.eyebrow{margin:0;font-size:.69rem;letter-spacing:.09em;font-weight:800;color:#2b61cd}h1{font-size:1.9rem;margin:7px 0}h2{font-size:1.45rem;margin:5px 0;overflow-wrap:anywhere}h3{font-size:1rem;margin:0 0 5px}.page-head p:not(.eyebrow),.section-head p,.panel-head p{margin:5px 0 0;color:var(--muted);font-size:.84rem;line-height:1.5}.head-actions{display:flex;flex-wrap:wrap;gap:9px}.primary,.secondary,.danger-outline{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border-radius:8px;cursor:pointer;font:inherit;font-size:.78rem;font-weight:700;text-decoration:none;white-space:nowrap}.primary{background:#2864df;border:1px solid #2864df;color:#fff}.secondary{background:#fff;border:1px solid #ccdaed;color:#24518d}.danger-outline{background:#fff;border:1px solid #edc7c7;color:#a63737}button:disabled{opacity:.5;cursor:default}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #b9ccfa;outline-offset:2px}.account-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:28px 0 22px}.account-summary button{text-align:left;border:1px solid var(--line);border-radius:12px;background:#fff;padding:17px 20px;color:var(--ink);font:inherit;cursor:pointer}.account-summary span,.account-summary small{display:block;color:var(--muted);font-size:.75rem}.account-summary strong{display:block;font-size:1.65rem;margin:8px 0}.account-summary small{font-size:.65rem}.account-summary button.selected{background:#f2f6ff;border-color:#a9c4f7}.account-summary button.selected small{color:#2864df}.filters,.history-filters{display:grid;grid-template-columns:minmax(230px,1.8fr) minmax(180px,1fr) minmax(150px,.8fr) auto;gap:12px;align-items:end}.filters label,.history-filters label{display:grid;gap:7px;min-width:0;font-size:.76rem;font-weight:700;color:#4e6585}input,select{width:100%;min-width:0;height:44px;padding:0 12px;border:1px solid #ccd9ec;border-radius:8px;background:#fff;font:inherit;font-size:.83rem;color:var(--ink)}.list-meta{display:flex;justify-content:space-between;gap:16px;font-size:.73rem;color:var(--muted);margin:17px 0 11px}.table-wrap{max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{border-collapse:collapse;width:100%}th,td{padding:15px 17px;text-align:left;border-bottom:1px solid #e8eef7;font-size:.79rem}th{background:#f5f8fd;color:#617999;font-size:.64rem;text-transform:uppercase;letter-spacing:.03em;font-weight:750}td strong,td small{display:block}td small{color:var(--muted);font-size:.69rem;line-height:1.6;margin-top:4px}tbody tr:last-child td{border-bottom:0}.email{overflow-wrap:anywhere}.muted{color:var(--muted)}.badge{display:inline-flex;align-items:center;white-space:nowrap;border-radius:20px;padding:5px 9px;font-size:.68rem;font-weight:750;background:#fff2dc;color:#97660a}.badge.active{background:#e1f6ea;color:#177847}.badge.inactive{background:#fbeaea;color:#a14040}.badge.neutral{background:#edf1f7;color:#64758b}.text-button{border:0;background:none;padding:0;cursor:pointer;color:#2a5ebd;font:inherit;font-size:.77rem;font-weight:650;text-align:left}.amount{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.pagination{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px;font-size:.74rem;color:var(--muted);margin-top:16px}.empty{text-align:center;color:var(--muted);padding:32px;line-height:1.7;font-size:.85rem}.error,.success,.warning{padding:12px 14px;border-radius:8px;font-size:.8rem;line-height:1.6}.error{background:#fff0f0;color:#a33737;border:1px solid #f1caca}.success{background:#ebf8f0;color:#1b6f46;border:1px solid #bfe3cf}.warning{background:#fff7e6;color:#8c6419;border:1px solid #efdbaf}
+.modal-backdrop{position:fixed;inset:0;z-index:1200;background:#132b4a80;display:flex;align-items:center;justify-content:center;padding:24px}.profile-modal{width:min(1280px,100%);max-height:calc(100dvh - 48px);display:flex;flex-direction:column;overflow:hidden;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 70px #102b5240;outline:0}.profile-head{flex-shrink:0;padding:25px 28px 20px;border-bottom:1px solid var(--line)}.identity{display:flex;align-items:center;gap:16px;min-width:0}.identity>div{min-width:0}.identity p:not(.eyebrow),.identity small{margin:0;color:var(--muted);font-size:.76rem;line-height:1.7}.avatar{display:grid;place-items:center;flex:none;width:54px;height:54px;border-radius:14px;background:#edf3ff;color:#2b61cd;font-size:1rem;font-weight:800}.close{flex:none;display:grid;place-items:center;width:36px;height:36px;padding:0;border:0;border-radius:9px;background:transparent;color:#53657d;font-family:Inter,system-ui,sans-serif;font-size:1.35rem;cursor:pointer}.close:hover{background:#edf3fa;color:#17375f}.close svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}.profile-tabs{display:flex;gap:22px;padding:0 28px;border-bottom:1px solid var(--line);flex-shrink:0;overflow:auto}.profile-tabs button{font:inherit;white-space:nowrap;font-size:.81rem;font-weight:700;color:#71839c;padding:16px 1px;border:0;border-bottom:3px solid transparent;background:none;cursor:pointer}.profile-tabs button.active{color:#285fc6;border-bottom-color:#2864df}.profile-body{padding:26px 28px 30px;overflow:auto;min-height:0;background:#f7f9fd}.account-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,1fr);gap:20px;align-items:start}.account-details,.account-controls{display:grid;gap:18px;min-width:0}.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px;min-width:0}.panel-head{gap:12px;margin-bottom:18px}.panel-head p{font-size:.74rem}.details-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px 16px;margin:0}.details-grid div{min-width:0}.details-grid .full{grid-column:1/-1}dt{font-size:.69rem;color:var(--muted);margin-bottom:6px}dd{margin:0;font-size:.82rem;font-weight:650;overflow-wrap:anywhere;line-height:1.6}.login-email{font-size:1.12rem;color:#214e96}.field-note{font-size:.74rem;color:var(--muted);line-height:1.7;margin:10px 0 16px}.account-controls .primary,.account-controls .secondary,.account-controls .danger-outline{width:100%}.record-label{color:#247a50;font-size:.68rem;font-weight:750}.recovery-result{display:grid;gap:12px;margin-top:18px;padding:16px;background:#eff5ff;border:1px dashed #a7bee7;border-radius:9px;text-align:center}.recovery-result>span{font-size:.71rem;color:#55739d}.recovery-result code{font-size:2rem;font-weight:800;letter-spacing:.23em;user-select:all;color:#17468b}.recovery-result small{font-size:.7rem;line-height:1.7;color:#5d7392}.unregistered{text-align:center;max-width:650px;margin:16px auto;padding:40px 28px}.unregistered p{color:var(--muted);font-size:.84rem;line-height:1.8;margin:12px auto 22px;max-width:460px}.empty-icon{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 15px;background:#edf3ff;color:#2b61cd;border-radius:14px;font-size:1.5rem;font-weight:700}.history-filters{grid-template-columns:1fr 150px 180px;margin:22px 0 15px}.section-head{align-items:center;margin:0 0 18px}.section-head .field-note{max-width:270px;margin:0;text-align:right}.latest-label{color:#2b61cd;font-weight:650}.detail-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+@media(max-width:1100px){.page-head{flex-direction:column}.filters{grid-template-columns:1fr 1fr}.account-grid{grid-template-columns:1fr 1fr}.profile-tabs{gap:18px}.panel{padding:18px}}@media(max-width:760px){.payslip-page{padding:23px 16px 32px}h1{font-size:1.5rem}.account-summary{grid-template-columns:1fr 1fr;gap:10px;margin:22px 0}.account-summary button{padding:15px}.list-meta{flex-direction:column;gap:5px}.modal-backdrop{padding:8px}.profile-modal{max-height:calc(100dvh - 16px);border-radius:14px}.profile-head{padding:18px 14px}.avatar{display:none}.profile-head h2{font-size:1.12rem}.profile-tabs{padding:0 14px;gap:16px}.profile-tabs button{font-size:.73rem}.profile-body{padding:18px 14px}.account-grid{grid-template-columns:1fr}.details-grid{gap:18px}.section-head{flex-direction:column;align-items:flex-start;gap:8px}.section-head .field-note{text-align:left;max-width:none}.history-filters{grid-template-columns:1fr 1fr}.history-filters label:first-child{grid-column:1/-1}.pagination{gap:8px;font-size:.68rem}.pagination .secondary{padding:8px;min-height:36px}.head-actions{width:100%}.head-actions a{flex:1}.table-wrap .employee-table{min-width:1000px}.history-table{min-width:880px}.activity-table{min-width:520px}}@media(max-width:480px){.filters{grid-template-columns:1fr}.filters button{width:100%}.details-grid{grid-template-columns:1fr}.login-email{font-size:1rem}.profile-tabs{gap:12px}.profile-tabs button{font-size:.68rem}.unregistered{padding:30px 18px}.panel{padding:18px 16px}.head-actions a{font-size:.68rem;padding:10px}}
 </style>

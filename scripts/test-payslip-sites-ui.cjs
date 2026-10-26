@@ -13,7 +13,7 @@ async function buildFixture(){
   build.onLoad({filter:/\.vue$/},args=>{
    if(args.path.endsWith('SearchableSelect.vue'))return{contents:"import {h} from 'vue';export default {props:['modelValue','options'],setup:()=>()=>h('select',{},[h('option','Select ID type')])}",loader:'js'}
    const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[])
-   const id='data-v-'+Buffer.from(path.relative(root,args.path)).toString('hex').slice(-18)
+   const id='data-v-'+require('node:crypto').createHash('sha1').update(path.relative(root,args.path)).digest('hex').slice(0,8)
    const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'})
    for(const style of descriptor.styles){const compiled=sfc.compileStyle({source:style.content,filename:args.path,id,scoped:style.scoped});assert.deepEqual(compiled.errors,[]);styles.push(compiled.code)}
    return{contents:script.content+`;__component.__scopeId=${JSON.stringify(id)};export default __component;`,loader:'ts',resolveDir:path.dirname(args.path)}
