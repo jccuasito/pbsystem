@@ -23,7 +23,7 @@ async function buildFixture(){
 }
 
 
-test('site review selection, shared posting and employee account controls work in the browser',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+test('account review selection, included sites and shared employee posting work in the browser',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
  const {chromium}=require('playwright'),fixture=await buildFixture()
  const browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
  fs.mkdirSync(output,{recursive:true})
@@ -36,13 +36,14 @@ test('site review selection, shared posting and employee account controls work i
    await page.evaluate(()=>{
     window.requests=[];window.posted=[]
     const employee=id=>({EmployeeID:id,EmployeeNumber:'TEST-'+id,EmployeeName:'SYNTHETIC EMPLOYEE '+id,AgencyName:'Synthetic agency',PositionName:'Guard',Status:'Active'})
-    const cutoff=id=>({key:'2026-10-01:2026-10-15:regular',periodStart:'2026-10-01',periodEnd:'2026-10-15',status:'Approved',assignmentType:'Regular',siteName:null,payrollIds:id===1?[id,100]:[id],gross:id===1?1200:1000,deductions:100,net:id===1?1100:900,publicationStatus:window.posted.includes(id)?'Posted':'Not Posted',lines:[{section:'earnings',label:'Regular',hours:8,amount:id===1?1200:1000},{section:'government',label:'SSS',hours:0,amount:100}],sources:[{payrollId:id,batchId:1,siteName:'Synthetic North Site',clientName:'Synthetic client',gross:1000,deductions:100,net:900},...(id===1?[{payrollId:100,batchId:2,siteName:'Synthetic South Site',clientName:'Synthetic client',gross:200,deductions:0,net:200}]:[])]})
-    const header={BatchID:1,SiteID:1,AgencyID:1,AgencyName:'Synthetic agency',SiteName:'Synthetic North Site',ClientName:'Synthetic client',PeriodStart:'2026-10-01',PeriodEnd:'2026-10-15'}
+    const cutoff=id=>({key:'2026-10-01:2026-10-15:regular',periodStart:'2026-10-01',periodEnd:'2026-10-15',status:'Approved',assignmentType:'Regular',siteName:null,payrollIds:id===1?[id,100,200]:[id],gross:id===1?1200:1000,deductions:100,net:id===1?1100:900,publicationStatus:window.posted.includes(id)?'Posted':'Not Posted',lines:[{section:'earnings',label:'Regular',hours:8,amount:id===1?1200:1000},{section:'government',label:'SSS',hours:0,amount:100}],sources:[{payrollId:id,batchId:1,siteName:'Synthetic North Site',clientName:'Synthetic client',gross:1000,deductions:100,net:900},...(id===1?[{payrollId:100,batchId:2,siteName:'Synthetic South Site',clientName:'Synthetic client',gross:200,deductions:0,net:200},{payrollId:200,batchId:3,siteName:'Outside account site',clientName:'Synthetic client',gross:300,deductions:0,net:300}]:[])]})
+    const scope={siteAccountId:10,agencyId:1,periodStart:'2026-10-01',periodEnd:'2026-10-15'}
+    const header={Scope:scope,SiteAccountID:10,SiteAccountName:'Synthetic Account',AgencyID:1,AgencyName:'Synthetic agency',SiteCount:2,BatchIDs:[1,2],IncludedSites:[{BatchID:1,SiteID:1,SiteName:'Synthetic North Site',ClientName:'Synthetic client'},{BatchID:2,SiteID:2,SiteName:'Synthetic South Site',ClientName:'Synthetic client'}],PeriodStart:'2026-10-01',PeriodEnd:'2026-10-15'}
     window.$fetch=async(url,options={})=>{
      window.requests.push({url,...options})
      if(url.endsWith('/sites')){
       if(options.method==='POST'){window.posted=options.body.action==='post'?[...new Set([...window.posted,...options.body.employeeIds])]:window.posted.filter(id=>!options.body.employeeIds.includes(id));return{changed:options.body.employeeIds.length,unchanged:0}}
-      if(options.query?.batchId)return{header,items:Array.from({length:27},(_,index)=>({employee:employee(index+1),cutoffs:[cutoff(index+1)]})),reviewToken:'a'.repeat(64),canPost:true}
+      if(options.query?.siteAccountId!==undefined)return{header,items:Array.from({length:27},(_,index)=>({employee:employee(index+1),cutoffs:[cutoff(index+1)]})),reviewToken:'a'.repeat(64),canPost:true}
       return{items:[{...header,EmployeeCount:27,PayrollCount:27,PostedPayrollCount:window.posted.length,PublicationStatus:window.posted.length===27?'Posted':window.posted.length?'Partially posted':'Not Posted',GrossPay:27000,TotalDeduction:2700,NetPay:24300}],agencies:[{AgencyID:1,AgencyName:'Synthetic agency'}],cutoffs:[header],canPost:true,pagination:{page:1,pages:1,total:1}}
      }
      if(url.endsWith('/account'))return{canManage:true,account:{Status:'Active',Email:'synthetic@example.invalid',ContactNumber:'09000000000',AgreementVersion:'test',AgreementAcceptedAt:'2026-10-25'}}
@@ -51,8 +52,12 @@ test('site review selection, shared posting and employee account controls work i
     }
    })
    await page.addScriptTag({content:fixture.script})
-   await page.getByRole('button',{name:'Review employees'}).click()
-   const dialog=page.getByRole('dialog',{name:'Synthetic North Site',exact:true});await dialog.waitFor()
+   await page.getByRole('button',{name:'Review account'}).click()
+   const dialog=page.getByRole('dialog',{name:'Synthetic Account',exact:true});await dialog.waitFor()
+   await dialog.locator('.included-sites summary').click()
+   assert.match(await dialog.locator('.included-sites').innerText(),/Synthetic North Site/)
+   assert.match(await dialog.locator('.included-sites').innerText(),/Synthetic South Site/)
+   assert.doesNotMatch(await dialog.locator('.included-sites').innerText(),/Outside account site/)
    assert.equal(await dialog.locator('tbody tr').count(),25,'Large rosters use pages')
    await dialog.getByRole('button',{name:'Select all filtered (27)',exact:true}).click()
    const post=dialog.getByRole('button',{name:'Post selected payslips',exact:true})
@@ -65,7 +70,7 @@ test('site review selection, shared posting and employee account controls work i
    await post.click()
    await dialog.getByRole('status').waitFor()
    const request=await page.evaluate(()=>window.requests.find(row=>row.method==='POST'))
-   assert.equal(request.body.employeeIds.length,27);assert.equal(request.body.batchId,1);assert.equal(request.body.includeCombined,true);assert.equal(request.body.action,'post')
+   assert.equal(request.body.employeeIds.length,27);assert.equal(request.body.batchId,undefined);assert.equal(request.body.siteAccountId,10);assert.equal(request.body.agencyId,1);assert.equal(request.body.periodStart,'2026-10-01');assert.equal(request.body.periodEnd,'2026-10-15');assert.equal(request.body.includeCombined,true);assert.equal(request.body.action,'post')
    assert.equal(await post.isDisabled(),true,'Selection clears after successful post')
    await dialog.getByRole('button',{name:'Previous',exact:true}).click()
    await dialog.getByRole('button',{name:'View payslip',exact:true}).first().click()
@@ -87,7 +92,7 @@ test('site review selection, shared posting and employee account controls work i
    assert.ok(sizes.scroll<=sizes.width+1,JSON.stringify(sizes));assert.ok(sizes.modalWidth<=width)
    await dialog.locator('.modal-body').evaluate(el=>{el.scrollTop=0;const table=el.querySelector('.table-wrap');if(table)table.scrollLeft=0})
    await page.screenshot({path:path.join(output,'site-review-'+width+'.png'),fullPage:true})
-   await dialog.getByRole('button',{name:'Close site payroll'}).click();await dialog.waitFor({state:'hidden'})
+   await dialog.getByRole('button',{name:'Close account payroll'}).click();await dialog.waitFor({state:'hidden'})
    assert.equal(await page.evaluate(()=>document.body.style.overflow),'')
   }
   assert.deepEqual(errors,[])

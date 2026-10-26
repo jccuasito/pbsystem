@@ -194,7 +194,7 @@ const navGroups = [
       { label: 'Payroll Processing', to: '/payroll/processing', icon: 'peso', view: 'payroll-processing' },
       { label: 'Adjustments', to: '/payroll/adjustments', icon: 'file-text', view: 'payroll-adjustments' },
       { label: 'Payslip', to: '/payroll/payslip', icon: 'file-text', view: 'payslip' },
-      { label: 'Payslip List by Site', to: '/payroll/payslip-sites', icon: 'file-text', view: 'payslip-sites' },
+      { label: 'Payslips by Site Account', to: '/payroll/payslip-sites', icon: 'file-text', view: 'payslip-sites' },
       { label: 'Payroll Summary', to: '/payroll/summary', icon: 'chart-bar', view: 'payroll-summary' },
       { label: 'Payroll History', to: '/payroll/history', icon: 'chart-bar', view: 'payroll-history' }
     ]

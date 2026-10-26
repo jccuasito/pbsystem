@@ -33,6 +33,8 @@ test('site roster, combined payslips and bulk posting share employee publication
    'CREATE TEMPORARY TABLE deduction_loan_classification(ClassificationID INT,ClassificationName VARCHAR(100))',
    'CREATE TEMPORARY TABLE employee_account_transaction(TransactionRecordID INT,PayrollID INT,EntryType VARCHAR(30),ItemName VARCHAR(100),ClassificationName VARCHAR(100),Amount DECIMAL(12,2),Status VARCHAR(20))'
   ])await db.query(sql)
+  await db.query("CREATE TEMPORARY TABLE site_account(SiteAccountID INT PRIMARY KEY,SiteAccountName VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,Status VARCHAR(20))")
+  await db.query("CREATE TEMPORARY TABLE site_agency(SiteID INT,AgencyID INT,SiteAccountID INT,Status VARCHAR(20),PRIMARY KEY(SiteID,AgencyID))")
   await db.query("INSERT INTO employee VALUES(1,'TEST-1','TEST','MIDDLE','PERSON','Active',1),(2,'TEST-2','OTHER',NULL,'PERSON','Active',1)")
   await db.query("INSERT INTO government VALUES(11,1,'sss','1234567890'),(12,2,'sss','9876543210')")
   await db.query("INSERT INTO agency VALUES(1,'Synthetic agency','Active')");await db.query('INSERT INTO agency_position VALUES(1,1,1)');await db.query("INSERT INTO `position` VALUES(1,'Synthetic position')")
@@ -106,5 +108,68 @@ test('site roster, combined payslips and bulk posting share employee publication
   const before=(await db.query('SELECT COUNT(*) AS total FROM payslip_publication_event'))[0][0].total
   await assert.rejects(()=>failing.publishSitePayslips({...staff,body:{batchId:1,employeeIds:[1,2],reviewToken:updated.reviewToken,action:'withdraw',includeCombined:true}}),/Synthetic write failure/)
   assert.equal((await db.query('SELECT COUNT(*) AS total FROM payslip_publication_event'))[0][0].total,before,'Bulk rollback retains all prior employee states')
+  // Account scope: two agencies may use the same global account name. Keep them
+  // separate, while collecting all finalized sites in one agency/cutoff.
+  for(const table of ['payslip_publication_event','payslip_publication_source','payslip_publication'])await db.query('DELETE FROM '+table)
+  await db.query('DELETE FROM payroll WHERE PayrollID=6')
+  await db.query("INSERT INTO employee VALUES(3,'TEST-3','THIRD',NULL,'PERSON','Active',1),(4,'TEST-4','FOURTH',NULL,'PERSON','Active',1)")
+  await db.query("UPDATE payroll SET Status='Approved',EmployeeID=3 WHERE PayrollID=4")
+  await db.query('UPDATE attendance_dtr_employee SET EmployeeID=3 WHERE BatchID=3')
+  await db.query('UPDATE payroll_processing_posting SET EmployeeID=3 WHERE PayrollID=4')
+  await db.query("INSERT INTO site(SiteID,SiteName) VALUES(3,'Third site'),(4,'Outside account site'),(5,'Unassigned site'),(6,'Not finalized yet')")
+  await db.query("INSERT INTO site_account VALUES(10,'Global test account','Active'),(20,'Other test account','Active')")
+  await db.query("INSERT INTO site_agency VALUES(1,1,10,'Active'),(2,1,10,'Active'),(3,1,10,'Active'),(1,2,10,'Inactive'),(4,1,20,'Active'),(6,1,10,'Active')")
+  await db.query("INSERT INTO attendance_dtr VALUES(5,3,1,1,'2026-10-01','2026-10-15'),(6,4,1,1,'2026-10-01','2026-10-15'),(7,5,1,1,'2026-10-01','2026-10-15'),(8,1,1,1,'2026-10-16','2026-10-31'),(9,6,1,1,'2026-10-01','2026-10-15')")
+  await db.query("INSERT INTO attendance_dtr_employee VALUES(5,1,'Regular'),(6,1,'Regular'),(7,4,'Regular'),(8,4,'Regular'),(9,4,'Regular')")
+  await db.query("INSERT INTO payroll VALUES(7,1,'Approved','2026-10-01','2026-10-15',700,0,700,NULL),(9,4,'Approved','2026-10-01','2026-10-15',400,0,400,NULL),(10,4,'Approved','2026-10-16','2026-10-31',600,0,600,NULL)")
+  await db.query("INSERT INTO payroll_processing_posting VALUES(7,5,'Active',1),(9,7,'Active',4),(10,8,'Active',4)")
+  const accountScope={siteAccountId:10,agencyId:1,periodStart:'2026-10-01',periodEnd:'2026-10-15'}
+  let grouped=await list({groupBy:'account'})
+  assert.equal(grouped.items.length,4,'Account list keeps agencies, unassigned entries and cutoffs separate')
+  const group=grouped.items.find(row=>row.AgencyID===1&&row.SiteAccountID===10&&row.PeriodEnd==='2026-10-15')
+  assert.equal(group.SiteCount,3);assert.equal(group.PayrollCount,4);assert.equal(group.EmployeeCount,2,'An employee at multiple sites is counted once')
+  assert.equal(Number(group.GrossPay),4200);assert.equal(Number(group.TotalDeduction),200)
+  assert.equal((await list({groupBy:'account',search:'Global test account'})).items.length,3)
+  const accountReview=()=>list(accountScope)
+  let account=await accountReview();assert.deepEqual(Array.from(account.header.BatchIDs),[1,2,5]);assert.equal(account.items.length,2)
+  assert.equal(account.items.find(row=>row.employee.EmployeeID===1).cutoffs.length,2,'Regular is combined once, reliever is separate')
+  const accountPost=(review,ids,extra={})=>sites.publishSitePayslips({...staff,body:{...accountScope,employeeIds:ids,reviewToken:review.reviewToken,action:'post',...extra}})
+  await assert.rejects(()=>accountPost(account,[3]),e=>e.statusCode===400,'Another agency employee cannot be posted with this account')
+  trace.length=0
+  let action=await accountPost(account,[1]);assert.equal(action.changed,2,'Multiple sites inside the account need no outside-scope acknowledgement')
+  assert.ok(trace.slice(0,5).every(sql=>sql.endsWith('FOR UPDATE')),'Account DTR/coverage/mapping/employee/payroll locks precede consistent reads')
+  assert.match(trace[4],/FROM payroll WHERE EmployeeID/)
+  assert.equal((await accountPost(account,[1])).unchanged,2,'Account retries do not create duplicate snapshots/events')
+  await accountPost(account,[2]);assert.equal((await list({groupBy:'account',postingStatus:'posted'})).items.length,1)
+  const individual=await slips.readEmployeePayslips(1)
+  assert.equal(individual.cutoffs.filter(row=>row.publicationStatus==='Posted').length,2)
+  await accountPost(account,[1,2],{action:'withdraw'})
+  assert.equal((await list({groupBy:'account',postingStatus:'posted'})).items.length,0)
+  // A regular source outside this account must be acknowledged and is still a
+  // whole-payslip action, consistent with per-employee posting and portal visibility.
+  await db.query("INSERT INTO payroll VALUES(8,1,'Approved','2026-10-01','2026-10-15',300,0,300,NULL)")
+  await db.query("INSERT INTO payroll_processing_posting VALUES(8,6,'Active',1)")
+  account=await accountReview()
+  await assert.rejects(()=>accountPost(account,[1]),e=>e.statusCode===409)
+  assert.equal((await accountPost(account,[1],{includeCombined:true})).changed,2)
+  // Unassigned remains accessible but cannot borrow another site's account.
+  const unassigned=await list({...accountScope,siteAccountId:0})
+  assert.equal(unassigned.items[0].employee.EmployeeID,4);assert.deepEqual(Array.from(unassigned.header.BatchIDs),[7])
+  // A new finalized site and a reassigned site both invalidate an earlier review.
+  account=await accountReview()
+  await db.query("INSERT INTO payroll VALUES(11,4,'Approved','2026-10-01','2026-10-15',800,0,800,NULL)")
+  await db.query("INSERT INTO payroll_processing_posting VALUES(11,9,'Active',4)")
+  await assert.rejects(()=>accountPost(account,[1],{includeCombined:true}),e=>e.statusCode===409,'New account site must be reviewed before posting')
+  account=await accountReview()
+  await db.query('UPDATE site_agency SET SiteAccountID=20 WHERE SiteID=3 AND AgencyID=1')
+  await assert.rejects(()=>accountPost(account,[1],{includeCombined:true}),e=>e.statusCode===409,'Account reassignments cannot silently change scope')
+  await db.query('UPDATE site_agency SET SiteAccountID=10 WHERE SiteID=3 AND AgencyID=1')
+  account=await accountReview()
+  let accountWrites=0
+  const failingAccount=evaluate('server/utils/payslipSiteCrud.ts',{'node:crypto':crypto,h3,'../connection/dbconnect':database,'./auth':staffAuth,'./payslipCrud':slips,'./payslipPublication':{writePayslipPublication:async(...args)=>{if(++accountWrites===2)throw new Error('Synthetic account write failure');return publication.writePayslipPublication(...args)}}})
+  const eventCount=(await db.query('SELECT COUNT(*) AS total FROM payslip_publication_event'))[0][0].total
+  await assert.rejects(()=>failingAccount.publishSitePayslips({...staff,body:{...accountScope,employeeIds:[1,2],reviewToken:account.reviewToken,action:'withdraw',includeCombined:true}}),/Synthetic account write failure/)
+  assert.equal((await db.query('SELECT COUNT(*) AS total FROM payslip_publication_event'))[0][0].total,eventCount,'Account bulk action rolls back as a unit')
+
  }finally{await db.end()}
 })
