@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useHead, onBeforeRouteLeave } from '#imports'
 import SearchableSelect from '../../../components/SearchableSelect.vue'
+import ArchivedPayslipsPanel from '../../components/ArchivedPayslipsPanel.vue'
+import EmployeeInformationPanel from '../../components/EmployeeInformationPanel.vue'
 import EmployeePayslipSheet from '../../components/EmployeePayslipSheet.vue'
 import { governmentIdTypes,governmentIdType,governmentIdRule,formatGovernmentNumber } from '~~/shared/utils/governmentIds'
 import { portalAgreementVersion,portalPrivacySections } from '~~/shared/utils/employeePortal'
@@ -18,6 +20,9 @@ const employeeIdentity=computed(()=>{
  return number||formatEmployeeId(account.value?.EmployeeID)
 })
 const mode=ref('login'),loading=ref(true),busy=ref(false),error=ref(''),notice=ref(''),privacyOpen=ref(false),settingsOpen=ref(false)
+const informationOpen=ref(false),informationDirty=ref(false),informationBusy=ref(false)
+type PortalDestination='payslips'|'information'|'settings'
+let pendingDestination:PortalDestination='payslips'
 const search=ref(''),year=ref(''),showPassword=ref(false)
 const orderedPayslips=computed(()=>[...payslips.value].sort((a,b)=>b.cutoff.periodEnd.localeCompare(a.cutoff.periodEnd)||b.cutoff.periodStart.localeCompare(a.cutoff.periodStart)||Number(b.publicationId)-Number(a.publicationId)))
 const latestPayslip=computed(()=>orderedPayslips.value[0]||null)
@@ -36,7 +41,7 @@ const confirmDialog=ref<HTMLElement|null>(null),confirmCancel=ref<HTMLButtonElem
 let resolveLeave:((allow:boolean)=>void)|null=null
 const normalizedSettings=()=>({...settings.value,email:settings.value.email.trim().toLowerCase(),contactNumber:settings.value.contactNumber.trim()})
 const settingsChanged=computed(()=>{const value=normalizedSettings();return value.email!==String(account.value?.Email||'').trim().toLowerCase()||value.contactNumber!==String(account.value?.ContactNumber||'').trim()||Boolean(value.password)})
-const settingsDirty=computed(()=>settingsOpen.value&&(settingsChanged.value||Boolean(settings.value.currentPassword)||Boolean(settings.value.confirmPassword)))
+const settingsDirty=computed(()=>(settingsOpen.value&&(settingsChanged.value||Boolean(settings.value.currentPassword)||Boolean(settings.value.confirmPassword)))||(informationOpen.value&&informationDirty.value))
 const reviewedChanges=computed(()=>{
  const value=pendingSettings.value;if(!value)return []
  const changes:Array<{label:string;before?:string;after:string}>=[]
@@ -46,12 +51,15 @@ const reviewedChanges=computed(()=>{
  return changes
 })
 const confirmationTitle=computed(()=>confirmation.value==='save'?'Save these account changes?':confirmation.value==='signout'?'Sign out of Payslip Portal?':'Discard your changes?')
-const confirmationDescription=computed(()=>confirmation.value==='save'?'Review the details below. Your account will only be updated after you confirm.':confirmation.value==='signout'?'You will need to sign in again to view your payslips.':'Your account edits have not been saved. Leave without saving them?')
+const confirmationDescription=computed(()=>confirmation.value==='save'?'Review the details below. Your account will only be updated after you confirm.':confirmation.value==='signout'?'You will need to sign in again to view your payslips.':'Your changes have not been saved or sent. Leave without keeping them?')
 const confirmationAction=computed(()=>confirmation.value==='save'?'Confirm and save':confirmation.value==='signout'?'Yes, sign out':'Discard changes')
 function clearSettings(){settings.value={email:account.value?.Email||'',contactNumber:account.value?.ContactNumber||'',currentPassword:'',password:'',confirmPassword:''}}
-function showConfirmation(action:Confirmation){if(busy.value||confirmation.value)return;confirmationError.value='';confirmation.value=action}
+function showConfirmation(action:Confirmation){if(busy.value||informationBusy.value||confirmation.value)return;confirmationError.value='';confirmation.value=action}
 function cancelConfirmation(){if(busy.value)return;confirmation.value=null;pendingSettings.value=null;confirmationError.value='';const resolve=resolveLeave;resolveLeave=null;resolve?.(false)}
-function returnToPayslips(){if(busy.value)return;if(settingsDirty.value){showConfirmation('discard');return}clearSettings();settingsOpen.value=false;selected.value=null;error.value='';notice.value=''}
+function applyDestination(destination:PortalDestination){clearSettings();settingsOpen.value=destination==='settings';informationOpen.value=destination==='information';informationDirty.value=false;selected.value=null;error.value='';notice.value=''}
+function navigatePortal(destination:PortalDestination){if(busy.value||informationBusy.value)return;if((destination==='settings'&&settingsOpen.value)||(destination==='information'&&informationOpen.value))return;if(settingsDirty.value){pendingDestination=destination;showConfirmation('discard');return}applyDestination(destination)}
+function returnToPayslips(){navigatePortal('payslips')}
+function openInformation(){navigatePortal('information')}
 function brandClick(event:MouseEvent){if(account.value){event.preventDefault();returnToPayslips()}}
 function requestSignout(){showConfirmation('signout')}
 function requestSave(){
@@ -67,13 +75,13 @@ async function confirmAction(){
   if(!pendingSettings.value)return
   if(!await saveSettings(pendingSettings.value))return
  }else if(action==='signout'){if(!await logout())return}
- else{clearSettings();settingsOpen.value=false;selected.value=null;error.value='';notice.value=''}
+ else{applyDestination(action==='leave'?'payslips':pendingDestination)}
  confirmation.value=null;pendingSettings.value=null;confirmationError.value=''
  const resolve=resolveLeave;resolveLeave=null;resolve?.(true)
 }
 function warnBeforeUnload(event:BeforeUnloadEvent){if(settingsDirty.value){event.preventDefault();event.returnValue=''}}
 onBeforeRouteLeave(()=>{
- if(busy.value||confirmation.value)return false
+ if(busy.value||informationBusy.value||confirmation.value)return false
  if(!settingsDirty.value)return true
  return new Promise<boolean>(resolve=>{resolveLeave=resolve;showConfirmation('leave')})
 })
@@ -107,7 +115,7 @@ async function loadSession(){
   }
  }catch(cause:any){
   if(current!==request)return
-  if([401,403].includes(Number(cause?.status||cause?.statusCode||cause?.data?.statusCode))){account.value=null;payslips.value=[];selected.value=null}
+  if([401,403].includes(Number(cause?.status||cause?.statusCode||cause?.data?.statusCode))){account.value=null;payslips.value=[];selected.value=null;settingsOpen.value=false;informationOpen.value=false;informationDirty.value=false;clearSettings()}
   else error.value=cause?.data?.statusMessage||'Unable to load your payslip portal. Try again.'
  }finally{if(current===request)loading.value=false}
 }
@@ -126,11 +134,11 @@ async function submit(){
 async function logout(){
  if(busy.value)return
  busy.value=true;error.value='';confirmationError.value='';request++
- try{await $fetch('/api/employee-portal/auth/logout',{method:'POST',body:{},retry:0,timeout:20000});account.value=null;payslips.value=[];selected.value=null;settingsOpen.value=false;clearSettings();form.value.password='';showPassword.value=false;notice.value='Signed out.';return true}
+ try{await $fetch('/api/employee-portal/auth/logout',{method:'POST',body:{},retry:0,timeout:20000});account.value=null;payslips.value=[];selected.value=null;settingsOpen.value=false;informationOpen.value=false;informationDirty.value=false;clearSettings();form.value.password='';showPassword.value=false;notice.value='Signed out.';return true}
  catch(cause:any){confirmationError.value=cause?.data?.statusMessage||'Unable to sign out. Try again.';return false}
  finally{busy.value=false;loading.value=false}
 }
-function openSettings(){if(busy.value||settingsOpen.value)return;settings.value={email:account.value.Email,contactNumber:account.value.ContactNumber,currentPassword:'',password:'',confirmPassword:''};settingsOpen.value=true;selected.value=null;notice.value='';error.value=''}
+function openSettings(){navigatePortal('settings')}
 async function saveSettings(body:AccountSettings){
  if(busy.value)return
  busy.value=true;error.value='';notice.value='';confirmationError.value=''
@@ -184,7 +192,7 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
  <main class="employee-portal">
   <header class="portal-top" :inert="modalOpen">
    <NuxtLink to="/employee-portal" class="portal-brand" @click="brandClick"><img src="/images/logo.png" alt="DJA"><div><strong>Payslip Portal</strong><small>DJA Group of Companies</small></div></NuxtLink>
-   <nav v-if="account" aria-label="Payslip account"><button type="button" :class="{active:settingsOpen}" :disabled="busy" @click="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>My account</button><button type="button" :disabled="busy" @click="requestSignout">Sign out<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M14 8l4 4-4 4M9 12h11"/></svg></button></nav>
+   <nav v-if="account" aria-label="Payslip account"><button type="button" :class="{active:informationOpen}" :disabled="busy||informationBusy" @click="openInformation">My information</button><button type="button" :class="{active:settingsOpen}" :disabled="busy||informationBusy" @click="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>My account</button><button type="button" :disabled="busy||informationBusy" @click="requestSignout">Sign out<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M14 8l4 4-4 4M9 12h11"/></svg></button></nav>
    <span v-else class="portal-top-caption">EMPLOYEE SELF-SERVICE</span>
   </header>
   <div class="portal-content" :inert="modalOpen">
@@ -224,15 +232,16 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
     </div>
    </section>
    <template v-else>
-    <div v-if="!settingsOpen&&!selected" class="portal-overview">
+    <div v-if="!informationOpen&&!settingsOpen&&!selected" class="portal-overview">
      <header class="portal-welcome">
       <div class="welcome-identity"><p class="portal-eyebrow">YOUR PAYSLIP WORKSPACE</p><h1>{{account.EmployeeName}}</h1><p class="welcome-agency"><span>Agency</span><strong>{{account.AgencyName || 'No agency assigned'}}</strong></p><p class="welcome-meta">{{employeeIdentity}}</p><small v-if="account.PositionName">{{account.PositionName}}</small><p class="welcome-message">Your payroll history, always within reach.</p></div>
       <div v-if="latestPayslip" class="latest-payslip"><span>Latest posted payslip</span><strong>{{money(latestPayslip.cutoff.net)}}</strong><small>Net pay &middot; {{period(latestPayslip.cutoff)}}</small><button type="button" @click="selected=latestPayslip">View latest payslip <span aria-hidden="true">&rarr;</span></button></div>
-      <div v-else class="welcome-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2ZM9 8h6M9 12h6"/></svg><span>Your payslips will appear here once posted by payroll.</span></div>
+      <div v-else class="welcome-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2ZM9 8h6M9 12h6"/></svg><span>Your available payslips are listed in the history below.</span></div>
      </header>
      <div class="portal-current-sites"><div class="assignment-caption"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><span class="site-caption">Current assignment</span></div><span v-for="site in account.CurrentSites || []" :key="site.SiteID+':'+site.DeploymentType" class="current-site"><strong>{{site.SiteName}}</strong><small>{{site.ClientName}} &middot; {{site.IsPermanentSite?'Fixed post':site.DeploymentType}}</small></span><small v-if="!account.CurrentSites?.length">No current site assignment recorded.</small></div>
     </div>
-    <section v-if="settingsOpen" class="portal-card portal-settings"><button type="button" class="portal-text" @click="returnToPayslips">← Back to payslips</button><p class="portal-eyebrow">ACCOUNT SETTINGS</p><h2>My account</h2><p class="portal-muted">Your employee link stays the same when your email or contact changes.</p><div class="settings-identity"><strong>{{account.EmployeeName}}</strong><small>{{employeeIdentity}}<span v-if="account.AgencyName"> &middot; {{account.AgencyName}}</span></small></div><form class="portal-form" @submit.prevent="requestSave"><p class="form-section-title">Login &amp; contact details</p><label>Login email<input v-model="settings.email" type="email" maxlength="190" required></label><label>Contact number<input v-model="settings.contactNumber" type="tel" maxlength="25" required></label><p class="form-section-title">Password &amp; security</p><label>Current password<input v-model="settings.currentPassword" type="password" autocomplete="current-password" maxlength="72" required></label><label>New password (optional)<input v-model="settings.password" type="password" autocomplete="new-password" minlength="12" maxlength="72"></label><label v-if="settings.password">Confirm new password<input v-model="settings.confirmPassword" type="password" autocomplete="new-password" maxlength="72" required></label><p v-if="settingsChanged" class="settings-pending" role="status">You have unsaved changes. Review and confirm them before they are applied.</p><button type="submit" class="portal-primary" :disabled="busy||!settingsChanged">{{busy?'Saving…':'Save account details'}}</button></form></section>
+    <section v-if="informationOpen" class="portal-information"><button type="button" class="portal-text" @click="returnToPayslips">&larr; Back to payslips</button><EmployeeInformationPanel :employee="account" @dirty="informationDirty=$event" @processing="informationBusy=$event"/></section>
+    <section v-else-if="settingsOpen" class="portal-card portal-settings"><button type="button" class="portal-text" @click="returnToPayslips">← Back to payslips</button><p class="portal-eyebrow">ACCOUNT SETTINGS</p><h2>My account</h2><p class="portal-muted">Your employee link stays the same when your email or contact changes.</p><div class="settings-identity"><strong>{{account.EmployeeName}}</strong><small>{{employeeIdentity}}<span v-if="account.AgencyName"> &middot; {{account.AgencyName}}</span></small></div><form class="portal-form" @submit.prevent="requestSave"><p class="form-section-title">Login &amp; contact details</p><label>Login email<input v-model="settings.email" type="email" maxlength="190" required></label><label>Contact number<input v-model="settings.contactNumber" type="tel" maxlength="25" required></label><p class="form-section-title">Password &amp; security</p><label>Current password<input v-model="settings.currentPassword" type="password" autocomplete="current-password" maxlength="72" required></label><label>New password (optional)<input v-model="settings.password" type="password" autocomplete="new-password" minlength="12" maxlength="72"></label><label v-if="settings.password">Confirm new password<input v-model="settings.confirmPassword" type="password" autocomplete="new-password" maxlength="72" required></label><p v-if="settingsChanged" class="settings-pending" role="status">You have unsaved changes. Review and confirm them before they are applied.</p><button type="submit" class="portal-primary" :disabled="busy||!settingsChanged">{{busy?'Saving…':'Save account details'}}</button></form></section>
     <template v-else-if="selected">
      <div class="portal-detail-controls">
       <button type="button" @click="selected=null">← Back to payslips</button>
@@ -242,7 +251,7 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
      <p v-if="imageError" class="portal-error" role="alert">{{imageError}}</p>
      <EmployeePayslipSheet :employee="selected.employee" :cutoff="selected.cutoff" :show-record-note="false" />
     </template>
-    <section v-else class="portal-card portal-payslips"><div class="payslip-list-heading"><div><p class="portal-eyebrow">PAYROLL HISTORY</p><h2>Your payslips</h2><p>View a breakdown or save a copy for your records.</p></div><button type="button" class="portal-sync" :disabled="busy" @click="loadSession"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M18 5a8 8 0 0 0-13 4M6 19a8 8 0 0 0 13-4"/></svg>Refresh</button></div><div class="portal-filters"><label>Search payslips<input v-model="search" type="search" placeholder="Cutoff or site"></label><label>Year<select v-model="year"><option value="">All years</option><option v-for="value in years" :key="value" :value="value">{{value}}</option></select></label><span>{{visible.length}} posted payslips</span></div><div class="portal-table"><table><thead><tr><th>Payroll cutoff</th><th>Assignment / site</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Action</th></tr></thead><tbody><tr v-for="item in visible" :key="item.publicationId"><td><strong>{{period(item.cutoff)}}</strong><span v-if="item.publicationId===latestPayslip?.publicationId" class="latest-label">Latest</span><small>Posted {{payslipPostedLabel(item.postedAt)}}</small></td><td>{{item.cutoff.assignmentType}}<small>{{payslipSiteNames(item.cutoff).join(' / ') || 'Site not recorded'}}</small></td><td>{{money(item.cutoff.gross)}}</td><td>{{money(item.cutoff.deductions)}}</td><td><strong>{{money(item.cutoff.net)}}</strong></td><td><button type="button" @click="selected=item">View payslip</button></td></tr><tr v-if="!visible.length"><td colspan="6" class="portal-empty">{{payslips.length?'No posted payslips match your search.':'No payslips have been posted for you yet. Please check with HR/payroll.'}}</td></tr></tbody></table></div><div class="portal-mobile-payslips">
+    <section v-else class="portal-card portal-payslips"><div class="payslip-list-heading"><div><p class="portal-eyebrow">PAYROLL HISTORY</p><h2>Your payslips</h2><p>View a breakdown or save a copy for your records.</p></div><button type="button" class="portal-sync" :disabled="busy" @click="loadSession"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M18 5a8 8 0 0 0-13 4M6 19a8 8 0 0 0 13-4"/></svg>Refresh</button></div><div class="portal-filters"><label>Search payslips<input v-model="search" type="search" placeholder="Cutoff or site"></label><label>Year<select v-model="year"><option value="">All years</option><option v-for="value in years" :key="value" :value="value">{{value}}</option></select></label><span>{{visible.length}} posted payslips</span></div><div class="portal-table"><table><thead><tr><th>Payroll cutoff</th><th>Assignment / site</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Action</th></tr></thead><tbody><tr v-for="item in visible" :key="item.publicationId"><td><strong>{{period(item.cutoff)}}</strong><span v-if="item.publicationId===latestPayslip?.publicationId" class="latest-label">Latest</span><small>Posted {{payslipPostedLabel(item.postedAt)}}</small></td><td>{{item.cutoff.assignmentType}}<small>{{payslipSiteNames(item.cutoff).join(' / ') || 'Site not recorded'}}</small></td><td>{{money(item.cutoff.gross)}}</td><td>{{money(item.cutoff.deductions)}}</td><td><strong>{{money(item.cutoff.net)}}</strong></td><td><button type="button" @click="selected=item">View payslip</button></td></tr><tr v-if="!visible.length"><td colspan="6" class="portal-empty">{{payslips.length?'No posted payslips match your search.':'No system-generated payslips posted yet. Check the historical PDF archive below.'}}</td></tr></tbody></table></div><div class="portal-mobile-payslips">
       <article v-for="item in visible" :key="item.publicationId" class="mobile-payslip-card">
        <header><div class="mobile-card-label"><span>Posted payslip</span><small v-if="item.publicationId===latestPayslip?.publicationId" class="latest-label">Latest</small></div><strong>{{period(item.cutoff)}}</strong></header>
        <p class="mobile-payslip-site">{{payslipSiteNames(item.cutoff).join(' / ') || 'Site not recorded'}}</p>
@@ -252,7 +261,7 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
        <footer><small>Posted {{payslipPostedLabel(item.postedAt)}}</small><button type="button" @click="selected=item">View payslip</button></footer>
       </article>
       <p v-if="!visible.length" class="portal-empty">{{payslips.length?'No posted payslips match your search.':'No payslips have been posted for you yet.'}}</p>
-     </div></section>
+     </div><ArchivedPayslipsPanel /></section>
    </template>
    <footer class="portal-footer"><button type="button" class="portal-text" @click="privacyOpen=true">Privacy notice and account terms</button><span>For payroll corrections and account support, contact your agency HR office.</span></footer>
   </div>
@@ -261,7 +270,7 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
     <header><div><p class="portal-eyebrow">{{confirmation==='save'?'REVIEW ACCOUNT CHANGES':'ACCOUNT CONFIRMATION'}}</p><h2 id="portal-confirm-title">{{confirmationTitle}}</h2></div><button type="button" aria-label="Close confirmation" :disabled="busy" @click="cancelConfirmation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></header>
     <div class="confirmation-body"><p id="portal-confirm-description">{{confirmationDescription}}</p>
      <dl v-if="confirmation==='save'" class="confirmation-changes"><div v-for="change in reviewedChanges" :key="change.label"><dt>{{change.label}}</dt><dd><span v-if="change.before" class="change-before">{{change.before}}</span><strong>{{change.after}}</strong></dd></div></dl>
-     <p v-if="confirmation==='signout'&&settingsDirty" class="confirmation-warning">You have unsaved account changes. Signing out will discard them.</p>
+     <p v-if="confirmation==='signout'&&settingsDirty" class="confirmation-warning">You have unsaved changes. Signing out will discard them.</p>
      <p v-if="confirmation==='save'&&reviewedChanges.some(change=>change.label==='Login email')" class="confirmation-note">Use your updated email the next time you sign in.</p>
      <p v-if="confirmationError" class="portal-error" role="alert">{{confirmationError}}</p>
     </div>
@@ -274,6 +283,7 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
 </template>
 
 <style scoped>
+.portal-information{display:grid;gap:24px}.portal-information>.portal-text{justify-self:start}@media(max-width:760px){.portal-top{flex-wrap:wrap}.portal-top nav{width:100%;display:flex;flex-wrap:wrap}.portal-top nav button{flex:1;white-space:nowrap}}
 /* The portal shares DJA Payroll's white, navy and blue visual language. */
 .employee-portal{--ink:#15264b;--muted:#64748e;--line:#dde5f0;--blue:#2563da;--navy:#17386e;min-height:100vh;color:var(--ink);background:radial-gradient(ellipse at 0 0,#dfe9fa 0,transparent 48rem),#f7f9fc;font-family:'DM Sans',Inter,'Segoe UI',sans-serif;line-height:1.5}
 .employee-portal *{box-sizing:border-box}.employee-portal h1,.employee-portal h2,.employee-portal h3{line-height:1.2;letter-spacing:-.035em}.employee-portal button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:10px 16px;border:1px solid #cbd8eb;border-radius:8px;background:#fff;color:#244e88;font:inherit;font-size:.86rem;font-weight:700;cursor:pointer}.employee-portal button:hover{background:#edf3fc}.employee-portal button:disabled{opacity:.55;cursor:default}.employee-portal button.portal-primary{background:var(--blue);border-color:var(--blue);color:#fff;min-height:48px}.employee-portal button.portal-primary:hover{background:#1d51bd}.employee-portal button.portal-text{min-height:auto;justify-content:flex-start;padding:0;border:0;background:transparent;color:#2459b6;font-size:.81rem;text-align:left;text-decoration:underline;text-underline-offset:3px}.employee-portal button:focus-visible,.employee-portal a:focus-visible,.employee-portal input:focus-visible,.employee-portal select:focus-visible{outline:3px solid #75aaf0;outline-offset:3px}.employee-portal svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}

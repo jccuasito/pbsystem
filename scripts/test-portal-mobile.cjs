@@ -40,6 +40,7 @@ test('mobile portal cards, historical sites and full PNG download work in Chromi
     if(!account)throw{status:401}
     if(url.endsWith('/me'))return{account:{...employee,EmployeeNumber:employeeNumber,Email:'employee@example.invalid',ContactNumber:'09000000000',CurrentSites:[{SiteID:3,SiteName:'Current Test Site',ClientName:'Synthetic Client',IsPermanentSite:1,DeploymentType:'Regular'}]}}
     if(url.endsWith('/payslips'))return{payslips:[slip]}
+    if(url.endsWith('/archive'))return{items:[],canManage:false}
     throw new Error('Unexpected fixture request: '+url)
    }},{slip,employee,account,employeeNumber})
    await page.addScriptTag({content:fixture.script})
@@ -137,7 +138,7 @@ test('mobile portal cards, historical sites and full PNG download work in Chromi
   await page.waitForFunction(()=>window.leaveResult===false)
   const signoutDialog=page.getByRole('alertdialog',{name:'Sign out of Payslip Portal?',exact:true})
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await signoutDialog.waitFor()
-  assert.match(await signoutDialog.innerText(),/unsaved account changes/);assert.equal(await page.evaluate(()=>window.logoutSubmissions),0)
+  assert.match(await signoutDialog.innerText(),/unsaved changes/);assert.equal(await page.evaluate(()=>window.logoutSubmissions),0)
   await signoutDialog.getByRole('button',{name:'Stay signed in',exact:true}).click();await signoutDialog.waitFor({state:'hidden'})
   assert.equal(await loginEmail.inputValue(),'updated@example.invalid')
   await page.evaluate(()=>{window.profileFailOnce=true})
