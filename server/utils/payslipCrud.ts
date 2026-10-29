@@ -193,8 +193,8 @@ export async function listPayslips(event: any) {
   setHeader(event,'Cache-Control','private, no-store')
   const query = getQuery(event), employeeId = Number(query.employeeId || 0)
   const canPost=session.userType!=='Viewer'&&event.context?.moduleCanEdit!==false
-  // Keep contact visibility aligned with portalAccountStatus's management policy.
-  const canManageAccounts=['Admin','Supervisor'].includes(session.userType)&&event.context?.moduleCanEdit!==false
+  // Account contacts and recovery belong to Employee Management > Portal Accounts.
+  const canManageAccounts=false
   if(query.employeeId!==undefined&&(!Number.isSafeInteger(employeeId)||employeeId<1))throw createError({statusCode:400,statusMessage:'Select a valid employee.'})
   if(employeeId)return{...await readEmployeePayslips(employeeId),canPost}
   const search=String(query.search||'').trim().slice(0,190),agencyId=Number(query.agencyId||0)

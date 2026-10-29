@@ -5,12 +5,14 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const esbuild=require('esbuild'),sfc=require('@vue/compiler-sfc')
 const root=path.resolve(__dirname,'..'),output=path.join(root,'.data','portal-services-tests')
 async function buildFixture(component='app/pages/payroll/payslip/index.vue',props={}){
- const styles=[]
- const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './${component}';const app=createApp(Portal,${JSON.stringify(props)});app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});window.testApp=app;app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
+ const styles=component==='app/pages/dashboard/index.vue'?['base','theme','components','dashboard'].map(name=>fs.readFileSync(path.join(root,'assets/css',name+'.css'),'utf8')):[]
+ const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './${component}';const app=createApp(Portal,${JSON.stringify(props)});app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});window.testApp=app;app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{'import.meta.client':'true','import.meta.server':'false',__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
   build.onResolve({filter:/^(~~\/|~\/)/},args=>({path:path.resolve(root,args.path.startsWith('~~/')?args.path.slice(3):'app/'+args.path.slice(2))+'.ts'}))
+  build.onResolve({filter:/^#app$/},()=>({path:'nuxt-router-fixture',namespace:'fixture'}))
   build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
-  build.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const useHead = value => { document.title = value.title };export const onBeforeRouteLeave = callback => { window.portalLeaveGuard=callback }',loader:'js'}))
+  build.onLoad({filter:/.*/,namespace:'fixture'},args=>args.path==='nuxt-router-fixture'?({contents:"import {reactive} from 'vue';const route=reactive({path:'/dashboard',query:{view:'payslip'}});window.fixtureRoute=route;export const useRoute=()=>route;export const useRouter=()=>({push:value=>{route.query=typeof value==='string'?{}:value.query||{};route.path=typeof value==='string'?value:value.path}})",loader:'js',resolveDir:root}):({contents:'export const useHead = value => { document.title = value.title };export const onBeforeRouteLeave = callback => { window.portalLeaveGuard=callback }',loader:'js'}))
   build.onLoad({filter:/\.vue$/},args=>{
+   const normalized=args.path.replaceAll('\\','/');if(component==='app/pages/dashboard/index.vue'&&((normalized.includes('/app/pages/')&&!['/dashboard/index.vue','/payroll/payslip/index.vue','/employees/portal-accounts/index.vue'].some(suffix=>normalized.endsWith(suffix)))||['WorkspaceLoading.vue','PayrollRunProgress.vue','logoutalert.vue'].some(suffix=>normalized.endsWith(suffix))))return{contents:"import {h} from 'vue';export default {render:()=>h('div')}",loader:'js',resolveDir:root}
    const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[])
    const id='data-v-'+require('node:crypto').createHash('sha1').update(path.relative(root,args.path)).digest('hex').slice(0,8)
    const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'})
@@ -24,7 +26,7 @@ async function buildFixture(component='app/pages/payroll/payslip/index.vue',prop
 
 
 test('historical import/post and employee correction/reply journeys work on real Vue screens',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
- const {chromium}=require('playwright'),staffFixture=await buildFixture(),employeeFixture=await buildFixture('app/pages/employee-portal/index.vue')
+ const {chromium}=require('playwright'),staffFixture=await buildFixture(),accountsFixture=await buildFixture('app/pages/employees/portal-accounts/index.vue'),employeeFixture=await buildFixture('app/pages/employee-portal/index.vue')
  const pdf=await require('pdf-lib').PDFDocument.create();pdf.addPage([600,300]);const pdfBytes=Buffer.from(await pdf.save())
  const browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true});fs.mkdirSync(output,{recursive:true})
  try{
@@ -38,7 +40,8 @@ test('historical import/post and employee correction/reply journeys work on real
     const body=options.body;if(options.method==='POST')window.calls.push({url,body})
     if(url.endsWith('/me'))return{account:{...employee,Email:'test@example.invalid',ContactNumber:'09000000000',CurrentSites:[]}}
     if(url==='/api/employee-portal/payslips')return{payslips:[]}
-    if(url.endsWith('/payslips/account'))return{canManage:true,account:{Email:'test@example.invalid',Status:'Active'},activity:{items:[],pagination:{page:1,pages:1,total:0}}}
+    if(url.endsWith('/portal-accounts/account'))return{canManage:true,account:{Email:'test@example.invalid',Status:'Active'},activity:{items:[],pagination:{page:1,pages:1,total:0}}}
+    if(url==='/api/employees/portal-accounts')return{items:[employee],canManageAccounts:true,accountSummary:{total:1,active:1,inactive:0,unregistered:0},agencies:[],pagination:{page:1,pages:1,total:1}}
     if(url==='/api/payroll/payslips')return options.query?.employeeId?{employee,cutoffs:[]}:{items:[employee],canManageAccounts:true,accountSummary:{total:1,active:1,inactive:0,unregistered:0},agencies:[],pagination:{page:1,pages:1,total:1}}
     if(url.endsWith('/archive')){
      if(body){if(body.action==='import')window.archives.push({ArchiveID:window.archives.length+1,EmployeeID:1,PeriodStart:body.periodStart,PeriodEnd:body.periodEnd,AgencyName:body.agencyName,SiteLabel:body.siteLabel,FileName:body.fileName,PageCount:1,Status:'Draft'});else window.archives.find(item=>item.ArchiveID===body.archiveId).Status=({post:'Posted',withdraw:'Withdrawn',remove:'Removed'})[body.action];return{success:true,archiveId:window.archives.length}}
@@ -64,7 +67,7 @@ test('historical import/post and employee correction/reply journeys work on real
   })
   async function mount(fixture){await page.evaluate(()=>{window.testApp?.unmount();document.getElementById('app').innerHTML='';document.querySelectorAll('style[data-fixture]').forEach(node=>node.remove())});await page.addStyleTag({content:fixture.css}).then(handle=>handle.evaluate(node=>node.dataset.fixture='1'));await page.addScriptTag({content:fixture.script})}
   async function fits(label){assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),label)}
-  await mount(staffFixture);await page.getByRole('button',{name:'Manage account',exact:true}).click();const dialog=page.getByRole('dialog')
+  await mount(staffFixture);assert.equal(await page.getByRole('button',{name:'Manage account',exact:true}).count(),0);await page.getByRole('button',{name:'View payslips',exact:true}).click();const dialog=page.getByRole('dialog')
   assert.equal(await page.getByRole('button',{name:'Historical imports',exact:true}).count(),0,'Site batch workspace is removed')
   await dialog.getByRole('button',{name:'PDF archive',exact:true}).click();await dialog.getByLabel(/^Year/).selectOption('2026');await dialog.getByLabel(/^Month/).selectOption('09')
   assert.equal(await dialog.locator('.cutoff-group').count(),2)
@@ -98,7 +101,7 @@ test('historical import/post and employee correction/reply journeys work on real
   assert.match(await page.locator('.information-sections').innerText(),/Old city/,'Submitting a request does not edit the record')
   await page.getByRole('tab',{name:/My requests/}).click();assert.equal(await page.locator('.request-thread').count(),0,'Conversation stays closed until a request is opened');await page.locator('.request-heading').click();assert.deepEqual(errors,[]);await page.getByText('Please correct my recorded address.',{exact:true}).first().waitFor()
   await page.screenshot({path:path.join(output,'employee-request-thread.png'),fullPage:true})
-  await page.setViewportSize({width:1280,height:900});await mount(staffFixture)
+  await page.setViewportSize({width:1280,height:900});await mount(accountsFixture)
   await page.getByRole('button',{name:'Information requests',exact:true}).click();assert.equal(await page.locator('.request-thread').count(),0);const listHeight=await page.evaluate(()=>document.documentElement.scrollHeight);await page.locator('.admin-requests .row').click();assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight),listHeight,'Floating chat does not expand the inbox page')
   await page.getByLabel('Reply to employee',{exact:true}).fill('HR is checking your address.');await page.getByLabel(/^Set request status/).selectOption('In review')
   await page.getByRole('button',{name:'Review response',exact:true}).click();assert.equal(await page.evaluate(()=>window.calls.length),4)
@@ -177,7 +180,7 @@ test('floating staff chat bounds long conversations, preserves drafts and blocks
   await page.route('**/*',route=>route.abort());await page.setContent('<!doctype html><base href="http://portal.test"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0;padding:24px;font-family:Arial}</style><div id="app"></div>');await page.addStyleTag({content:fixture.css})
   await page.evaluate(()=>{
    window.calls=[];window.records=[1,2].map(id=>({RequestID:id,EmployeeID:id,EmployeeName:'SYNTHETIC EMPLOYEE '+id,EmployeeNumber:'TEST-'+id,AgencyName:'Synthetic agency',FieldLabel:id===1?'Present address':'Nickname',RecordedValue:'Recorded detail',ProposedValue:'Correct detail',Status:'Pending',Version:1,CreatedAt:'2026-10-27T03:00:00.000Z',messages:Array.from({length:30},(_,index)=>({MessageID:index+1,Sender:index%2?'Staff':'Employee',StaffName:'Synthetic HR',StaffRole:'Supervisor',StaffDepartment:'Human Resources',Message:'Synthetic message '+index+'. Please review this employee information correction. '+(index===15?'LongText'.repeat(50):''),Status:'In review',CreatedAt:'2026-10-27T04:00:00.000Z'}))}))
-   window.$fetch=async(url,options={})=>{if(url!='/api/payroll/payslips/requests')throw Error('Unexpected API');if(options.body){window.calls.push(options.body);return new Promise(resolve=>window.completeSend=()=>{const item=window.records.find(row=>row.RequestID===options.body.requestId);item.Status=options.body.status;item.Version++;resolve({success:true})})}const items=window.records.filter(row=>!options.query?.status||row.Status===options.query.status);return{items:structuredClone(items),pagination:{page:1,pages:1,total:items.length}}}
+   window.$fetch=async(url,options={})=>{if(url!='/api/employees/portal-accounts/requests')throw Error('Unexpected API');if(options.body){window.calls.push(options.body);return new Promise(resolve=>window.completeSend=()=>{const item=window.records.find(row=>row.RequestID===options.body.requestId);item.Status=options.body.status;item.Version++;resolve({success:true})})}const items=window.records.filter(row=>!options.query?.status||row.Status===options.query.status);return{items:structuredClone(items),pagination:{page:1,pages:1,total:items.length}}}
   });await page.addScriptTag({content:fixture.script});await page.locator('.row').first().waitFor();const height=await page.evaluate(()=>document.documentElement.scrollHeight)
   assert.equal(await page.locator('.request-thread').count(),0);await page.locator('.row').first().click();const chat=page.getByRole('dialog',{name:'Request messages',exact:true});await chat.waitFor();const box=await chat.boundingBox();assert.ok(box.width<=500&&box.height<=860);assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight),height)
   assert.ok(await chat.locator('.messages').evaluate(node=>node.scrollHeight>node.clientHeight&&node.scrollTop>0),'Only the log scrolls and it opens at the latest message');await chat.getByLabel('Reply to employee',{exact:true}).fill('Draft for first employee')
@@ -214,5 +217,22 @@ test('employee messages remain inside the portal in an embedded phone preview, i
   for(const width of [320,390,430]){await page.locator('iframe').evaluate((node,width)=>node.style.width=width+'px',width);assert.ok(await chat.evaluate(node=>{const rect=node.getBoundingClientRect();return rect.x>=0&&rect.y>=0&&rect.right<=innerWidth+1&&rect.bottom<=innerHeight+1}),'Chat fits phone preview at '+width)}
   await page.screenshot({path:path.join(output,'employee-phone-preview-messages.png'),fullPage:true});await chat.getByRole('button',{name:'Close conversation',exact:true}).click();assert.equal(await chat.count(),0);assert.equal(await frame.evaluate(()=>document.body.style.overflow),'');assert.equal(await frame.getByRole('button',{name:'My account',exact:true}).isEnabled(),true);await frame.locator('.request-heading').click()
   await chat.getByRole('button',{name:'Close conversation',exact:true}).click();assert.equal(await frame.evaluate(()=>window.informationReads),1);assert.equal(await frame.evaluate(()=>window.writes),0);assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
+
+test('dashboard navigation separates Portal Accounts under Employee Management from Payroll Payslips',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/dashboard/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.on('pageerror',error=>errors.push(error.message));await page.route('**/*',route=>route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><base href="http://portal.test"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0}</style><div id="app"></div>'}));await page.goto('http://portal.test/dashboard');await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.reads=[];window.useHead=()=>{};window.navigateTo=()=>{};window.$fetch=async(url,options={})=>{
+    window.reads.push(url);if(url==='/api/auth/me')return{user:{id:42,firstName:'Synthetic',lastName:'HR',userType:'Admin',departmentName:'Human Resources'}}
+    if(url==='/api/settings/access')return{access:{employees:{canView:true,canEdit:true},payslips:{canView:true,canEdit:true},dashboard:{canView:false,canEdit:false}}}
+    const employee={EmployeeID:1,EmployeeNumber:'TEST-1',EmployeeName:'SYNTHETIC EMPLOYEE',AgencyName:'Synthetic agency',PositionName:'Guard',Status:'Active',PortalStatus:'Active',PortalEmail:'test@example.invalid',PayslipCount:2,PostedPayslipCount:1,LastCutoffEnd:'2026-09-30',PublicationStatus:'Partially posted'}
+    if(url==='/api/employees/portal-accounts'||url==='/api/payroll/payslips')return{items:[employee],agencies:[],canManageAccounts:url.includes('portal-accounts'),accountSummary:{total:1,active:1,inactive:0,unregistered:0},pagination:{page:1,pages:1,total:1}}
+    throw Error('Unexpected endpoint '+url)
+   }
+  });await page.addScriptTag({content:fixture.script});assert.deepEqual(errors,[]);await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor();const sidebar=page.locator('#dashboard-sidebar');await sidebar.hover();await sidebar.getByRole('button',{name:'Employee Management',exact:true}).click();await sidebar.getByRole('button',{name:'Portal Accounts',exact:true}).click();await page.getByRole('heading',{name:'Portal Accounts',exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.fixtureRoute.query.view),'employees-portal-accounts');await page.getByRole('columnheader',{name:'Portal email',exact:true}).waitFor();assert.equal(await page.getByRole('link',{name:'Manage posting',exact:true}).count(),0);await page.screenshot({path:path.join(output,'portal-accounts-navigation.png'),fullPage:true})
+  await sidebar.hover();await sidebar.getByRole('button',{name:'Payroll',exact:true}).click();await sidebar.getByRole('button',{name:'Payslips',exact:true}).click();await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.fixtureRoute.query.view),'payslip');await page.getByLabel(/^Posting status/).waitFor();assert.equal(await page.getByRole('columnheader',{name:'Portal email',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Information requests',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Manage account',exact:true}).count(),0);assert.match(await page.locator('.employee-table').innerText(),/Partially posted/);await page.getByRole('link',{name:'Manage posting',exact:true}).waitFor();await page.screenshot({path:path.join(output,'payslips-navigation.png'),fullPage:true});assert.deepEqual(errors,[])
  }finally{await browser.close()}
 })

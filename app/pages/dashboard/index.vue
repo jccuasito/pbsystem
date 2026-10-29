@@ -26,6 +26,7 @@ import EmployeeAccountTransactionsPage from '../deductions-loans/transactions/in
 import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
 import PayrollProcessingPage from '../payroll/processing/index.vue'
 import PayslipPage from '../payroll/payslip/index.vue'
+import PortalAccountsPage from '../employees/portal-accounts/index.vue'
 import PayslipSitesPage from '../payroll/payslip-sites/index.vue'
 import PayrollHistoryPage from '../payroll/history/index.vue'
 import PayrollSummaryPage from '../payroll/summary/index.vue'
@@ -47,13 +48,13 @@ const loggingOut = ref(false)
 const isBooting = ref(true)
 let documentOverflowBeforeDrawer = ''
 type WorkspaceView =
-  | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status'
+  | 'employees-list' | 'employees-deployments' | 'employees-documents' | 'employees-status' | 'employees-portal-accounts'
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-site-accounts' | 'organization-region'
   | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payslip-sites' | 'payroll-history' | 'payroll-summary'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
   | 'employee-loans-deductions' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
-  'employees-list', 'employees-deployments', 'employees-documents', 'employees-status',
+  'employees-list', 'employees-deployments', 'employees-documents', 'employees-status', 'employees-portal-accounts',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-site-accounts', 'organization-region',
   'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payslip-sites', 'payroll-history', 'payroll-summary',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
@@ -165,7 +166,8 @@ const navGroups = [
       { label: 'Employee List', to: '/employees', icon: 'user', view: 'employees-list' },
       { label: 'Employee Status', to: '/employees/status', icon: 'clock', view: 'employees-status' },
       { label: 'Deployment History', to: '/employees/deployment-history', icon: 'chart-bar', view: 'employees-deployments' },
-      { label: 'Employee Documents', to: '/employees/documents', icon: 'file-text', view: 'employees-documents' }
+      { label: 'Employee Documents', to: '/employees/documents', icon: 'file-text', view: 'employees-documents' },
+      { label: 'Portal Accounts', to: '/employees/portal-accounts', icon: 'user', view: 'employees-portal-accounts' }
     ]
   },
   {
@@ -193,7 +195,7 @@ const navGroups = [
     children: [
       { label: 'Payroll Processing', to: '/payroll/processing', icon: 'peso', view: 'payroll-processing' },
       { label: 'Adjustments', to: '/payroll/adjustments', icon: 'file-text', view: 'payroll-adjustments' },
-      { label: 'Payslips & Accounts', to: '/payroll/payslip', icon: 'file-text', view: 'payslip' },
+      { label: 'Payslips', to: '/payroll/payslip', icon: 'file-text', view: 'payslip' },
       { label: 'Payslips by Site Account', to: '/payroll/payslip-sites', icon: 'file-text', view: 'payslip-sites' },
       { label: 'Payroll Summary', to: '/payroll/summary', icon: 'chart-bar', view: 'payroll-summary' },
       { label: 'Payroll History', to: '/payroll/history', icon: 'chart-bar', view: 'payroll-history' }
@@ -296,6 +298,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'payroll-adjustments': PayrollAdjustmentsPage,
   'payroll-processing': PayrollProcessingPage,
   'payslip': PayslipPage,
+  'employees-portal-accounts': PortalAccountsPage,
   'payslip-sites': PayslipSitesPage,
   'payroll-history': PayrollHistoryPage,
   'payroll-summary': PayrollSummaryPage,

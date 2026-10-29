@@ -6,7 +6,7 @@ const esbuild=require('esbuild'),sfc=require('@vue/compiler-sfc')
 const root=path.resolve(__dirname,'..'),output=path.join(root,'.data','payslip-account-settings-tests')
 async function buildFixture(){
  const styles=[]
- const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './app/pages/payroll/payslip/index.vue';const app=createApp(Portal);app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});window.testApp=app;app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
+ const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './app/pages/employees/portal-accounts/index.vue';const app=createApp(Portal);app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});window.testApp=app;app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
   build.onResolve({filter:/^(~~\/|~\/)/},args=>({path:path.resolve(root,args.path.startsWith('~~/')?args.path.slice(3):'app/'+args.path.slice(2))+'.ts'}))
   build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
   build.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const useHead = value => { document.title = value.title }',loader:'js'}))
@@ -24,7 +24,7 @@ async function buildFixture(){
 
 
 
-test('employee account settings organize access, recovery, read-only history and private activity',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+test('employee portal accounts organize access, recovery and private activity without payroll reads',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
  const {chromium}=require('playwright'),fixture=await buildFixture()
  const browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
  fs.mkdirSync(output,{recursive:true})
@@ -53,7 +53,7 @@ test('employee account settings organize access, recovery, read-only history and
      if(!window.manager)return{canManage:false,account:{Status:id===1?window.portalStatus:'Inactive'}}
      return{canManage:true,account:{Status:id===1?window.portalStatus:'Inactive',Email:employee.PortalEmail,ContactNumber:employee.PortalContactNumber,CreatedAt:'2026-10-20T02:30:00.000Z',AgreementVersion:'2026-10-25-v1',AgreementAcceptedAt:'2026-10-20T02:30:00.000Z',LastSignInAt:'2026-10-26T02:52:00.000Z',ActiveSessions:window.pendingCode?0:1,RecoveryPending:window.pendingCode?1:0,RecoveryExpiresAt:new Date(Date.now()+900000).toISOString()},activity:{items:events,pagination:{page:1,pages:1,total:events.length}}}
     }
-    if(url.endsWith('/payslips')){
+    if(url==='/api/employees/portal-accounts'){
      if(options.method==='POST')throw new Error('Employee tracker must not post or withdraw payslips')
      if(options.query?.employeeId)return{employee,cutoffs:id===1?cutoffs:[],canPost:true}
      const all=employees.map(row=>({...row,PortalStatus:row.EmployeeID===1?window.portalStatus:row.PortalStatus,...(!window.manager?{PortalEmail:null,PortalContactNumber:null,PortalLastSignInAt:null}: {})}))
@@ -65,14 +65,14 @@ test('employee account settings organize access, recovery, read-only history and
    }
   })
   await page.addScriptTag({content:fixture.script})
-  await page.getByRole('heading',{name:'Payslips & Portal Accounts',exact:true}).waitFor()
+  await page.getByRole('heading',{name:'Portal Accounts',exact:true}).waitFor()
   await page.getByRole('button',{name:'Manage account',exact:true}).first().waitFor()
   assert.equal(await page.locator('.employee-table tbody tr').count(),3)
   await page.getByRole('button',{name:/^Active accounts/}).click();await page.waitForFunction(()=>document.querySelectorAll('.employee-table tbody tr').length===1)
   assert.match(await page.locator('.employee-table').innerText(),/alpha@example.invalid/)
   await page.screenshot({path:path.join(output,'accounts-list.png'),fullPage:true})
   await page.getByRole('button',{name:'Manage account',exact:true}).click()
-  const dialog=page.getByRole('dialog',{name:'Payslips for SYNTHETIC EMPLOYEE ONE',exact:true});await dialog.waitFor()
+  const dialog=page.getByRole('dialog',{name:'Portal account for SYNTHETIC EMPLOYEE ONE',exact:true});await dialog.waitFor()
   await dialog.locator('.login-email').waitFor();assert.equal(await dialog.locator('.login-email').innerText(),'alpha@example.invalid')
   assert.match(await dialog.locator('.account-details').innerText(),/10:52 AM/)
   assert.equal(await dialog.getByRole('button',{name:/Post payslip|Withdraw payslip/}).count(),0)
@@ -83,13 +83,7 @@ test('employee account settings organize access, recovery, read-only history and
   await dialog.getByRole('button',{name:'Account activity',exact:true}).click()
   assert.match(await dialog.locator('.activity-table').innerText(),/HR issued recovery code/);assert.match(await dialog.locator('.activity-table').innerText(),/Synthetic HR/)
   await page.screenshot({path:path.join(output,'account-activity.png'),fullPage:true})
-  await dialog.getByRole('button',{name:'Payslip history',exact:true}).click()
-  assert.equal(await dialog.locator('.history-table tbody tr').count(),3)
-  await dialog.getByPlaceholder('Cutoff, site, or client').fill('Synthetic site 0');assert.equal(await dialog.locator('.history-table tbody tr').count(),1,'Search applies to latest payslips as well as earlier history')
-  await dialog.getByRole('button',{name:'View payslip',exact:true}).click();await dialog.locator('.payslip-sheet').waitFor()
-  assert.equal(await dialog.getByRole('button',{name:/Post payslip|Withdraw/}).count(),0)
-  await dialog.getByRole('button',{name:/Back to history/}).click();await dialog.getByPlaceholder('Cutoff, site, or client').fill('')
-  await page.screenshot({path:path.join(output,'employee-history.png'),fullPage:true})
+  assert.equal(await dialog.getByRole('button',{name:'Payslip history',exact:true}).count(),0,'Financial history stays in Payroll > Payslips');assert.equal(await dialog.getByRole('button',{name:'PDF archive',exact:true}).count(),0)
   await dialog.getByRole('button',{name:'Portal account',exact:true}).click()
   await dialog.getByRole('button',{name:'Deactivate access',exact:true}).click();await dialog.getByRole('button',{name:'Activate access',exact:true}).waitFor()
   assert.equal(await dialog.getByRole('button',{name:'Issue recovery code',exact:true}).isDisabled(),true)
@@ -100,7 +94,7 @@ test('employee account settings organize access, recovery, read-only history and
   assert.equal(await page.evaluate(()=>document.body.style.overflow),'')
   await page.setViewportSize({width:1440,height:980})
   await page.getByRole('button',{name:/^Not registered/}).click();await page.getByRole('button',{name:'View employee',exact:true}).click()
-  const missing=page.getByRole('dialog',{name:'Payslips for UNREGISTERED EMPLOYEE',exact:true});await missing.getByRole('heading',{name:'Not registered yet'}).waitFor();assert.equal(await missing.getByRole('button',{name:'Issue recovery code'}).count(),0)
+  const missing=page.getByRole('dialog',{name:'Portal account for UNREGISTERED EMPLOYEE',exact:true});await missing.getByRole('heading',{name:'Not registered yet'}).waitFor();assert.equal(await missing.getByRole('button',{name:'Issue recovery code'}).count(),0)
   await missing.getByRole('button',{name:'Close profile'}).click()
   await page.evaluate(()=>{window.manager=false});await page.getByRole('button',{name:/^All employees/}).click()
   await page.getByRole('button',{name:'Manage account',exact:true}).first().click();await dialog.waitFor()
@@ -108,6 +102,7 @@ test('employee account settings organize access, recovery, read-only history and
   assert.equal(await dialog.locator('.login-email').count(),0);assert.equal(await dialog.getByRole('button',{name:'Issue recovery code'}).count(),0)
   await dialog.getByRole('button',{name:'Account activity',exact:true}).click();assert.equal(await dialog.locator('.activity-table').count(),0)
   await page.evaluate(()=>window.testApp.unmount());assert.equal(await page.evaluate(()=>document.body.style.overflow),'')
+  assert.equal((await page.evaluate(()=>window.requests.filter(row=>row.url.startsWith('/api/payroll/')))).length,0,'Account management does not fetch payroll data');
   assert.deepEqual(errors,[])
   assert.ok((await page.evaluate(()=>window.requests.filter(row=>row.method==='POST'))).every(row=>row.url.endsWith('/account')))
  }finally{await browser.close()}

@@ -6,7 +6,7 @@ const government=evaluate('shared/utils/governmentIds.ts'),privacy=evaluate('sha
 const recoveryHelpers=evaluate('server/utils/employeePortalRecovery.ts',{'node:crypto':crypto})
 const publicEvent=(ip='127.0.0.5')=>({cookies:{},headers:{'content-type':'application/json',origin:'http://localhost:3000'},url:'http://localhost:3000',node:{req:{socket:{remoteAddress:ip}}}})
 test('portal pages compile and privacy terms do not waive employee rights',()=>{
- for(const file of ['app/pages/employee-portal/index.vue','app/pages/payroll/payslip/index.vue','app/pages/payroll/payslip-sites/index.vue','app/pages/dashboard/index.vue','app/components/EmployeePayslipSheet.vue']){
+ for(const file of ['app/pages/employee-portal/index.vue','app/pages/payroll/payslip/index.vue','app/pages/employees/portal-accounts/index.vue','app/components/EmployeePayslipWorkspace.vue','app/pages/payroll/payslip-sites/index.vue','app/pages/dashboard/index.vue','app/components/EmployeePayslipSheet.vue']){
   const {descriptor,errors}=sfc.parse(fs.readFileSync(file,'utf8'),{filename:file});assert.deepEqual(errors,[])
   const script=sfc.compileScript(descriptor,{id:file});assert.deepEqual(sfc.compileTemplate({source:descriptor.template.content,filename:file,id:file,compilerOptions:{bindingMetadata:script.bindings}}).errors,[])
   for(const style of descriptor.styles)assert.deepEqual(sfc.compileStyle({source:style.content,filename:file,id:file,scoped:style.scoped}).errors,[])
@@ -25,6 +25,21 @@ test('posted timestamps format the posting instant once in Philippine time',()=>
  assert.equal(presentation.payslipPostedLabel('2026-10-25T02:44:00.000Z'),'Oct 25, 2026, 10:44 AM')
  assert.equal(presentation.payslipPostedLabel('2026-10-25T10:44:00+08:00'),'Oct 25, 2026, 10:44 AM')
  assert.equal(presentation.payslipPostedLabel('invalid'),'')
+})
+
+test('portal account endpoints and legacy aliases require Employee Management permissions',async()=>{
+ const permissions=evaluate('server/utils/settingsAccess.ts',{'h3':h3,'../connection/dbconnect':{},'./auth':staffAuth})
+ const paths=['/api/employees/portal-accounts','/api/employees/portal-accounts/account','/api/employees/portal-accounts/requests','/api/payroll/payslips/account','/api/payroll/payslips/account/','/api/payroll/payslips/requests','/api/payroll/payslips/requests/']
+ for(const path of paths)assert.equal(permissions.moduleForPath(path),'employees')
+ for(const path of ['/api/payroll/payslips','/api/payroll/payslips/sites','/api/payroll/payslips/archive'])assert.equal(permissions.moduleForPath(path),'payslips')
+ let rights={employees:{canView:false,canEdit:false},payslips:{canView:true,canEdit:true}}
+ const handler=evaluate('server/middleware/module-access.ts',{'h3':{...h3,getMethod:event=>event.method||'GET'},'../utils/settingsAccess':{moduleForPath:permissions.moduleForPath,currentActor:async()=>({UserID:42,UserType:'Supervisor'}),accessForUser:async()=>rights},'../utils/databaseBackup.mjs':{isDatabaseRestoring:()=>false}}).default
+ for(const path of paths)await assert.rejects(()=>handler({url:'http://localhost:3000'+path,method:'GET',context:{}}),error=>error.statusCode===403)
+ rights={employees:{canView:true,canEdit:false},payslips:{canView:true,canEdit:true}}
+ for(const path of paths){await handler({url:'http://localhost:3000'+path,method:'GET',context:{}});await assert.rejects(()=>handler({url:'http://localhost:3000'+path,method:'POST',context:{}}),error=>error.statusCode===403)}
+ rights={employees:{canView:true,canEdit:true},payslips:{canView:false,canEdit:false}}
+ for(const path of paths){const event={url:'http://localhost:3000'+path,method:'POST',context:{}};await handler(event);assert.equal(event.context.moduleCanEdit,true)}
+ await assert.rejects(()=>handler({url:'http://localhost:3000/api/payroll/payslips',method:'GET',context:{}}),error=>error.statusCode===403)
 })
 
 test('numeric recovery generation preserves leading zeroes',()=>{
@@ -88,23 +103,25 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   await assert.rejects(()=>auth.registerEmployee(publicEvent('127.0.0.9'),{...body,password:'Password123'+'é'.repeat(40),confirmPassword:'Password123'+'é'.repeat(40)}),e=>e.statusCode===400,'Bcrypt cannot silently truncate long UTF-8 passwords')
   await assert.rejects(()=>auth.registerEmployee(publicEvent(),{...body,email:'second@example.invalid'}),e=>e.statusCode===409)
   await assert.rejects(()=>auth.registerEmployee(publicEvent(),{...body,firstName:'OTHER',middleName:'',governmentNumber:'98-7654321-0'}),e=>e.statusCode===409,'One login email cannot claim two employees')
+  const accounts=evaluate('server/utils/portalAccountsCrud.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth})
   const staffTracker={actor:{sub:42,userType:'Admin'},context:{moduleCanEdit:true},query:{}}
-  const unregistered=await slips.listPayslips({...staffTracker,query:{accountStatus:'unregistered'}})
+  const unregistered=await accounts.listPortalAccounts({...staffTracker,query:{accountStatus:'unregistered'}})
   assert.equal(unregistered.items.length,1);assert.equal(unregistered.items[0].EmployeeID,2)
   assert.equal(unregistered.accountSummary.active,1);assert.equal(unregistered.accountSummary.unregistered,1)
-  const emailLookup=await slips.listPayslips({...staffTracker,query:{search:'test@example.invalid',accountStatus:'active'}})
+  const payrollOnly=await slips.listPayslips(staffTracker);assert.equal(payrollOnly.canManageAccounts,false);assert.ok(payrollOnly.items.every(row=>row.PortalEmail===null&&row.PortalContactNumber===null));assert.equal((await slips.listPayslips({...staffTracker,query:{search:'test@example.invalid'}})).items.length,0,'Payroll permissions cannot search portal login contacts')
+  const emailLookup=await accounts.listPortalAccounts({...staffTracker,query:{search:'test@example.invalid',accountStatus:'active'}})
   assert.equal(emailLookup.items.length,1);assert.equal(emailLookup.items[0].PortalEmail,'test@example.invalid')
   assert.equal(emailLookup.items[0].PortalActiveSessions,1)
   for(const userType of ['Encoder','Viewer']){
-    const restricted=await slips.listPayslips({...staffTracker,actor:{sub:42,userType},query:{}})
+    const restricted=await accounts.listPortalAccounts({...staffTracker,actor:{sub:42,userType},query:{}})
     assert.equal(restricted.canManageAccounts,false)
     assert.ok(restricted.items.every(row=>row.PortalEmail===null&&row.PortalContactNumber===null&&row.PortalLastSignInAt===null))
-    assert.equal((await slips.listPayslips({...staffTracker,actor:{sub:42,userType},query:{search:'test@example.invalid'}})).items.length,0,'Restricted staff cannot infer accounts by email search')
+    assert.equal((await accounts.listPortalAccounts({...staffTracker,actor:{sub:42,userType},query:{search:'test@example.invalid'}})).items.length,0,'Restricted staff cannot infer accounts by email search')
     const status=await admin.portalAccountStatus({...staffTracker,actor:{sub:42,userType},query:{employeeId:1}})
     assert.deepEqual(Object.keys(status.account),['Status']);assert.equal(status.activity,undefined)
   }
   await assert.rejects(()=>slips.listPayslips({...staffTracker,query:{accountStatus:'invalid'}}),e=>e.statusCode===400)
-  const managerReadOnly=await slips.listPayslips({...staffTracker,context:{moduleCanEdit:false},query:{}})
+  const managerReadOnly=await accounts.listPortalAccounts({...staffTracker,context:{moduleCanEdit:false},query:{}})
   assert.equal(managerReadOnly.canManageAccounts,false);assert.equal(managerReadOnly.items[0].PortalEmail,null)
   const other=publicEvent('127.0.0.6');await auth.registerEmployee(other,{...body,firstName:'OTHER',middleName:'',governmentNumber:'98-7654321-0',email:'other@example.invalid'})
   await assert.rejects(()=>auth.requireEmployeeSession({cookies:{pbs_session:'staff-cookie'}}),e=>e.statusCode===401)
@@ -152,7 +169,7 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   assert.equal(tracked.activity.items.length,10);assert.ok(tracked.activity.pagination.pages>1)
   const lastActivity=await admin.portalAccountStatus({...staff,query:{employeeId:1,activityPage:9999}})
   assert.equal(lastActivity.activity.pagination.page,lastActivity.activity.pagination.pages)
-  const trackedList=await slips.listPayslips({...staff,query:{search:'updated@example.invalid'}})
+  const trackedList=await accounts.listPortalAccounts({...staff,query:{search:'updated@example.invalid'}})
   assert.equal(trackedList.items[0].PortalLastSignInAt,tracked.account.LastSignInAt,'List and profile dates represent the same sign-in instant')
   assert.notEqual(recoveryHelpers.portalRecoveryHash(1,'012345'),recoveryHelpers.portalRecoveryHash(2,'012345'),'Short codes are bound to an account')
   const [[reset]]=await db.query('SELECT ResetTokenHash FROM employee_portal_account WHERE EmployeeID=1');assert.notEqual(reset.ResetTokenHash,recovery.recoveryCode);assert.equal(reset.ResetTokenHash.length,64,'Only a keyed hash is stored')
@@ -183,7 +200,7 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   await auth.logoutEmployee(owner);await assert.rejects(()=>auth.requireEmployeeSession(owner),e=>e.statusCode===401)
   const login=publicEvent();await auth.loginEmployee(login,{email:'updated@example.invalid',password:body.password});assert.equal((await auth.requireEmployeeSession(login)).EmployeeID,1)
   await admin.managePortalAccount({...staff,body:{employeeId:1,action:'deactivate'}});await assert.rejects(()=>auth.requireEmployeeSession(login),e=>e.statusCode===401)
-  const inactive=await slips.listPayslips({...staff,query:{accountStatus:'inactive'}})
+  const inactive=await accounts.listPortalAccounts({...staff,query:{accountStatus:'inactive'}})
   assert.equal(inactive.items.length,1);assert.equal(inactive.items[0].EmployeeID,1);assert.equal(inactive.accountSummary.inactive,1)
   const missingAccount=await admin.portalAccountStatus({...staff,query:{employeeId:99999}});assert.equal(missingAccount.account,null)
   for(let i=0;i<3;i++)await auth.portalLimit(publicEvent('127.0.0.99'),'limit-test','',3)
