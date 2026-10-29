@@ -70,7 +70,8 @@ export async function reviewInformationRequest(event:any){
  const db=await pool.getConnection();try{
   await db.beginTransaction();const [[current]]=await db.execute<any[]>('SELECT Version,Status FROM employee_information_request WHERE RequestID=? FOR UPDATE',[requestId])
   if(!current)throw createError({statusCode:404,statusMessage:'Request not found.'})
-  if(current.Version!==id(body.version)||current.Status==='Cancelled')throw createError({statusCode:409,statusMessage:'This request changed. Reload before replying.'})
+  if(!['Pending','In review'].includes(current.Status))throw createError({statusCode:409,statusMessage:'This request is closed. Replies and status changes are no longer allowed.'})
+  if(current.Version!==id(body.version))throw createError({statusCode:409,statusMessage:'This request changed. Reload before replying.'})
   await db.execute('UPDATE employee_information_request SET Status=?,Version=Version+1 WHERE RequestID=?',[body.status,requestId])
   await db.execute("INSERT INTO employee_information_message(RequestID,Sender,ActorUserID,Message,Status) VALUES(?,'Staff',?,?,?)",[requestId,session.sub,message,body.status])
   await db.commit();return{success:true}

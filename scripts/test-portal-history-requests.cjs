@@ -57,6 +57,15 @@ test('private historical PDFs and HR requests use isolated temporary tables',{sk
   await information.submitInformationRequest(employee({action:'message',requestId:created.requestId,version:2,message:'Thank you.'}))
   await information.reviewInformationRequest(staff({requestId:created.requestId,version:3,status:'Resolved',message:'Reviewed with HR.'}))
   await expectCode(()=>information.submitInformationRequest(employee({action:'message',requestId:created.requestId,version:4,message:'Closed request'})),409)
+  for(const closedStatus of ['Resolved','Declined','Cancelled']){
+   // Arrange closed states only in this connection's synthetic TEMPORARY table.
+   await db.execute('UPDATE employee_information_request SET Status=? WHERE RequestID=?',[closedStatus,created.requestId])
+   for(const targetStatus of ['In review','Resolved','Declined'])await expectCode(()=>information.reviewInformationRequest(staff({requestId:created.requestId,version:4,status:targetStatus,message:'Must not append or reopen'})),409)
+   for(const action of ['message','cancel'])await expectCode(()=>information.submitInformationRequest(employee({action,requestId:created.requestId,version:4,message:'Must stay closed'})),409)
+   const [[closed]]=await db.query('SELECT Status,Version FROM employee_information_request WHERE RequestID=?',[created.requestId]);assert.equal(closed.Status,closedStatus);assert.equal(closed.Version,4)
+   const [[messages]]=await db.query('SELECT COUNT(*) Total FROM employee_information_message WHERE RequestID=?',[created.requestId]);assert.equal(messages.Total,4,'Closed requests cannot acquire a reply or status event')
+  }
+  await db.execute('UPDATE employee_information_request SET Status=? WHERE RequestID=?',['Resolved',created.requestId])
   assert.equal((await information.listInformationRequests(staff(undefined,{status:'Resolved',search:'TEST-1'}))).pagination.total,1)
   assert.equal((await information.listInformationRequests(staff(undefined,{employeeId:2}))).pagination.total,0)
   const cancelled=await information.submitInformationRequest(employee({fieldKey:'Other',proposedValue:'Please check',message:'A correction'}))

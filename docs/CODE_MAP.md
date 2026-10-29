@@ -171,6 +171,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/PayrollProcessingDetailModal.vue`
   - `app/components/PayrollRunProgress.vue`
   - `app/components/PortalRequestsAdmin.vue`
+  - `app/components/RequestChatWindow.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
   - `app/pages/attendance/dtr-reliever/index.vue`
@@ -509,6 +510,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeeInformationPanel.vue`
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/RequestChatWindow.vue`
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/payslipImage.ts`
@@ -896,6 +898,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/InformationRequestThread.vue`
   - `app/components/PortalRequestsAdmin.vue`
+  - `app/components/RequestChatWindow.vue`
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
@@ -934,6 +937,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/InformationRequestThread.vue`
   - `app/components/PortalRequestsAdmin.vue`
+  - `app/components/RequestChatWindow.vue`
   - `app/pages/payroll/payslip/index.vue`
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
