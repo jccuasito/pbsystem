@@ -14,6 +14,8 @@ function evaluate(source, dependencies = {}, globals = {}) {
 }
 const fields = evaluate(fs.readFileSync('shared/utils/rateFields.ts', 'utf8'))
 const rateVersions = evaluate(fs.readFileSync('server/utils/rateVersions.ts', 'utf8'), { '../../shared/utils/rateFields': fields })
+const regionalRates = evaluate(fs.readFileSync('shared/utils/regionalRates.ts', 'utf8'), { './rateFields': fields })
+const regionalDispatch = { insertRegionalPosition: async () => null, changeRegionalPosition: async () => null }
 const additional = ['OTExtRate', 'RestDayOTRate', 'LateDeduction', 'UndertimeDeduction']
 const amounts = { RegularRate: 700, OTRate: 110, OTExtRate: 115.25, RestDayRate: 120, RestDayOTRate: 156.75, LateDeduction: 87.5, UndertimeDeduction: 88.25 }
 const visibleAdditional = additional
@@ -44,6 +46,7 @@ function component(filename, exposed, props = {}) {
     vue: { ...vue, onMounted() {} },
     '../shared/utils/rateFields': fields,
     '~~/shared/utils/rateFields': fields,
+    '~~/shared/utils/regionalRates': regionalRates,
     '~/composables/useRealtimeRefresh': { useRealtimeRefresh() {} },
   }, { defineProps: () => props, $fetch: async (url, options) => { calls.push({ url, options }); return { items: [], payrollRates: [], billingRates: [] } } })
   return { state, calls }
@@ -128,7 +131,7 @@ test('current edit changes only the effective rate row, leaving future versions 
       async beginTransaction() {}, async commit() {}, async rollback() {}, release() {},
       async execute(sql, params) {
         statements.push({ sql, params })
-        if (sql.startsWith('SELECT PayrollRateID, EffectiveDate, Status FROM payroll_rate')) return [[{ PayrollRateID: 7, EffectiveDate: '2026-01-01', Status: 'Active' }]]
+        if (sql.startsWith('SELECT PayrollRateID, RegionRateID, EffectiveDate, Status FROM payroll_rate')) return [[{ PayrollRateID: 7, EffectiveDate: '2026-01-01', Status: 'Active' }]]
         if (sql.startsWith('SELECT PayrollRateVersionID, EffectiveDate FROM payroll_rate_version')) return [[...(current ? [current] : [])]]
         if (sql.startsWith('UPDATE ')) return [{ affectedRows: 1 }]
         throw new Error(`Unexpected query: ${sql}`)
@@ -136,6 +139,7 @@ test('current edit changes only the effective rate row, leaving future versions 
     }
     const api = evaluate(fs.readFileSync('server/utils/rateCrud.ts', 'utf8'), {
       '../../shared/utils/rateFields': fields,
+      './regionalRateCrud': regionalDispatch,
       '../connection/dbconnect': { getConnection: async () => connection },
       './auth': { requireSession: () => ({ sub: 1 }) },
       './rateVersions': { dateOnly: value => String(value || '').slice(0, 10), todayInPhilippines: () => '2026-10-09' },
@@ -248,6 +252,7 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
       rollback: () => connection.query('ROLLBACK TO SAVEPOINT rate_test'), release() {} }
     const api = evaluate(fs.readFileSync('server/utils/rateCrud.ts', 'utf8'), {
       '../../shared/utils/rateFields': fields,
+      './regionalRateCrud': regionalDispatch,
       '../connection/dbconnect': { ...wrapped, getConnection: async () => wrapped },
       './auth': { requireSession: () => ({ sub: 1 }) },
       './rateVersions': rateVersions,

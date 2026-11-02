@@ -1,6 +1,7 @@
 import { createError, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { insertRegionalPosition, changeRegionalPosition } from './regionalRateCrud'
 import { rateMoneyFields } from '../../shared/utils/rateFields'
 import { dateOnly, loadVersionMap, snapshotAtDate, todayInPhilippines } from './rateVersions'
 
@@ -9,8 +10,8 @@ const moneyFields = rateMoneyFields.map(({ key }) => key)
 const rateFields = ['AgencyPositionID', 'RegionID', ...moneyFields, 'EffectiveDate', 'Status']
 
 const rateListSql = (table: 'payroll_rate' | 'billing_rate', id: 'PayrollRateID' | 'BillingRateID') => `
-  SELECT r.${id}, r.AgencyPositionID, a.AgencyName, p.PositionName, r.RegionID, rg.RegionCode, rg.RegionName,
-    ${moneyFields.map(field => `r.${field}`).join(', ')}, r.EffectiveDate, r.Status,
+  SELECT r.${id}, r.AgencyPositionID, ap.AgencyID, a.AgencyName, p.PositionName, r.RegionID, rg.RegionCode, rg.RegionName,
+    ${moneyFields.map(field => `r.${field}`).join(', ')}, r.EffectiveDate, r.Status, ${table === 'payroll_rate' ? 'r.RegionRateID, r.RegionOverridesJson,' : ''}
     (SELECT COUNT(DISTINCT sr.SiteID) FROM site_rate sr WHERE sr.${id} = r.${id} AND sr.Status = 'Active') AS LinkedSites
   FROM ${table} r
   INNER JOIN agency_position ap ON ap.AgencyPositionID = r.AgencyPositionID
@@ -97,6 +98,7 @@ async function assertNoActiveSiteRate(connection: any, siteID: number, agencyPos
   if (rows[0]) throw createError({ statusCode: 409, statusMessage: 'This site already has an active rate for the selected agency position.' })
 }
 async function insertRate(connection: any, table: 'payroll_rate' | 'billing_rate', body: Record<string, any>) {
+  if (table === 'payroll_rate') { const regionalId = await insertRegionalPosition(connection, body); if (regionalId) return regionalId }
   const [result] = await connection.execute<any>(`INSERT INTO ${table} (${rateFields.join(', ')}) VALUES (${rateFields.map(() => '?').join(', ')})`, rateValues(body))
   return result.insertId as number
 }
@@ -152,7 +154,12 @@ export async function listRateResource(event: any) {
 export async function createRateResource(event: any) {
   const session = requireSession(event); void session.sub
   const selected = resource(event); const body = await readBody<Record<string, any>>(event) || {}
-  if (!isSiteRate(selected)) return { id: await insertRate(pool, rateTable(selected).table as any, body) }
+  if (selected === 'billing-rate') return { id: await insertRate(pool, 'billing_rate', body) }
+  if (selected === 'payroll-rate') {
+    const connection = await pool.getConnection()
+    try { await connection.beginTransaction(); const id = await insertRate(connection, 'payroll_rate', body); await connection.commit(); return { id } }
+    catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+  }
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
@@ -186,7 +193,9 @@ export async function updateRateResource(event: any) {
       const connection = await pool.getConnection()
       try {
         await connection.beginTransaction()
-        const [[base]] = await connection.execute<any[]>(`SELECT ${definition.id}, EffectiveDate, Status FROM ${definition.table} WHERE ${definition.id} = ? FOR UPDATE`, [id])
+        if (selected === 'payroll-rate') { const result = await changeRegionalPosition(connection, body, 'current'); if (result) { await connection.commit(); return result } }
+        const [[base]] = await connection.execute<any[]>(`SELECT ${definition.id}, ${selected === 'payroll-rate' ? 'RegionRateID,' : ''} EffectiveDate, Status FROM ${definition.table} WHERE ${definition.id} = ? FOR UPDATE`, [id])
+        if (base?.RegionRateID) throw createError({ statusCode: 409, statusMessage: 'The region setup changed. Reload this rate before saving.' })
         if (!base) throw createError({ statusCode: 404, statusMessage: 'Rate not found.' })
         if (base.Status !== 'Active') throw createError({ statusCode: 409, statusMessage: 'Only active rates can be edited.' })
         const versionId = selected === 'payroll-rate' ? 'PayrollRateVersionID' : 'BillingRateVersionID'
@@ -199,9 +208,10 @@ export async function updateRateResource(event: any) {
         return { success: true, effectiveDate: dateOnly(current?.EffectiveDate || base.EffectiveDate) }
       } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
     }
+    if (selected === 'payroll-rate') { const [[linked]] = await pool.execute<any[]>('SELECT RegionRateID FROM payroll_rate WHERE PayrollRateID = ?', [id]); if (linked?.RegionRateID) throw createError({ statusCode: 409, statusMessage: 'Use current edit or a dated update for a regional position rate.' }) }
     const [[version]] = await pool.execute<any[]>(`SELECT 1 FROM ${versionTable} WHERE ${definition.id} = ? LIMIT 1`, [id])
     if (version) throw createError({ statusCode: 409, statusMessage: 'This rate has dated updates. Add a new rate update instead of editing its original amounts.' })
-    const [result] = await pool.execute<any>(`UPDATE ${definition.table} SET AgencyPositionID = ?, RegionID = ?, ${moneyFields.map((field) => `${field} = COALESCE(?, ${field})`).join(', ')}, EffectiveDate = ?, Status = ? WHERE ${definition.id} = ?`, [...rateValues(body, true), id])
+    const [result] = await pool.execute<any>(`UPDATE ${definition.table} SET AgencyPositionID = ?, RegionID = ?, ${moneyFields.map((field) => `${field} = COALESCE(?, ${field})`).join(', ')}, EffectiveDate = ?, Status = ? WHERE ${definition.id} = ?${selected === 'payroll-rate' ? ' AND RegionRateID IS NULL' : ''}`, [...rateValues(body, true), id])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Rate not found.' })
     return { success: true }
   }

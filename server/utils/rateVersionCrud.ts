@@ -1,5 +1,6 @@
 import { createError, readBody } from 'h3'
 import pool from '../connection/dbconnect'
+import { changeRegionalPosition } from './regionalRateCrud'
 import { requireSession } from './auth'
 import { dateOnly, rateAmountKeys, versionDefinitions, type VersionKind } from './rateVersions'
 
@@ -37,7 +38,9 @@ export async function createRateVersion(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
+    if (kind === 'payroll-rate') { const regional = await changeRegionalPosition(connection, body, 'version'); if (regional) { const [[usage]] = await connection.execute<any[]>('SELECT COUNT(DISTINCT SiteID) AS LinkedSites FROM site_rate WHERE PayrollRateID = ? AND Status = \'Active\'', [rateId]); await connection.commit(); return { ...regional, linkedSites: Number(usage.LinkedSites || 0) } } }
     const [[base]] = await connection.execute<any[]>(`SELECT * FROM ${table} WHERE ${id} = ? FOR UPDATE`, [rateId])
+    if (base?.RegionRateID) throw createError({ statusCode: 409, statusMessage: 'The region setup changed. Reload this rate before saving.' })
     if (!base) throw createError({ statusCode: 404, statusMessage: 'Rate not found.' })
     if (base.Status !== 'Active') throw createError({ statusCode: 409, statusMessage: 'Only active rates can be updated.' })
     const [[latest]] = await connection.execute<any[]>(`SELECT * FROM ${versionTable} WHERE ${id} = ? ORDER BY EffectiveDate DESC LIMIT 1`, [rateId])
