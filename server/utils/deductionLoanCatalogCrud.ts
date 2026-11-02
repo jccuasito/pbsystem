@@ -6,7 +6,7 @@ type Resource = 'classification' | 'loan-type' | 'deduction-type'
 
 const validResources = new Set<Resource>(['classification', 'loan-type', 'deduction-type'])
 const validStatuses = new Set(['Active', 'Inactive'])
-const validAppliesTo = new Set(['Loan', 'Deduction', 'Contribution'])
+const validAppliesTo = new Set(['Loan', 'Deduction', 'Contribution', 'Recurring Deduction'])
 const validDeductionCategories = new Set(['Government', 'Loan', 'Company', 'Other'])
 const validDeductionPeriods = new Set(['Monthly', 'Semi-Monthly', 'Weekly', 'One-Time'])
 
@@ -42,6 +42,13 @@ function positiveId(value: unknown, label: string) {
   return id
 }
 
+function refundableValue(value: unknown, kind: string) {
+  if (value !== undefined && ![true, false, 0, 1].includes(value as any)) throw createError({statusCode:400,statusMessage:'Choose whether this deduction is refundable.'})
+  const flag = value === true || value === 1 ? 1 : 0
+  if (flag && kind !== 'Recurring Deduction') throw createError({statusCode:400,statusMessage:'Only recurring deduction items can be refundable.'})
+  return flag
+}
+
 async function classifications() {
   const [rows] = await pool.execute<any[]>(
     `SELECT ClassificationID, ClassificationName, AppliesTo, Description, Status
@@ -63,7 +70,7 @@ async function ensureClassification(classificationId: number, kind: 'Loan' | 'De
   if (requireActive && classification.Status !== 'Active') {
     throw createError({ statusCode: 409, statusMessage: 'Select an active parent classification for an active sub-classification.' })
   }
-  if (kind === 'Loan' ? classification.AppliesTo !== 'Loan' : !['Deduction', 'Contribution'].includes(classification.AppliesTo)) {
+  if (kind === 'Loan' ? classification.AppliesTo !== 'Loan' : !['Deduction', 'Contribution', 'Recurring Deduction'].includes(classification.AppliesTo)) {
     throw createError({ statusCode: 400, statusMessage: `The selected classification cannot be used for a ${kind.toLowerCase()}.` })
   }
   return classification
@@ -159,7 +166,7 @@ export async function listDeductionLoanCatalog(event: any) {
 
   const [items] = await pool.execute<any[]>(
       `SELECT dt.DeductionTypeID, dt.DeductionName, dt.ClassificationID, c.ClassificationName, c.AppliesTo,
-            dt.DeductionCategory, dt.DeductionPeriod, dt.Description, dt.Status
+            dt.DeductionCategory, dt.DeductionPeriod, dt.Description, dt.Status, dt.IsRefundable
        FROM deduction_type dt
        LEFT JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
       ORDER BY dt.DeductionName`,
@@ -205,11 +212,12 @@ export async function createDeductionLoanCatalog(event: any) {
   const category = classification.AppliesTo === 'Contribution'
     ? 'Government'
     : enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
+  const refundable = refundableValue(body?.IsRefundable, classification.AppliesTo)
   const period = enumValue(body?.DeductionPeriod, validDeductionPeriods, 'deduction frequency', 'Monthly')
   await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID', { classificationId })
   const [result] = await pool.execute<any>(
-    'INSERT INTO deduction_type (DeductionName, ClassificationID, DeductionCategory, DeductionPeriod, Description, Status) VALUES (?, ?, ?, ?, ?, ?)',
-    [name, classificationId, category, period, description, status],
+    'INSERT INTO deduction_type (DeductionName, ClassificationID, DeductionCategory, DeductionPeriod, Description, Status, IsRefundable) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [name, classificationId, category, period, description, status, refundable],
   )
   return { id: result.insertId }
 }
@@ -256,14 +264,30 @@ export async function updateDeductionLoanCatalog(event: any) {
   const category = classification.AppliesTo === 'Contribution'
     ? 'Government'
     : enumValue(body?.DeductionCategory, validDeductionCategories, 'deduction category', 'Other')
+  const refundable = refundableValue(body?.IsRefundable, classification.AppliesTo)
   const period = enumValue(body?.DeductionPeriod, validDeductionPeriods, 'deduction frequency', 'Monthly')
   await ensureUnique('deduction_type', 'DeductionName', name, 'DeductionTypeID', { id, classificationId })
-  const [result] = await pool.execute<any>(
-    'UPDATE deduction_type SET DeductionName = ?, ClassificationID = ?, DeductionCategory = ?, DeductionPeriod = ?, Description = ?, Status = ? WHERE DeductionTypeID = ?',
-    [name, classificationId, category, period, description, status, id],
-  )
-  if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Deduction type not found.' })
-  return { success: true }
+  const db = await pool.getConnection()
+  try {
+    await db.beginTransaction()
+    const [[current]] = await db.execute<any[]>('SELECT IsRefundable FROM deduction_type WHERE DeductionTypeID=? FOR UPDATE',[id])
+    if (!current) throw createError({statusCode:404,statusMessage:'Deduction type not found.'})
+    const flag = body?.IsRefundable === undefined ? Number(current.IsRefundable) : refundable
+    if (flag && classification.AppliesTo !== 'Recurring Deduction') throw createError({statusCode:409,statusMessage:'A refundable item must remain a Recurring Deduction.'})
+    if (flag !== Number(current.IsRefundable)) {
+      const [[usage]] = await db.execute<any[]>(`SELECT
+        (SELECT COUNT(*) FROM agency_contribution_plan WHERE DeductionTypeID=?) +
+        (SELECT COUNT(*) FROM cash_bond_account WHERE DeductionTypeID=?) +
+        (SELECT COUNT(*) FROM employee_deduction WHERE DeductionTypeID=?) +
+        (SELECT COUNT(*) FROM employee_recurring_deduction WHERE DeductionTypeID=?) AS n`,[id,id,id,id])
+      if(Number(usage.n)) throw createError({statusCode:409,statusMessage:'Refundability is locked after an item is assigned. Create a separate catalog item to keep its balances and history intact.'})
+    }
+    await db.execute('UPDATE deduction_type SET DeductionName=?, ClassificationID=?, DeductionCategory=?, DeductionPeriod=?, Description=?, Status=?, IsRefundable=? WHERE DeductionTypeID=?',
+      [name,classificationId,category,period,description,status,flag,id])
+    await db.commit()
+    return {success:true}
+  } catch(error) {await db.rollback();throw error} finally {db.release()}
+
 }
 
 export async function deleteDeductionLoanCatalog(event: any) {

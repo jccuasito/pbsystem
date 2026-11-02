@@ -21,6 +21,7 @@ function dateOnly(value: unknown, label: string, optional = false) {
 
 function requireEditor(event: any) {
   const session = requireSession(event)
+  if (event.context?.moduleCanEdit === false) throw createError({ statusCode: 403, statusMessage: 'Edit access is required.' })
   if (!['Admin', 'Supervisor'].includes(String(session.userType))) {
     throw createError({ statusCode: 403, statusMessage: 'Only an Admin or Supervisor can change agency contributions.' })
   }
@@ -60,9 +61,9 @@ async function assertPlanSelection(connection: any, agencyId: number, agencyPosi
   const [[catalog]] = await connection.execute<any[]>(`SELECT dt.DeductionTypeID FROM deduction_type dt
     INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
     WHERE dt.DeductionTypeID = ? AND dt.Status = 'Active' AND c.Status = 'Active'
-      AND c.AppliesTo = 'Contribution'`, [typeId])
+      AND c.AppliesTo IN ('Contribution', 'Recurring Deduction') FOR UPDATE`, [typeId])
   if (!position || !catalog) {
-    throw createError({ statusCode: 400, statusMessage: 'Select an active agency position and contribution.' })
+    throw createError({ statusCode: 400, statusMessage: 'Select an active agency position and catalog contribution or recurring deduction.' })
   }
 }
 
@@ -233,7 +234,7 @@ export async function listAgencyContributions(event: any) {
   void session.sub
   const [items] = await pool.execute<any[]>(`SELECT plan.AgencyContributionID, plan.AgencyID, agency.AgencyName,
     plan.AgencyPositionID, p.PositionName,
-    plan.DeductionTypeID, dt.DeductionName, c.ClassificationName,
+    plan.DeductionTypeID, dt.DeductionName, c.ClassificationName, c.AppliesTo AS CatalogKind, dt.IsRefundable,
     plan.AmountPerCutoff, plan.DeductOn,
     DATE_FORMAT(plan.EffectiveStartDate, '%Y-%m-%d') AS EffectiveStartDate,
     DATE_FORMAT(plan.EffectiveEndDate, '%Y-%m-%d') AS EffectiveEndDate,
@@ -296,9 +297,9 @@ export async function listAgencyContributions(event: any) {
     INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
     WHERE ap.Status = 'Active' AND p.Status = 'Active'
     ORDER BY ap.AgencyID, p.PositionName`)
-  const [catalogItems] = await pool.execute<any[]>(`SELECT dt.DeductionTypeID, dt.DeductionName, c.ClassificationName
+  const [catalogItems] = await pool.execute<any[]>(`SELECT dt.DeductionTypeID, dt.DeductionName, c.ClassificationName, c.AppliesTo AS CatalogKind, dt.IsRefundable
     FROM deduction_type dt INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
-    WHERE dt.Status = 'Active' AND c.Status = 'Active' AND c.AppliesTo = 'Contribution'
+    WHERE dt.Status = 'Active' AND c.Status = 'Active' AND c.AppliesTo IN ('Contribution', 'Recurring Deduction')
     ORDER BY c.ClassificationName, dt.DeductionName`)
   return { items: enriched, agencies, positions, catalogItems }
 }
@@ -470,7 +471,7 @@ export async function employeeContributionHistory(event: any) {
   const [items] = await pool.execute<any[]>(`SELECT pd.PayrollDeductionID, pd.Amount, py.PayrollID,
     DATE_FORMAT(py.StartDate, '%Y-%m-%d') AS PeriodStart,
     DATE_FORMAT(py.EndDate, '%Y-%m-%d') AS PeriodEnd,
-    py.Status AS PayrollStatus, dt.DeductionName, c.ClassificationName,
+    py.Status AS PayrollStatus, dt.DeductionTypeID, dt.DeductionName, c.ClassificationName, c.AppliesTo AS CatalogKind, dt.IsRefundable,
     COALESCE(agency.AgencyName, 'Individual plan') AS AgencyName, pd.ReferenceType AS SourceType
     FROM payroll_deduction pd
     INNER JOIN payroll py ON py.PayrollID = pd.PayrollID
@@ -479,8 +480,8 @@ export async function employeeContributionHistory(event: any) {
     LEFT JOIN agency_contribution_plan plan ON plan.AgencyContributionID = pd.ReferenceID
       AND pd.ReferenceType = 'Agency Contribution'
     LEFT JOIN agency ON agency.AgencyID = plan.AgencyID
-    WHERE py.EmployeeID = ? AND (pd.ReferenceType = 'Agency Contribution'
-      OR (pd.ReferenceType = 'Recurring Deduction' AND c.AppliesTo = 'Contribution'))
+    WHERE py.EmployeeID = ? AND c.AppliesTo IN ('Contribution','Recurring Deduction')
+      AND pd.ReferenceType IN ('Agency Contribution','Recurring Deduction')
       AND py.Status IN ('Approved', 'Released')
     ORDER BY py.EndDate DESC, pd.PayrollDeductionID DESC`, [employeeId])
   return { items, total: items.reduce((sum, item) => sum + Number(item.Amount || 0), 0) }

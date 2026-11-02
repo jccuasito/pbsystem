@@ -3,6 +3,7 @@ import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
 import { btrRegularAllocation, componentAmountCents, fixedDeductionBatchByEmployee, moneyCents, payrollDeductionHours, payrollHourComponents, payrollTimeDeductions, previewInstallment, previewRecurringDeduction, selectCutoffAllowances } from '../../shared/utils/payrollPreview'
+import { cashBondPreviewData, cashBondDue, postCashBondCollection, voidCashBondCollection } from './cashBondLedger'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { postEmployeeAccountTransaction } from './employeeAccountTransactionCrud'
 
@@ -120,7 +121,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     WHERE r.EmployeeID IN (${employeeIds.map(() => '?').join(', ')})`, employeeIds) : [[]]
   const agencyIds = [...new Set(selected.map(batch => Number(batch.AgencyID)))]
   const [agencyContributions] = await connection.execute<any[]>(`SELECT plan.AgencyContributionID AS RecordID,
-    plan.AgencyID, plan.AgencyPositionID, plan.DeductionTypeID AS AccountTypeID, dt.DeductionName AS ItemName,
+    plan.AgencyID, plan.AgencyPositionID, plan.DeductionTypeID AS AccountTypeID, dt.DeductionName AS ItemName, dt.IsRefundable, c.AppliesTo AS CatalogKind, c.ClassificationName,
     plan.AmountPerCutoff, plan.DeductOn,
     DATE_FORMAT(plan.EffectiveStartDate, '%Y-%m-%d') AS EffectiveStartDate,
     DATE_FORMAT(plan.EffectiveEndDate, '%Y-%m-%d') AS EffectiveEndDate, plan.Status
@@ -129,7 +130,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
     WHERE plan.AgencyID IN (${agencyIds.map(() => '?').join(', ')})
       AND plan.Status = 'Active' AND dt.Status = 'Active' AND c.Status = 'Active'
-      AND c.AppliesTo = 'Contribution'`, agencyIds)
+      AND c.AppliesTo IN ('Contribution', 'Recurring Deduction')`, agencyIds)
   const contributionIds = agencyContributions.map(plan => Number(plan.RecordID))
   const [contributionVersionRows] = contributionIds.length
     ? await connection.execute<any[]>(`SELECT AgencyContributionID, AgencyContributionVersionID,
@@ -209,6 +210,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
     WHERE pa.TargetBatchID IN (${ids.map(() => '?').join(', ')})
       AND pa.Status IN ('Draft', 'For Approval', 'Approved', 'Ready for Payroll')
     ORDER BY pa.AdjustmentID, pal.AdjustmentLineID`, ids)
+  const cashBonds = await cashBondPreviewData(connection,{employeeIds,agencyIds,start:selected[0].PeriodStart,end:selected[0].PeriodEnd})
   const adjustmentsByPerson = new Map<string, any[]>()
   for (const row of adjustmentRows) {
     const key = `${row.TargetBatchID}:${row.EmployeeID}`
@@ -338,17 +340,20 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
         // A contribution is collected on the cutoff end date; a dated update
         // becomes eligible for the first scheduled cutoff ending on/after it.
         const version = snapshotAtDate(plan, contributionVersions.get(Number(plan.RecordID)) || [], batch.PeriodEnd)
-        return {
+        const item = {
           entryType: 'AgencyContribution', recordId: plan.RecordID, name: plan.ItemName,
-          accountTypeId: plan.AccountTypeID, catalogKind: 'Contribution', remainingBalance: null,
+          accountTypeId: plan.AccountTypeID, catalogKind: plan.CatalogKind, classificationName: plan.ClassificationName, remainingBalance: null,
           effectiveDate: version.EffectiveDate || plan.EffectiveStartDate,
           amount: pesos(previewRecurringDeduction({ ...plan,
             AmountPerCutoff: version.AmountPerCutoff, DeductOn: version.DeductOn }, batch.PeriodStart, batch.PeriodEnd)),
         }
-      }).filter(plan => plan.amount > 0)
+        // Keep zero-due refundable items available for an explicit catch-up on another cutoff.
+        const withinDates = batch.PeriodEnd >= plan.EffectiveStartDate && (!plan.EffectiveEndDate || batch.PeriodEnd <= plan.EffectiveEndDate)
+        return Number(plan.IsRefundable) && withinDates ? cashBondDue(cashBonds, person, batch, item) : item
+      }).filter(plan => plan.amount > 0 || plan.entryType === 'CashBond')
       const dueDeductions = [...dueAccounts, ...dueRecurring, ...dueContributions].map(item => ({ ...item,
         override: overridesBySource.get(`${batch.BatchID}:${person.EmployeeID}:${item.entryType}:${item.recordId}`) || null }))
-      const deductions = dueDeductions.filter(item => !item.override)
+      const deductions = dueDeductions.filter(item => !item.override && item.amount > 0)
       const accountDeductionCents = deductions.reduce((sum, item) => sum + Math.round(item.amount * 100), 0)
       if (grossCents - timeDeductionCents - accountDeductionCents < 0) warnings.push('Deductions exceed computed earnings for this cutoff.')
       return { ...person, components: [...components.values()].map(item => ({ ...item, amount: pesos(item.amountCents), amountCents: undefined })),
@@ -461,6 +466,7 @@ export async function reviewPayrollProcessing(event: any) {
         throw createError({ statusCode: 409, statusMessage: 'Released or changed payroll cannot be cancelled here.' })
       }
       for (const posting of existingPostings) {
+        await voidCashBondCollection(connection, Number(posting.PayrollID), session.sub)
         const [receipts] = await connection.execute<any[]>(`SELECT TransactionRecordID, EntryType, SourceRecordID,
           Amount, BalanceBefore, BalanceAfter, Status FROM employee_account_transaction
           WHERE PayrollID = ? FOR UPDATE`, [posting.PayrollID])
@@ -550,7 +556,10 @@ export async function reviewPayrollProcessing(event: any) {
             line.direction === 'Deduction' ? -Number(line.amount) : Number(line.amount)])
         }
         for (const deduction of person.deductions) {
-          if (['Deduction', 'Recurring', 'AgencyContribution'].includes(deduction.entryType)) {
+          if (deduction.entryType === 'CashBond') {
+            await connection.execute(`INSERT INTO payroll_deduction(PayrollID,DeductionTypeID,ReferenceID,ReferenceType,Amount) VALUES(?,?,?,'Agency Contribution',?)`,[payrollId,deduction.accountTypeId,deduction.recordId,deduction.amount])
+            await postCashBondCollection(connection,{typeId:deduction.accountTypeId,employeeId:Number(person.EmployeeID),agencyId:Number(snapshot.AgencyID),payrollId,start:batch.PeriodStart,end:batch.PeriodEnd,amount:deduction.amount,reason:deduction.cashBondOverride?.reason,actorId:session.sub})
+          } else if (['Deduction', 'Recurring', 'AgencyContribution'].includes(deduction.entryType)) {
             await connection.execute(`INSERT INTO payroll_deduction
               (PayrollID, DeductionTypeID, ReferenceID, ReferenceType, Amount) VALUES (?, ?, ?, ?, ?)`,
             [payrollId, deduction.accountTypeId, deduction.recordId,
@@ -561,7 +570,7 @@ export async function reviewPayrollProcessing(event: any) {
               VALUES (?, ?, 1, ?, ?)`, [payrollId, `Loan: ${deduction.name}`.slice(0, 150),
               deduction.amount, -Number(deduction.amount)])
           }
-          if (deduction.entryType !== 'Recurring' && deduction.entryType !== 'AgencyContribution') {
+          if (deduction.entryType !== 'Recurring' && deduction.entryType !== 'AgencyContribution' && deduction.entryType !== 'CashBond') {
             await postEmployeeAccountTransaction(connection, { employeeId: Number(person.EmployeeID),
               entryType: deduction.entryType, sourceRecordId: Number(deduction.recordId), payrollId,
               transactionDate: batch.PeriodEnd, cutoffStartDate: batch.PeriodStart,

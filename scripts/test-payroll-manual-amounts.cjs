@@ -14,7 +14,7 @@ function evaluate(source, globals) {
 const load = (file, requireMock) => evaluate(fs.readFileSync(file, 'utf8'), { require: requireMock })
 
 test('adjustment form and payroll review components compile', () => {
-  for (const filename of ['app/components/PayrollAdjustmentsPanel.vue', 'app/components/PayrollProcessingDetailModal.vue', 'app/pages/payroll/processing/index.vue']) {
+  for (const filename of ['app/components/PayrollAdjustmentsPanel.vue', 'app/components/PayrollProcessingDetailModal.vue', 'app/pages/payroll/processing/index.vue', 'app/components/RefundableDeductionBalances.vue', 'app/pages/deductions-loans/contributions/index.vue', 'app/pages/deductions-loans/catalog/index.vue', 'app/pages/deductions-loans/employees/index.vue']) {
     const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
     assert.deepEqual(errors, [])
     const script = compileScript(descriptor, { id: filename })
@@ -101,6 +101,7 @@ test('DTR compute automatically stages all adjustment sources and finalization p
     const common = name => name === 'h3' ? h3 : name.includes('dbconnect') ? pool : name.endsWith('/auth') ? { requireSession: e => e.session || { sub: 1, userType: 'Admin' } }
       : name.includes('rateVersions') ? versions : name.includes('payrollPreview') ? require('../shared/utils/payrollPreview.ts')
       : name.includes('dtrDeploymentDates') ? require('../server/utils/dtrDeploymentDates.ts')
+      : name.includes('cashBondLedger') ? load('server/utils/cashBondLedger.ts',common)
       : name.includes('dtrWorkflowAudit') ? { recordDtrWorkflowEvent: async () => { if(audit.fail)throw Error('Injected compute failure') } } : {}
     const api = load('server/utils/payrollAdjustmentCrud.ts', common)
     const dtr = load('server/utils/dtrCrud.ts', name => name.includes('payrollAdjustmentCrud') ? api : name.includes('dtrBtrCrud') ? {assertDtrBtrReady:async()=>{}} : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts') : common(name))

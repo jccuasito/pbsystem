@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RefundableDeductionBalances from '../../../components/RefundableDeductionBalances.vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import { generatedIssuanceCode, issuanceCodePrefix } from '~~/shared/utils/issuanceCode'
 
@@ -15,10 +16,11 @@ type EmployeeRow = {
   TotalIssued: number
   OutstandingLoanBalance: number
   OutstandingDeductionBalance: number
+  RefundableBalance: number
   OutstandingBalance: number
 }
 type CatalogItem = { EntryType: 'Loan' | 'Deduction'; CatalogKind: 'Loan' | 'Deduction' | 'Contribution'; CatalogItemID: number; ItemName: string; ClassificationID: number; ClassificationName: string }
-type ContributionReceipt = { PayrollDeductionID: number; Amount: number; PayrollID: number; PeriodStart: string; PeriodEnd: string; PayrollStatus: string; DeductionName: string; ClassificationName: string; AgencyName: string }
+type ContributionReceipt = { CatalogKind?: 'Contribution' | 'Recurring Deduction'; IsRefundable?: number; PayrollDeductionID: number; Amount: number; PayrollID: number; PeriodStart: string; PeriodEnd: string; PayrollStatus: string; DeductionName: string; ClassificationName: string; AgencyName: string }
 type SchedulePeriod = {
   Period: number | null
   CutoffStartDate: string
@@ -324,6 +326,7 @@ async function loadProfile(employee: EmployeeRow | { EmployeeID: number }) {
   }
 }
 
+async function refreshRefundableBalances() { await load(); if(selectedEmployee.value) await loadProfile(selectedEmployee.value) }
 async function openProfile(employee: EmployeeRow) {
   selectedEmployee.value = employee
   profileEmployee.value = employee
@@ -471,8 +474,8 @@ onMounted(load)
     <header class="page-head">
       <div>
         <span class="eyebrow">DEDUCTIONS &amp; LOANS</span>
-        <h1>Employee Loans &amp; Deductions</h1>
-        <p>Record each manual issuance and review the employee's complete loan and deduction history.</p>
+        <h1>Employee Accounts</h1>
+        <p>Review employee loans, deductions and refundable balances, with the history of every collection and refund.</p>
       </div>
     </header>
 
@@ -523,7 +526,7 @@ onMounted(load)
     </footer>
 
     <div v-if="profileOpen" class="modal-backdrop" @click.self="profileOpen=false">
-      <section class="profile-modal">
+      <section class="profile-modal" role="dialog" aria-modal="true" aria-label="Employee accounts">
         <button class="close" aria-label="Close" @click="profileOpen=false">×</button>
         <header class="profile-head">
           <div><span class="eyebrow">EMPLOYEE ACCOUNT</span><h2>{{ profileEmployee?.EmployeeName }}</h2><p>{{ employeeNumber(profileEmployee || selectedEmployee || {}) }} · {{ profileEmployee?.AgencyName || 'Unassigned' }} · {{ profileEmployee?.PositionName || 'No position' }}</p></div>
@@ -531,7 +534,7 @@ onMounted(load)
         </header>
         <div class="summary-cards"><div><span>Lifetime issued</span><strong>{{ money(profileTotals.issued) }}</strong></div><div><span>Outstanding balance</span><strong>{{ money(profileTotals.balance) }}</strong></div><div><span>Active plans</span><strong>{{ profileTotals.active }}</strong></div></div>
         <div class="history-heading">
-          <div><h3>Account history</h3><p>Review issuances and contributions posted in finalized payroll.</p></div>
+          <div><h3>Account history</h3><p>Review issuances, contributions and recurring deductions posted in finalized payroll.</p></div>
         </div>
         <div class="history-controls">
           <div v-if="historyType !== 'Contribution'" class="filter-group">
@@ -543,7 +546,7 @@ onMounted(load)
           <div class="filter-group filter-group-type">
             <span class="filter-label">Type</span>
             <div class="type-tabs" role="tablist" aria-label="Filter issuance type">
-              <button v-for="kind in (['All','Loan','Deduction','Contribution'] as const)" :key="kind" type="button" role="tab" class="history-filter" :class="[`filter-${kind.toLowerCase()}`,{active:historyType===kind}]" :aria-selected="historyType===kind" @click="historyType=kind"><span class="filter-icon">{{ kind === 'All' ? '▦' : kind === 'Loan' ? '₱' : kind === 'Deduction' ? '−' : '⊕' }}</span><span>{{ kind }}</span><small>{{ historyCount(kind) }}</small></button>
+              <button v-for="kind in (['All','Loan','Deduction','Contribution'] as const)" :key="kind" type="button" role="tab" class="history-filter" :class="[`filter-${kind.toLowerCase()}`,{active:historyType===kind}]" :aria-selected="historyType===kind" @click="historyType=kind"><span class="filter-icon">{{ kind === 'All' ? '▦' : kind === 'Loan' ? '₱' : kind === 'Deduction' ? '−' : '⊕' }}</span><span>{{ kind === 'Contribution' ? 'Contributions & Others' : kind }}</span><small>{{ historyCount(kind) }}</small></button>
             </div>
           </div>
         </div>
@@ -554,22 +557,23 @@ onMounted(load)
           <ModernDateField v-model="historyTo" label="To date" placeholder="Any date" :min="historyFrom || undefined" align="end" />
           <button type="button" class="clear-history" @click="clearHistoryFilters">Clear</button>
         </div>
-        <p class="history-date-help">Loans and deductions use the issuance date. Contributions use the payroll cutoff dates.</p>
+        <p class="history-date-help">Loans and deductions use the issuance date. Contributions and recurring deductions use the payroll cutoff dates.</p>
         <p v-if="invalidHistoryRange" class="history-date-error" role="alert">From date must be on or before To date.</p>
-        <p class="history-result">{{ historyTotal }} {{ historyType === 'Contribution' ? 'posted contributions' : 'issuance records' }} found</p>
+        <p class="history-result">{{ historyTotal }} {{ historyType === 'Contribution' ? 'posted contributions and other deductions' : 'issuance records' }} found</p>
         <p v-if="profileError" class="error">{{ profileError }}</p>
-        <section v-if="historyType === 'Contribution' && !profileLoading" class="contribution-overview" aria-label="Contribution totals">
-          <header><div><h4>Contribution summary</h4><p>Totals for the selected period. Cancelled payroll is excluded.</p></div><div class="contribution-total"><span>Total contributed</span><strong>{{ money(visibleContributionTotal) }}</strong></div></header>
+        <section v-if="historyType === 'Contribution' && !profileLoading" class="contribution-overview" aria-label="Contributions and Others totals">
+          <header><div><h4>Contributions &amp; Others</h4><p>Totals for the selected period. Cancelled payroll is excluded.</p></div><div class="contribution-total"><span>Total deducted</span><strong>{{ money(visibleContributionTotal) }}</strong></div></header>
           <div v-if="contributionGroups.length" class="contribution-groups"><article v-for="group in contributionGroups" :key="`${group.name}-${group.item}`" class="contribution-group"><div><strong>{{ group.name }}</strong><small v-if="group.item.toLowerCase() !== group.name.toLowerCase()">{{ group.item }}</small><small>{{ group.count }} posted {{ group.count === 1 ? 'payment' : 'payments' }}</small></div><strong>{{ money(group.total) }}</strong></article></div>
-          <p v-else class="contribution-empty">No contributions match these filters.</p>
+          <p v-else class="contribution-empty">No contributions or recurring deductions match these filters.</p>
         </section>
+        <section v-if="historyType==='Contribution' && !profileLoading" class="refundable-history" aria-label="Refundable funds"><RefundableDeductionBalances :employee-id="Number(selectedEmployee?.EmployeeID)" compact hide-empty @changed="refreshRefundableBalances" /></section>
         <div v-if="historyType === 'Contribution' && !profileLoading && filteredContributionReceipts.length" class="contribution-history-heading"><h4>Posted history</h4><span>{{ filteredContributionReceipts.length }} {{ filteredContributionReceipts.length === 1 ? 'entry' : 'entries' }}</span></div>
         <div class="record-list">
           <p v-if="profileLoading" class="empty">Loading history…</p>
           <template v-else-if="historyType === 'Contribution'">
             <article v-for="receipt in pagedContributions" :key="receipt.PayrollDeductionID" class="record-card contribution-record">
-              <header><div class="record-heading"><span class="kind contribution">Contribution</span><div><strong>{{ receipt.DeductionName }}</strong><small>{{ receipt.ClassificationName }} · {{ receipt.AgencyName }}</small><small>{{ date(receipt.PeriodStart) }} – {{ date(receipt.PeriodEnd) }} · Payroll #{{ receipt.PayrollID }}</small></div></div><span class="status status-active">Posted</span></header>
-              <div class="record-details"><div><span>Amount contributed</span><strong>{{ money(receipt.Amount) }}</strong><small>Deducted from finalized payroll</small></div></div>
+              <header><div class="record-heading"><span class="kind contribution">{{ receipt.CatalogKind || 'Contribution' }}</span><div><strong>{{ receipt.DeductionName }}</strong><small>{{ receipt.ClassificationName }} · {{ receipt.AgencyName }}</small><small>{{ date(receipt.PeriodStart) }} – {{ date(receipt.PeriodEnd) }} · Payroll #{{ receipt.PayrollID }}</small></div></div><span class="status status-active">Posted</span></header>
+              <div class="record-details"><div><span>Amount deducted</span><strong>{{ money(receipt.Amount) }}</strong><small>Deducted from finalized payroll</small></div></div>
             </article>
           </template>
           <p v-else-if="!filteredHistory.length" class="empty">No loans or deductions match these filters.</p>
@@ -666,6 +670,10 @@ onMounted(load)
 </template>
 
 <style scoped>
+.refundable-history{margin:18px 0 24px}
+
+
+
 .employee-accounts-page{--ink:#12284b;--muted:#657792;--line:#d7e1ee;box-sizing:border-box;width:100%;padding:34px 36px 46px;color:var(--ink);font-family:Inter,'Segoe UI',sans-serif}.page-head{display:flex;justify-content:space-between;gap:20px;margin-bottom:25px}.eyebrow{color:#2864d7;font-size:.72rem;font-weight:850;letter-spacing:.08em}.page-head h1,.profile-head h2,.issuance-modal h2,.pause-modal h2{margin:5px 0 5px;font-size:2rem}.page-head p,.profile-head p,.issuance-modal header p,.pause-modal header p{margin:0;color:var(--muted)}.filters{display:grid;grid-template-columns:minmax(320px,1fr) minmax(210px,280px) auto;align-items:end;gap:12px}.filters label,.form-grid label{display:grid;gap:7px;color:#40516c;font-size:.76rem;font-weight:800}.filters input,.filters select,.form-grid input,.form-grid select,.form-grid textarea{box-sizing:border-box;width:100%;min-height:48px;border:1px solid #cbd8ea;border-radius:9px;background:#fff;padding:0 13px;color:#172d50;font:inherit;font-size:.86rem}.form-grid textarea{min-height:82px;padding:11px;resize:vertical}.primary{min-height:48px;border:1px solid #2867e8;border-radius:9px;background:#2867e8;padding:0 18px;color:#fff;font:inherit;font-weight:800;cursor:pointer}.workflow-note{margin:16px 0;padding:12px 14px;border:1px solid #c8daf8;border-radius:9px;background:#f1f6ff;color:#36577f;font-size:.78rem}.error{padding:10px 12px;border:1px solid #fecaca;border-radius:8px;background:#fff7f7;color:#b42318}.table-wrap,.history-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff}.table-wrap table,.history-wrap table{width:100%;border-collapse:collapse}.history-wrap table{min-width:1120px}.table-wrap th,.table-wrap td,.history-wrap th,.history-wrap td{padding:13px 15px;border-bottom:1px solid #e4eaf2;text-align:left;vertical-align:middle}.table-wrap th,.history-wrap th{background:#f5f8fc;color:#405371;font-size:.69rem;text-transform:uppercase;white-space:nowrap}.table-wrap td,.history-wrap td{font-size:.79rem}.table-wrap td strong,.table-wrap td small,.history-wrap td strong,.history-wrap td small{display:block}.table-wrap td small,.history-wrap td small{margin-top:4px;color:var(--muted);font-size:.68rem}.account-badges{display:flex;gap:6px;flex-wrap:wrap}.account-badges span,.kind,.status{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:.66rem;font-weight:850;white-space:nowrap}.loan{background:#e7efff;color:#2456b7}.deduction{background:#f3e8ff;color:#7e22ce}.actions,.record-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.record-actions{max-width:250px}.actions button,.record-actions button,.pagination button,.history-toolbar button,.profile-modal button:not(.primary):not(.close),.issuance-modal footer button:not(.primary),.pause-modal footer button:not(.primary){min-height:34px;border:1px solid #cbd8ea;border-radius:8px;background:#fff;padding:6px 10px;color:#254975;font:inherit;font-size:.72rem;font-weight:800;cursor:pointer}.actions .add{border-color:#b9cef5;background:#edf4ff;color:#1d54c6}.empty{padding:38px!important;text-align:center!important;color:var(--muted)}.pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:15px;color:var(--muted);font-size:.75rem}.pagination div{display:flex;align-items:center;gap:9px}.pagination button:disabled{opacity:.45;cursor:not-allowed}.mobile-list{display:none}.modal-backdrop{position:fixed;z-index:500;inset:0;display:grid;place-items:center;padding:28px;background:rgba(13,30,59,.32)}.profile-modal,.issuance-modal,.pause-modal{position:relative;box-sizing:border-box;width:min(1220px,calc(100vw - 70px));max-height:calc(100vh - 56px);overflow:auto;border-radius:16px;background:#fff;padding:28px 32px;box-shadow:0 24px 70px rgba(13,30,59,.25)}.close{position:absolute;right:16px;top:12px;border:0;background:transparent;color:#34506f;font-size:1.65rem;cursor:pointer}.profile-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-right:36px}.profile-head h2,.issuance-modal h2,.pause-modal h2{font-size:1.65rem}.summary-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:22px 0}.summary-cards div{display:grid;gap:6px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#f8faff}.summary-cards span{color:var(--muted);font-size:.69rem;font-weight:800;text-transform:uppercase}.summary-cards strong{font-size:1.15rem}.history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:10px}.history-toolbar h3{margin:0}.history-toolbar div{display:flex;gap:5px}.history-toolbar button.active{border-color:#2867e8;background:#eaf1ff;color:#1d54c6}.kind.loan{background:#e7efff;color:#2456b7}.kind.deduction{background:#f3e8ff;color:#7e22ce}.status{background:#eef2f7;color:#526174}.status-active{background:#dcfce7;color:#147a3d}.status-paused{background:#fff3cd;color:#8a5a00}.status-paid,.status-completed{background:#e7efff;color:#2456b7}.status-cancelled,.status-inactive{background:#f1f5f9;color:#64748b}.issuance-layer{z-index:540;background:rgba(13,30,59,.34)}.pause-layer{z-index:580;background:rgba(13,30,59,.3)}.issuance-modal{width:min(820px,calc(100vw - 50px))}.pause-modal{width:min(640px,calc(100vw - 50px))}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}.form-grid .wide{grid-column:1/-1}.form-grid em{justify-self:end;margin-top:-21px;color:#8996a9;font-size:.65rem;font-style:normal}.section-label{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:6px;padding-top:16px;border-top:1px solid var(--line)}.section-label span{color:var(--muted);font-size:.7rem;font-weight:500}.plan-preview{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border:1px solid #bfd3f7;border-radius:10px;background:#f2f7ff}.plan-preview div{display:grid;gap:4px}.plan-preview span{color:#607392;font-size:.65rem;font-weight:750;text-transform:uppercase}.plan-preview strong{font-size:.9rem}.form-note{padding:11px 13px;border-radius:8px;background:#f1f6ff;color:#36577f;font-size:.75rem;line-height:1.5}.issuance-modal footer,.pause-modal footer{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}.issuance-modal footer button,.pause-modal footer button{min-height:42px}.primary:disabled{opacity:.55;cursor:not-allowed}
 .record-list{display:grid;gap:12px}.record-card{overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#fff}.record-card>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:15px 17px;border-bottom:1px solid #e4eaf2;background:#f8faff}.record-heading{display:flex;align-items:flex-start;gap:10px}.record-heading strong,.record-heading small{display:block}.record-heading strong{font-size:.9rem}.record-heading small{margin-top:4px;color:var(--muted);font-size:.7rem}.record-details{display:grid;grid-template-columns:1fr 1.5fr 1fr 1fr;gap:0}.record-details>div{display:grid;align-content:start;gap:5px;min-height:74px;padding:14px 17px;border-right:1px solid #e4eaf2}.record-details>div:last-child{border-right:0}.record-details span{color:#607392;font-size:.65rem;font-weight:800;text-transform:uppercase}.record-details strong{font-size:.82rem}.record-details small{color:var(--muted);font-size:.68rem;line-height:1.4}.record-card>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 17px;border-top:1px solid #e4eaf2;background:#fbfcfe}.record-card button,.review-plan{min-height:36px;border:1px solid #cbd8ea;border-radius:8px;background:#fff;padding:7px 11px;color:#254975;font:inherit;font-size:.72rem;font-weight:800;cursor:pointer}.record-card .view-plan,.review-plan{border-color:#b9cef5;background:#edf4ff;color:#1d54c6}.record-card .record-actions{justify-content:flex-end;max-width:none}.record-card .danger-action{border-color:#fecaca;color:#b42318}.review-plan{justify-self:start}.review-plan:disabled{opacity:.45;cursor:not-allowed}.plan-layer{z-index:570;background:rgba(13,30,59,.3)}.plan-modal{position:relative;box-sizing:border-box;width:min(1120px,calc(100vw - 70px));max-height:calc(100vh - 56px);overflow:auto;border-radius:16px;background:#fff;padding:28px 32px;box-shadow:0 24px 70px rgba(13,30,59,.25)}.plan-modal h2{margin:5px 0;font-size:1.65rem}.plan-modal header p{margin:0;color:var(--muted)}.plan-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0 12px}.plan-summary div{display:grid;gap:5px;padding:13px;border:1px solid var(--line);border-radius:9px;background:#f8faff}.plan-summary span{color:var(--muted);font-size:.66rem;font-weight:800;text-transform:uppercase}.plan-summary strong{font-size:1rem}.schedule-note,.schedule-help{margin:0 0 12px;padding:11px 13px;border-radius:8px;background:#f1f6ff;color:#36577f;font-size:.75rem;line-height:1.45}.schedule-help{margin:12px 0 0;background:#f8faff}.schedule-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}.schedule-wrap table{width:100%;min-width:940px;border-collapse:collapse}.schedule-wrap th,.schedule-wrap td{padding:12px 13px;border-bottom:1px solid #e4eaf2;text-align:left;white-space:nowrap}.schedule-wrap th{background:#f5f8fc;color:#405371;font-size:.67rem;text-transform:uppercase}.schedule-wrap td{font-size:.76rem}.period-status{display:inline-flex;border-radius:999px;background:#edf4ff;padding:4px 8px;color:#2456b7;font-size:.66rem;font-weight:800}.plan-modal footer{display:flex;justify-content:flex-end;margin-top:16px}.plan-modal footer button{min-height:40px;border:1px solid #cbd8ea;border-radius:8px;background:#fff;padding:6px 18px;color:#254975;font:inherit;font-size:.75rem;font-weight:800;cursor:pointer}.form-grid label>small{color:var(--muted);font-size:.67rem;font-weight:500;line-height:1.35}
 .posted-transaction{color:#1f5fbf!important;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:750}
@@ -692,4 +700,7 @@ onMounted(load)
 .profile-modal button.scope-all.active{border-color:#2867e8;background:#2867e8;color:#fff}
 @media(max-width:650px){.profile-modal .scope-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .period-status.skipped{background:#fff3e5;color:#a6530b}
+.profile-modal .summary-cards{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:850px){.profile-modal .summary-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:500px){.profile-modal .summary-cards{grid-template-columns:1fr}}
 </style>

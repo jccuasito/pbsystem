@@ -81,6 +81,7 @@ test('position changes only update profile/history; cutoff removals preserve sha
     const auth = { requireSession: event => event.session || { sub: 1, userType: 'Admin' } }
     const common = name => name === 'h3' ? h3 : name.includes('dbconnect') ? pool : name.endsWith('/auth') || name === './auth' ? auth
       : name.includes('rateVersions') ? versions : name.includes('payrollPreview') ? require('../shared/utils/payrollPreview.ts')
+      : name.includes('cashBondLedger') ? evaluate('server/utils/cashBondLedger.ts',common)
       : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts')
       : name.includes('dtrAttendanceStatus') ? require('../shared/utils/dtrAttendanceStatus.ts')
       : name.includes('dtrDeploymentDates') ? require('../server/utils/dtrDeploymentDates.ts') : {}

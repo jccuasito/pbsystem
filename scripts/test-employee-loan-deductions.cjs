@@ -29,7 +29,7 @@ test('employee loan and deduction page compiles with one employee-centered issua
   for (const style of descriptor.styles) {
     assert.deepEqual(sfc.compileStyle({ source: style.content, filename, id: 'employee-loan-deduction-test', scoped: style.scoped }).errors, [])
   }
-  assert.match(descriptor.template.content, /Employee Loans &amp; Deductions/)
+  assert.match(descriptor.template.content, /Employee Accounts/)
   assert.match(descriptor.template.content, /Issuance date/)
   assert.match(descriptor.template.content, /Issuance number/)
   assert.match(descriptor.template.content, /historyType === 'Contribution'/)
@@ -50,9 +50,9 @@ test('employee loan and deduction page compiles with one employee-centered issua
   assert.match(descriptor.template.content, /Pause this plan/)
   assert.match(descriptor.template.content, /Void issuance/)
   assert.match(descriptor.template.content, /Archive/)
-  assert.match(descriptor.template.content, /No active loans or deductions/)
-  assert.match(descriptor.template.content, /Total contributed/)
-  assert.match(descriptor.template.content, /contributionReceipts/)
+  assert.match(descriptor.template.content, /No loans or deductions match these filters/)
+  assert.match(descriptor.template.content, /Total deducted/)
+  assert.match(descriptor.template.content, /pagedContributions/)
   assert.doesNotMatch(descriptor.template.content, /Add recurring/)
 })
 

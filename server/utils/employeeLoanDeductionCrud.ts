@@ -199,7 +199,7 @@ async function catalogLookups() {
             c.ClassificationID, c.ClassificationName, c.AppliesTo AS CatalogKind
        FROM deduction_type dt
        INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
-      WHERE dt.Status = 'Active' AND c.Status = 'Active'
+      WHERE dt.Status = 'Active' AND c.Status = 'Active' AND dt.IsRefundable = 0 AND c.AppliesTo IN ('Deduction','Contribution')
       ORDER BY EntryType, ClassificationName, ItemName`,
   )
   return items
@@ -209,7 +209,8 @@ async function employeeProfile(employeeId: number) {
   const [rows] = await pool.execute<any[]>(
     `SELECT e.EmployeeID, e.EmployeeNumber,
             CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
-            e.Status, a.AgencyName, p.PositionName
+            e.Status, a.AgencyName, p.PositionName,
+            (SELECT COALESCE(SUM(f.Balance),0) FROM cash_bond_account f WHERE f.EmployeeID=e.EmployeeID) AS RefundableBalance
        FROM employee e
        LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
        LEFT JOIN agency a ON a.AgencyID = ap.AgencyID
@@ -373,7 +374,8 @@ export async function listEmployeeLoanDeductions(event: any) {
             COALESCE(loans.TotalIssued, 0) + COALESCE(deductions.TotalIssued, 0) AS TotalIssued,
             COALESCE(loans.Outstanding, 0) AS OutstandingLoanBalance,
             COALESCE(deductions.Outstanding, 0) AS OutstandingDeductionBalance,
-            COALESCE(loans.Outstanding, 0) + COALESCE(deductions.Outstanding, 0) AS OutstandingBalance
+            COALESCE(loans.Outstanding, 0) + COALESCE(deductions.Outstanding, 0) AS OutstandingBalance,
+            (SELECT COALESCE(SUM(f.Balance),0) FROM cash_bond_account f WHERE f.EmployeeID=e.EmployeeID) AS RefundableBalance
        FROM employee e
        LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
        LEFT JOIN agency a ON a.AgencyID = ap.AgencyID
@@ -460,15 +462,16 @@ export async function createEmployeeLoanDeduction(event: any) {
     }
 
     const [catalogRows] = await connection.execute<any[]>(
-      `SELECT dt.DeductionTypeID, dt.DeductionName AS ItemName, c.ClassificationName
+      `SELECT dt.DeductionTypeID, dt.DeductionName AS ItemName, dt.IsRefundable, c.ClassificationName
          FROM deduction_type dt
          INNER JOIN deduction_loan_classification c ON c.ClassificationID = dt.ClassificationID
         WHERE dt.DeductionTypeID = ? AND dt.Status = 'Active' AND c.Status = 'Active'
           AND c.AppliesTo = 'Deduction'
-        LIMIT 1`,
+        LIMIT 1 FOR UPDATE`,
       [catalogItemId],
     )
     if (!catalogRows[0]) throw createError({ statusCode: 400, statusMessage: 'Select an active deduction catalog entry.' })
+    if (Number(catalogRows[0].IsRefundable)) throw createError({statusCode:400,statusMessage:'Set up refundable deductions in Contributions and Others so collections and refunds are tracked.'})
     const code = issuanceCode(body, catalogRows[0].ClassificationName, catalogRows[0].ItemName)
     const [result] = await connection.execute<any>(
       `INSERT INTO employee_deduction

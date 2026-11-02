@@ -52,12 +52,13 @@ export async function saveRecurringDeduction(event: any) {
     await connection.beginTransaction()
     const [[employee]] = await connection.execute<any[]>('SELECT EmployeeID FROM employee WHERE EmployeeID = ? FOR UPDATE', [employeeId])
     const [[catalog]] = await connection.execute<any[]>(
-      `SELECT d.DeductionTypeID FROM deduction_type d
+      `SELECT d.DeductionTypeID, d.IsRefundable, c.AppliesTo AS CatalogKind FROM deduction_type d
        INNER JOIN deduction_loan_classification c ON c.ClassificationID = d.ClassificationID
        WHERE d.DeductionTypeID = ? AND d.Status = 'Active' AND c.Status = 'Active'
-         AND c.AppliesTo IN ('Deduction', 'Contribution')`, [typeId],
+         AND c.AppliesTo IN ('Deduction', 'Contribution', 'Recurring Deduction') FOR UPDATE`, [typeId],
     )
     if (!employee || !catalog) throw createError({ statusCode: 400, statusMessage: 'Select an existing employee and active deduction type.' })
+    if (Number(catalog.IsRefundable) || catalog.CatalogKind === 'Recurring Deduction') throw createError({statusCode:400,statusMessage:'Set up refundable deductions in Contributions and Others so collections and refunds are tracked.'})
     if (id) {
       const [[existing]] = await connection.execute<any[]>('SELECT EmployeeID FROM employee_recurring_deduction WHERE RecurringDeductionID = ? FOR UPDATE', [id])
       if (!existing || Number(existing.EmployeeID) !== employeeId) throw createError({ statusCode: 404, statusMessage: 'Recurring deduction not found for this employee.' })

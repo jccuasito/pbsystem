@@ -83,6 +83,12 @@ async function changeDeduction(change: { action: 'skip' | 'restore'; employeeId:
   } catch (caught: any) { actionError.value = caught?.data?.statusMessage || caught?.message || 'Unable to change this deduction.' }
   finally { busy.value = false }
 }
+async function changeCashBond(change:any){
+ if(!selectedId.value||busy.value)return
+ busy.value=true;actionError.value=''
+ try{await $fetch('/api/deductions-loans/cash-bonds/cutoff',{method:'PUT',body:{BatchID:selectedId.value,...change}});await load();success.value='Deduction amount saved for this employee and cutoff only.'}
+ catch(e:any){actionError.value=e.data?.statusMessage||'Unable to change refundable deduction amount.'}finally{busy.value=false}
+}
 async function pausePlan(change: { entryType: string; recordId: number; startDate: string; resumeDate: string; reason: string }) {
   if (!selectedId.value || busy.value) return
   busy.value = true; actionError.value = ''; success.value = ''
@@ -112,7 +118,7 @@ onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
 <template>
   <section class="processing-page">
     <header class="heading"><div><p class="eyebrow">PAYROLL</p><h1>Payroll Processing</h1><p>Review computed DTRs by site, then finalize payroll in the same screen.</p></div></header>
-    <p class="workflow-note">Finalization posts employee payroll, eligible fixed-site installments, agency contributions, and approved prior-period adjustments. BTR reliever hours are a separate earning at the regular rate effective on each covered date. Payslip release is separate.</p>
+    <p class="workflow-note">Finalization posts employee payroll, eligible fixed-site installments, agency contributions, cash bond collections, and approved prior-period adjustments. BTR reliever hours are a separate earning at the regular rate effective on each covered date. Payslip release is separate.</p>
     <div class="filters">
       <label class="search-field">Search site or employee<input v-model="search" type="search" placeholder="Search site, client, DTR, or employee"></label>
       <label>Agency<select v-model="agency" @change="client='';siteAccount=''"><option value="">All agencies</option><option v-for="[id, name] in agencies" :key="id" :value="String(id)">{{ name }}</option></select></label>
@@ -127,6 +133,6 @@ onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
       <tr v-for="site in visible" :key="site.BatchID"><td><strong>{{ site.SiteName }}</strong><small>{{ site.ClientName }}</small><small>Site Account: {{ site.SiteAccountName || 'Unassigned' }}</small></td><td><strong>{{ site.AgencyName }}</strong><small>DTR-{{ String(site.BatchID).padStart(4, '0') }}</small></td><td>{{ site.peopleCount }}</td><td>{{ money(site.gross) }}</td><td>{{ money(site.deductions) }}</td><td><strong>{{ money(site.netPreview) }}</strong></td><td><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus==='Approved'?'Finalized':site.ReviewStatus==='Rejected'?'Returned':site.ReviewStatus==='Cancelled'?'Cancelled':'To review' }}</span><small v-if="site.warningCount && site.ReviewStatus==='Pending'" class="note-count">{{ site.warningCount }} payroll note{{ site.warningCount===1?'':'s' }}</small></td><td><button type="button" class="secondary" @click="selectedId=Number(site.BatchID);actionError='';success=''">{{ site.ReviewStatus==='Pending'?'Review':'View details' }}</button></td></tr>
       <tr v-if="!visible.length"><td colspan="8" class="empty">{{ loading?'Loading site DTRs…':statusFilter==='current' && counts.Rejected?'No current DTRs. Open Returned to view rejected history.':'No site DTRs match these filters.' }}</td></tr>
     </tbody></table></div>
-    <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview" :busy="busy" :error="actionError" @close="selectedId=null" @approve="review('finalize')" @reject="reason=>review('reject', reason)" @cancel="reason=>review('cancel', reason)" @deduction="changeDeduction" @pause-plan="pausePlan" />
+    <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview" :busy="busy" :error="actionError" @close="selectedId=null" @approve="review('finalize')" @reject="reason=>review('reject', reason)" @cancel="reason=>review('cancel', reason)" @deduction="changeDeduction" @pause-plan="pausePlan" @cash-bond="changeCashBond" />
   </section>
 </template>

@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 
 type Status = 'Active' | 'Inactive'
-type Kind = 'Loan' | 'Deduction' | 'Contribution'
+type Kind = 'Loan' | 'Deduction' | 'Contribution' | 'Recurring Deduction'
 type AppliesTo = Kind
 
 type Classification = {
@@ -22,6 +22,7 @@ type CatalogItem = {
   ClassificationID: number | null
   ClassificationName: string | null
   Status: Status
+  IsRefundable?: number
   DeductionCategory?: 'Government' | 'Loan' | 'Company' | 'Other'
   DeductionPeriod?: 'Monthly' | 'Semi-Monthly' | 'Weekly' | 'One-Time'
 }
@@ -46,6 +47,7 @@ const collapsedStateInitialized = ref(false)
 const parentClassificationLocked = ref(false)
 
 const typeForm = ref({
+  IsRefundable: false,
   Kind: 'Loan' as Kind,
   Name: '',
   ClassificationID: '',
@@ -72,10 +74,11 @@ const catalogItems = computed<CatalogItem[]>(() => [
   ...deductionTypes.value.map(item => ({
     id: Number(item.DeductionTypeID),
     name: item.DeductionName,
-    kind: (item.AppliesTo === 'Contribution' ? 'Contribution' : 'Deduction') as Kind,
+    kind: (item.AppliesTo || 'Deduction') as Kind,
     ClassificationID: item.ClassificationID ? Number(item.ClassificationID) : null,
     ClassificationName: item.ClassificationName,
     Status: item.Status,
+    IsRefundable: Number(item.IsRefundable),
     DeductionCategory: item.DeductionCategory,
     DeductionPeriod: item.DeductionPeriod,
   })),
@@ -163,6 +166,7 @@ function openType(item: CatalogItem | null = null) {
   modalError.value = ''
   parentClassificationLocked.value = false
   typeForm.value = item ? {
+    IsRefundable: Boolean(item.IsRefundable),
     Kind: item.kind,
     Name: item.name,
     ClassificationID: String(item.ClassificationID || ''),
@@ -170,8 +174,8 @@ function openType(item: CatalogItem | null = null) {
     DeductionCategory: item.DeductionCategory || 'Other',
     DeductionPeriod: item.DeductionPeriod || 'Monthly',
   } : {
-    Kind: kindFilter.value === 'Deduction' || kindFilter.value === 'Contribution' ? kindFilter.value as Kind : 'Loan',
-    Name: '', ClassificationID: '', Status: 'Active',
+    Kind: ['Deduction','Contribution','Recurring Deduction'].includes(kindFilter.value) ? kindFilter.value as Kind : 'Loan',
+    IsRefundable: false, Name: '', ClassificationID: '', Status: 'Active',
     DeductionCategory: 'Company', DeductionPeriod: 'Monthly',
   }
   modalOpen.value = true
@@ -227,6 +231,7 @@ async function save() {
         body.DeductionName = typeForm.value.Name
         body.DeductionCategory = typeForm.value.Kind === 'Contribution' ? 'Government' : typeForm.value.DeductionCategory
         body.DeductionPeriod = typeForm.value.DeductionPeriod
+        body.IsRefundable = typeForm.value.Kind === 'Recurring Deduction' && typeForm.value.IsRefundable
       }
       await $fetch(`/api/deductions-loans/${resource}`, { method: editing.value ? 'PUT' : 'POST', body })
     }
@@ -292,7 +297,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 
     <section class="filters" aria-label="Catalog filters">
       <label class="search-field"><span>Search catalog</span><input v-model="search" type="search" placeholder="Search classification or sub-classification"></label>
-      <label><span>Type</span><select v-model="kindFilter"><option value="">All</option><option value="Loan">Loans</option><option value="Deduction">Deductions</option><option value="Contribution">Contributions</option></select></label>
+      <label><span>Type</span><select v-model="kindFilter"><option value="">All</option><option value="Loan">Loans</option><option value="Deduction">Deductions</option><option value="Contribution">Contributions</option><option value="Recurring Deduction">Recurring deductions</option></select></label>
       <label><span>Classification</span><select v-model="classificationFilter"><option value="">All classifications</option><option v-for="item in classifications" :key="item.ClassificationID" :value="String(item.ClassificationID)">{{ item.ClassificationName }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
@@ -316,7 +321,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
                     <span class="chevron" :class="{ collapsed: collapsedClassifications.has(group.key) }">⌄</span>
                     <span class="classification-title">
                       <strong>{{ group.name }}</strong>
-                      <span class="classification-meta"><small>Classification</small><span class="kind" :class="`kind--${group.kind.toLowerCase()}`">{{ group.kind }}</span><span class="child-count">{{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</span></span>
+                      <span class="classification-meta"><small>Classification</small><span class="kind" :class="`kind--${group.kind.toLowerCase().replaceAll(' ', '-')}`">{{ group.kind }}</span><span class="child-count">{{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</span></span>
                     </span>
                   </button>
                   <span class="status classification-status" :class="`status--${group.classification.Status.toLowerCase()}`">{{ group.classification.Status }}</span>
@@ -329,7 +334,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
               </td>
             </tr>
             <tr v-for="item in collapsedClassifications.has(group.key) ? [] : group.items" :key="`${item.kind}-${item.id}`" class="subclassification-row">
-              <td><strong>{{ item.name }}</strong></td>
+              <td><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small></td>
               <td><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></td>
               <td><div class="actions"><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></div></td>
             </tr>
@@ -349,14 +354,14 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
           <button type="button" class="mobile-group__head" :aria-expanded="!collapsedClassifications.has(group.key)" @click="toggleClassification(group.key)">
             <span class="chevron" :class="{ collapsed: collapsedClassifications.has(group.key) }">⌄</span>
             <span class="mobile-group__title"><strong>{{ group.name }}</strong><small>Classification · {{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</small></span>
-            <span class="mobile-group__badges"><span class="kind" :class="`kind--${group.kind.toLowerCase()}`">{{ group.kind }}</span><span class="status" :class="`status--${group.classification.Status.toLowerCase()}`">{{ group.classification.Status }}</span></span>
+            <span class="mobile-group__badges"><span class="kind" :class="`kind--${group.kind.toLowerCase().replaceAll(' ', '-')}`">{{ group.kind }}</span><span class="status" :class="`status--${group.classification.Status.toLowerCase()}`">{{ group.classification.Status }}</span></span>
           </button>
           <div class="mobile-group__parent-actions"><button class="add-child" type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">+ Add sub-classification</button><button type="button" @click="openClassification(group.classification)">Edit classification</button><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="requestDeactivate('classification', group.classification.ClassificationID, group.classification.ClassificationName)">Deactivate</button></div>
           <div v-if="!collapsedClassifications.has(group.key)" class="mobile-group__items">
             <div class="mobile-group__items-head"><strong>Sub-classifications</strong><span>{{ group.items.length }}</span></div>
             <div v-if="!group.items.length" class="mobile-empty"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></div>
             <article v-for="item in group.items" :key="`${item.kind}-${item.id}`" class="record-card">
-              <header><strong>{{ item.name }}</strong><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></header>
+              <header><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></header>
               <footer><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></footer>
             </article>
           </div>
@@ -366,20 +371,21 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 
     <Teleport to="body">
       <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">
-        <form class="catalog-modal" @submit.prevent="save">
+        <form class="catalog-modal" role="dialog" aria-modal="true" :aria-label="modalTitle" @submit.prevent="save">
           <button type="button" class="close" aria-label="Close" :disabled="busy" @click="closeModal">×</button>
-          <header class="modal-heading"><p>DEDUCTIONS, LOANS &amp; CONTRIBUTIONS</p><h2>{{ modalTitle }}</h2><span>{{ modalKind === 'classification' ? (editing ? 'Update this catalog classification.' : 'Create a classification for reusable loan, deduction, or contribution names.') : editing ? 'Update this reusable name and its parent classification.' : 'Add a reusable name that can be selected during employee assignment.' }}</span></header>
+          <header class="modal-heading"><p>DEDUCTIONS, LOANS &amp; CONTRIBUTIONS</p><h2>{{ modalTitle }}</h2><span>{{ modalKind === 'classification' ? (editing ? 'Update this catalog classification.' : 'Choose where these catalog items will be used. Recurring Deduction supports scheduled amounts and optional refundable balances.') : editing ? 'Update this reusable name and its parent classification.' : 'Add a reusable name that can be selected during employee assignment.' }}</span></header>
 
           <div v-if="modalKind === 'type'" class="form-grid">
-            <label class="form-field"><span>Type</span><select v-model="typeForm.Kind" :disabled="Boolean(editing) || parentClassificationLocked" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option><option value="Contribution">Contribution</option></select></label>
+            <label class="form-field"><span>Type</span><select v-model="typeForm.Kind" :disabled="Boolean(editing) || parentClassificationLocked" required><option value="Loan">Loan</option><option value="Deduction">Deduction</option><option value="Contribution">Contribution</option><option value="Recurring Deduction">Recurring Deduction</option></select></label>
             <label class="form-field"><span>Sub-classification name</span><input v-model="typeForm.Name" maxlength="100" :placeholder="typeForm.Kind === 'Loan' ? 'e.g. SSS Salary Loan' : 'e.g. Uniform deduction'" required></label>
             <label class="form-field form-field--wide"><span>Parent classification</span><select v-model="typeForm.ClassificationID" :disabled="parentClassificationLocked" required><option value="">Select classification</option><option v-for="item in compatibleClassifications" :key="item.ClassificationID" :value="String(item.ClassificationID)">{{ item.ClassificationName }}{{ item.Status === 'Inactive' ? ' (Inactive)' : '' }}</option></select></label>
+            <label v-if="typeForm.Kind==='Recurring Deduction'" class="form-field form-field--wide"><span>Refundable deduction</span><select aria-label="Refundable deduction" v-model="typeForm.IsRefundable"><option :value="false">No - regular deduction</option><option :value="true">Yes - track collections and refunds</option></select><small>Set up recurring amounts in Contributions and Others. Optional. Enable to track employee balances and refunds. This setting is locked once the item is assigned.</small></label>
             <label class="form-field"><span>Status</span><select v-model="typeForm.Status"><option>Active</option><option>Inactive</option></select></label>
           </div>
 
           <div v-else class="form-grid">
             <label class="form-field"><span>Classification name</span><input v-model="classificationForm.ClassificationName" maxlength="100" placeholder="e.g. PAG-IBIG or SSS" required></label>
-            <label class="form-field"><span>Applies to</span><select v-model="classificationForm.AppliesTo"><option>Loan</option><option>Deduction</option><option>Contribution</option></select></label>
+            <label class="form-field"><span>Applies to</span><select v-model="classificationForm.AppliesTo"><option>Loan</option><option>Deduction</option><option>Contribution</option><option>Recurring Deduction</option></select></label>
             <label class="form-field"><span>Status</span><select v-model="classificationForm.Status"><option>Active</option><option>Inactive</option></select></label>
           </div>
 
@@ -400,6 +406,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 </template>
 
 <style scoped>
+.kind--recurring-deduction{background:#e9edff;color:#5145a2}
+
 .catalog-page{box-sizing:border-box;width:100%;max-width:1500px;margin:auto;padding:32px;color:#172033;font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:22px}.page-head p,.modal-heading p,.confirm-modal p{margin:0;color:#3465d9;font-size:.72rem;font-weight:850;letter-spacing:.08em}.page-head h1{margin:3px 0;font-size:1.72rem}.page-head small{color:#64748b}.primary{min-height:42px;border:0;border-radius:9px;background:#2563eb!important;color:#fff!important;padding:10px 16px;font:inherit;font-weight:800;white-space:nowrap;cursor:pointer}.primary:disabled{opacity:.6;cursor:wait}.error-banner{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;padding:10px 13px;border:1px solid #fecaca;border-radius:9px;background:#fff7f7;color:#b42318;font-size:.8rem;font-weight:700}.error-banner button{border:0;background:transparent;color:inherit;font-size:1.15rem;cursor:pointer}.tabs{display:flex;width:max-content;max-width:100%;gap:4px;margin-bottom:18px;padding:4px;border:1px solid #dce4ef;border-radius:10px;background:#eef3f9}.tabs button{display:flex;align-items:center;gap:7px;min-height:36px;border:0;border-radius:7px;padding:7px 12px;background:transparent;color:#5d6f88;font:inherit;font-size:.78rem;font-weight:800;cursor:pointer}.tabs button.active{background:#fff;color:#1d4ed8;box-shadow:0 1px 4px rgba(30,64,175,.12)}.tabs button span{display:grid;min-width:20px;height:20px;place-items:center;border-radius:999px;background:#dce7f6;color:#47617f;font-size:.65rem}.tabs button.active span{background:#e8efff;color:#1d4ed8}.filters{display:grid;grid-template-columns:minmax(280px,1fr) repeat(3,minmax(145px,220px));align-items:end;gap:11px;margin-bottom:9px}.filters--classifications{grid-template-columns:minmax(280px,1fr) repeat(2,minmax(145px,220px))}.filters label,.form-field{display:grid;min-width:0;gap:6px}.filters label>span,.form-field>span{color:#475569;font-size:.76rem;font-weight:800}.filters input,.filters select,.form-field input,.form-field select,.form-field textarea{box-sizing:border-box;width:100%;min-width:0;min-height:42px;border:1px solid #cbd6e5;border-radius:9px;padding:8px 11px;background:#fff;color:#172033;font:inherit}.filters input:focus,.filters select:focus,.form-field input:focus,.form-field select:focus,.form-field textarea:focus{border-color:#7798d0;box-shadow:0 0 0 3px rgba(35,73,230,.1);outline:0}.list-summary{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 1px 10px;color:#64748b;font-size:.77rem}.list-summary button{border:0;background:transparent;color:#2458c4;font:inherit;font-weight:800;cursor:pointer}.desktop-table{overflow:hidden;border:1px solid #dfe5ef;border-radius:12px;background:#fff}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{min-width:0;padding:10px 12px;border-bottom:1px solid #edf1f6;text-align:left;vertical-align:middle;font-size:.8rem;overflow-wrap:anywhere}th{background:#f8fafc;color:#526174;font-size:.68rem;text-transform:uppercase;letter-spacing:.025em}tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:#fbfdff}td:first-child{width:20%}td strong{display:block;font-size:.82rem}td small{display:block;margin-top:3px;color:#71809a;font-size:.68rem;line-height:1.3}.actions-heading{width:184px}.actions{display:flex;gap:6px;white-space:nowrap}.actions button,.record-card footer button,.modal-footer>button,.confirm-modal footer button{min-height:34px;border:1px solid #cbd6e5;border-radius:8px;padding:6px 9px;background:#fff;color:#29486e;font:inherit;font-size:.73rem;font-weight:800;white-space:nowrap;cursor:pointer}.actions button:disabled,.record-card footer button:disabled{opacity:.42;cursor:not-allowed}.status,.kind{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:.67rem;font-weight:850;white-space:nowrap}.status{background:#dcfce7;color:#147a3d}.status--inactive{background:#f1f5f9;color:#64748b}.kind--loan{background:#e8efff;color:#2455b4}.kind--deduction{background:#f3e8ff;color:#7e22ce}.table-message td{padding:32px;text-align:center;color:#64748b}.table-message strong,.table-message span{display:block}.table-message span{margin-top:4px;font-size:.74rem}.mobile-list{display:none}.modal-backdrop{position:fixed;inset:0;z-index:400;display:grid;place-items:center;padding:18px;background:rgba(15,23,42,.62)}.catalog-modal,.confirm-modal{box-sizing:border-box;position:relative;display:grid;width:min(100%,700px);max-height:calc(100dvh - 36px);gap:17px;padding:24px;overflow:auto;border:1px solid #d9e2ef;border-radius:16px;background:#fff;color:#172033;box-shadow:0 24px 70px rgba(15,23,42,.32);font-family:Inter,system-ui,sans-serif}.close{position:absolute;z-index:3;top:12px;right:12px;display:grid;width:34px;height:34px;place-items:center;border:0;border-radius:8px;background:transparent;color:#53657d;font:inherit;font-size:1.35rem;cursor:pointer}.close:hover{background:#edf3fa}.modal-heading{padding-right:38px}.modal-heading h2,.confirm-modal h2{margin:3px 0 4px;font-size:1.4rem}.modal-heading>span,.confirm-modal>div>span{color:#64748b;font-size:.78rem;line-height:1.5}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:13px}.form-field--wide{grid-column:1/-1}.form-field textarea{min-height:78px;resize:vertical}.form-field small{color:#b45309;font-size:.7rem;font-weight:700}.form-field em{float:right;color:#8794a8;font-size:.65rem;font-style:normal;font-weight:700}.modal-error{margin:0;padding:9px 11px;border:1px solid #fecaca;border-radius:8px;background:#fff7f7;color:#b42318;font-size:.76rem}.modal-footer{display:flex;justify-content:flex-end;gap:9px;padding-top:2px}.modal-footer>button{min-height:40px;padding:8px 14px}.confirm-modal{grid-template-columns:auto 1fr;width:min(100%,500px);overflow:visible}.confirm-icon{display:grid;width:42px;height:42px;place-items:center;border-radius:50%;background:#fff1f2;color:#be123c;font-size:1.2rem;font-weight:900}.confirm-modal footer{display:flex;grid-column:1/-1;justify-content:flex-end;gap:8px}.confirm-modal .danger{border-color:#be123c;background:#be123c;color:#fff}.record-card{display:grid;gap:11px;padding:14px;border:1px solid #dfe5ef;border-radius:12px;background:#fff}.record-card>header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.record-card>header>div{display:grid;min-width:0;gap:3px}.record-card>header strong{font-size:.86rem;overflow-wrap:anywhere}.record-card>header div span{color:#64748b;font-size:.7rem}.card-tags{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.card-tags>span:not(.kind){color:#526174;font-size:.72rem}.record-card>p{margin:0;color:#526174;font-size:.75rem;line-height:1.45}.record-card footer{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.record-card footer button{min-height:38px}
 .actions-heading{width:320px}
 .desktop-table th:first-child,.desktop-table td:first-child{width:auto}.desktop-table th:nth-child(2){width:92px}

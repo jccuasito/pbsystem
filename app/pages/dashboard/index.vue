@@ -52,13 +52,13 @@ type WorkspaceView =
   | 'organization-agency' | 'organization-position' | 'organization-client' | 'organization-site' | 'organization-site-accounts' | 'organization-region'
   | 'attendance-dtr' | 'attendance-dtr-reliever' | 'attendance-shift-code' | 'attendance-holiday-manager' | 'payroll-processing' | 'payroll-adjustments' | 'payslip' | 'payslip-sites' | 'payroll-history' | 'payroll-summary'
   | 'billing-generate' | 'billing-history' | 'rates-payroll' | 'rates-billing' | 'rates-site'
-  | 'employee-loans-deductions' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
+  | 'employee-loans-deductions' | 'deductions-loans-cash-bonds' | 'deductions-loans-contributions' | 'deductions-loans-transactions' | 'deductions-loans-catalog' | 'reports' | 'settings'
 const workspaceViews = new Set<WorkspaceView>([
   'employees-list', 'employees-deployments', 'employees-documents', 'employees-status', 'employees-portal-accounts',
   'organization-agency', 'organization-position', 'organization-client', 'organization-site', 'organization-site-accounts', 'organization-region',
   'attendance-dtr', 'attendance-dtr-reliever', 'attendance-shift-code', 'attendance-holiday-manager', 'payroll-processing', 'payroll-adjustments', 'payslip', 'payslip-sites', 'payroll-history', 'payroll-summary',
   'billing-generate', 'billing-history', 'rates-payroll', 'rates-billing', 'rates-site',
-  'employee-loans-deductions', 'deductions-loans-contributions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
+  'employee-loans-deductions', 'deductions-loans-cash-bonds', 'deductions-loans-contributions', 'deductions-loans-transactions', 'deductions-loans-catalog', 'reports', 'settings'
 ])
 const activeWorkspaceView = computed<WorkspaceView | null>(() => {
   const value = Array.isArray(route.query.view) ? route.query.view[0] : route.query.view
@@ -220,7 +220,7 @@ const navGroups = [
     label: 'Deductions & Loans', icon: 'wallet', key: 'deductions',
     children: [
       { label: 'Employee Accounts', to: '/deductions-loans/employees', icon: 'user', view: 'employee-loans-deductions' },
-      { label: 'Contributions', to: '/deductions-loans/contributions', icon: 'peso', view: 'deductions-loans-contributions' },
+      { label: 'Contributions and Others', to: '/deductions-loans/contributions', icon: 'peso', view: 'deductions-loans-contributions' },
       { label: 'Transaction Receipts', to: '/deductions-loans/transactions', icon: 'file-text', view: 'deductions-loans-transactions' },
       { label: 'Catalog', to: '/deductions-loans/catalog', icon: 'tag', view: 'deductions-loans-catalog' }
     ]
@@ -303,6 +303,7 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'payroll-history': PayrollHistoryPage,
   'payroll-summary': PayrollSummaryPage,
   'employee-loans-deductions': EmployeeLoanDeductionPage,
+  'deductions-loans-cash-bonds': AgencyContributionsPage,
   'deductions-loans-contributions': AgencyContributionsPage,
   'deductions-loans-transactions': EmployeeAccountTransactionsPage,
   'deductions-loans-catalog': DeductionLoanCatalogPage,
