@@ -73,7 +73,6 @@ function payableHours(item: any) { return dateComponents.reduce((sum, key) => su
 function lineDates(item: any) { return [...new Set((item.Lines || []).map((line: any) => dateOnly(line.SourceDate)).filter(Boolean))].map(prettyDate).join(', ') || 'Amount only' }
 function adjustmentLabel(item: any) { return item.AdjustmentType === 'Manual Amount' ? item.Lines?.[0]?.Description || 'Manual amount' : item.AdjustmentType }
 function statusClass(value: string) { return `status--${String(value).toLowerCase().replace(/[^a-z]+/g, '-')}` }
-function isManual(item: any) { return item.AdjustmentType === 'Verified Missed Attendance' }
 function resetVerifiedDays() { verifiedDays.value = entryMode.value === 'manual' ? [{ SourceDate: '', ShiftCodeID: '', RegularHours: 0, OTHours: 0, OTExtHours: 0, NightDiffHours: 0 }] : [] }
 
 async function load(silent = false) {
@@ -158,7 +157,7 @@ function availableMissedDate(item: any, row: ManualDay) {
     !verifiedDays.value.some(day => day !== row && day.SourceDate === item.SourceDate)
 }
 
-async function save(submit: boolean) {
+async function save() {
   if (busy.value || !canSave.value || !props.targetDtr?.BatchID) return
   busy.value = true; formError.value = ''
   try {
@@ -168,7 +167,7 @@ async function save(submit: boolean) {
       SourceDates: entryMode.value === 'saved' ? form.value.SourceDates : [],
       ManualDays: entryMode.value === 'manual' ? verifiedDays.value : [],
       ...(entryMode.value === 'amount' ? { ManualAmount: Number(amountValue.value), AdjustmentName: amountName.value.trim() } : {}),
-      Reason: form.value.Reason, Submit: submit,
+      Reason: form.value.Reason,
     } })
     creating.value = false
     await load(true)
@@ -179,8 +178,7 @@ async function save(submit: boolean) {
 
 async function act(item: any, action: string) {
   if (busy.value) return
-  const labels: Record<string, string> = { approve: 'approve', reject: 'reject', cancel: 'cancel', reopen: 'reopen', submit: 'submit' }
-  if (['reject', 'cancel'].includes(action) && !confirm(`${labels[action][0].toUpperCase() + labels[action].slice(1)} adjustment #${item.AdjustmentID}?`)) return
+  if (action !== 'cancel' || !confirm(`Cancel adjustment #${item.AdjustmentID}?`)) return
   busy.value = true; error.value = ''
   try {
     await $fetch('/api/payroll/adjustments', { method: 'PUT', body: { AdjustmentID: item.AdjustmentID, Action: action } })
@@ -214,7 +212,7 @@ defineExpose({ openCreate })
           <button v-if="targetDtr && permissions.canCreate" class="primary" type="button" @click="openCreate()">+ Add adjustment</button>
         </header>
 
-        <p v-if="targetDtr" class="target-note"><strong>Adjust this cutoff:</strong> choose an employee, then add attendance pay from an earlier cutoff or a named manual amount. Verified missed days can be marked Ready for Payroll without a separate adjustment approval. Approved or Ready for Payroll adjustments are included when this cutoff is finalized in Payroll Processing.</p>
+        <p v-if="targetDtr" class="target-note"><strong>Adjust this cutoff:</strong> choose an employee, then add attendance pay from an earlier cutoff or a named manual amount. Saved adjustments follow the target DTR automatically when you choose Compute to payroll or Compute to billing. Review payroll amounts in Payroll Processing before finalizing.</p>
         <p v-if="error" class="error-banner" role="alert">{{ error }}</p>
 
         <div class="adjustment-filters">
@@ -235,7 +233,7 @@ defineExpose({ openCreate })
                   <td><span>{{ period(item.TargetPeriodStart, item.TargetPeriodEnd) }}</span><small>DTR-{{ String(item.TargetBatchID).padStart(4, '0') }}</small></td>
                   <td><strong>{{ money(item.TotalAmount) }}</strong><button class="line-toggle" type="button" @click="toggleLines(item.AdjustmentID)">{{ expanded.has(item.AdjustmentID) ? 'Hide' : 'View' }} breakdown</button></td>
                   <td><span class="status-pill" :class="statusClass(item.Status)">{{ item.Status }}</span></td>
-                  <td><div class="row-actions"><button v-if="item.Status === 'Draft'" type="button" :disabled="busy" @click="act(item, 'submit')">{{ isManual(item) ? 'Ready for payroll' : 'Submit' }}</button><button v-if="item.Status === 'For Approval' && !isManual(item) && permissions.canApprove" class="approve" type="button" :disabled="busy" @click="act(item, 'approve')">Approve</button><button v-if="item.Status === 'For Approval' && !isManual(item) && permissions.canApprove" type="button" :disabled="busy" @click="act(item, 'reject')">Reject</button><button v-if="['Draft','For Approval','Approved','Ready for Payroll'].includes(item.Status)" type="button" :disabled="busy" @click="act(item, 'cancel')">Cancel</button><button v-if="['Rejected','Cancelled'].includes(item.Status)" type="button" :disabled="busy" @click="act(item, 'reopen')">Reopen</button></div></td>
+                  <td><div class="row-actions"><button v-if="permissions.canCreate && ['Draft','For Approval','Approved','Ready for Payroll'].includes(item.Status)" type="button" :disabled="busy" @click="act(item, 'cancel')">Cancel</button></div></td>
                 </tr>
                 <tr v-if="expanded.has(item.AdjustmentID)" class="line-row"><td colspan="7"><div class="line-list"><div v-for="line in item.Lines" :key="line.AdjustmentLineID"><span>{{ line.SourceDate ? prettyDate(line.SourceDate) : 'Amount only' }}</span><strong>{{ line.EntrySource === 'Manual Amount' ? line.Description : line.Description.split(' - ')[0] }}<small v-if="line.EntrySource === 'Manual Verification'">Manually verified</small></strong><span>{{ line.EntrySource === 'Manual Amount' ? 'Flat amount' : `${hours(line.Quantity)} \u00d7 ${money(line.Rate)}` }}</span><b :class="{ deduction: line.Direction === 'Deduction' }">{{ money(line.Amount) }}</b></div></div></td></tr>
               </template>
@@ -251,12 +249,12 @@ defineExpose({ openCreate })
             <dl><div><dt>Original dates</dt><dd>{{ lineDates(item) }}</dd></div><div><dt>Target cutoff</dt><dd>{{ period(item.TargetPeriodStart, item.TargetPeriodEnd) }}</dd></div><div><dt>Amount</dt><dd>{{ money(item.TotalAmount) }}</dd></div><div><dt>Reason</dt><dd>{{ item.Reason }}</dd></div><div v-if="item.VerificationReference"><dt>Evidence</dt><dd>{{ item.VerificationReference }}</dd></div></dl>
             <button class="line-toggle" type="button" @click="toggleLines(item.AdjustmentID)">{{ expanded.has(item.AdjustmentID) ? 'Hide' : 'View' }} breakdown</button>
             <div v-if="expanded.has(item.AdjustmentID)" class="line-list"><div v-for="line in item.Lines" :key="line.AdjustmentLineID"><span>{{ line.SourceDate ? prettyDate(line.SourceDate) : 'Amount only' }}</span><strong>{{ line.EntrySource === 'Manual Amount' ? line.Description : line.Description.split(' - ')[0] }}</strong><b :class="{ deduction: line.Direction === 'Deduction' }">{{ money(line.Amount) }}</b></div></div>
-            <footer class="row-actions"><button v-if="item.Status === 'Draft'" type="button" @click="act(item, 'submit')">{{ isManual(item) ? 'Ready for payroll' : 'Submit' }}</button><button v-if="item.Status === 'For Approval' && !isManual(item) && permissions.canApprove" class="approve" type="button" @click="act(item, 'approve')">Approve</button><button v-if="item.Status === 'For Approval' && !isManual(item) && permissions.canApprove" type="button" @click="act(item, 'reject')">Reject</button><button v-if="['Draft','For Approval','Approved','Ready for Payroll'].includes(item.Status)" type="button" @click="act(item, 'cancel')">Cancel</button><button v-if="['Rejected','Cancelled'].includes(item.Status)" type="button" @click="act(item, 'reopen')">Reopen</button></footer>
+            <footer class="row-actions"><button v-if="permissions.canCreate && ['Draft','For Approval','Approved','Ready for Payroll'].includes(item.Status)" type="button" @click="act(item, 'cancel')">Cancel</button></footer>
           </article>
         </div>
 
         <div v-if="creating" class="form-backdrop" @click.self="closeCreate">
-          <form class="adjustment-form" @submit.prevent="save(true)">
+          <form class="adjustment-form" @submit.prevent="save">
             <button class="panel-close" type="button" :disabled="busy" @click="closeCreate">×</button>
             <header><p>PAYROLL ADJUSTMENT</p><h2>Add payroll adjustment</h2><span>Select saved attendance, verified missed days, or enter a named manual amount.</span></header>
             <div v-if="targetDtr" class="pay-cutoff-card"><span>TARGET PAYROLL CUTOFF</span><strong>{{ period(targetDtr.PeriodStart, targetDtr.PeriodEnd) }}</strong><small>{{ targetDtr.ClientName }} · {{ targetDtr.SiteName }} · DTR-{{ String(targetDtr.BatchID).padStart(4, '0') }}</small></div>
@@ -292,9 +290,9 @@ defineExpose({ openCreate })
             </div>
             <label class="reason-field"><span>{{ entryMode === 'amount' ? 'Reason (optional)' : 'Reason' }}</span><textarea v-model.trim="form.Reason" minlength="5" maxlength="500" :required="entryMode !== 'amount'" placeholder="Example: September 1 and 2 attendance was verified but was not included in the original payroll."></textarea></label>
             <p v-if="saveRequirement" class="save-requirement" role="status">{{ saveRequirement }}</p>
-            <p class="calculation-note">{{ entryMode === 'amount' ? 'Manual amounts require approval before inclusion in payroll.' : entryMode === 'saved' ? 'Saved attendance components are copied at the linked payroll rates. This mode retains its adjustment approval step.' : 'Verified hours are priced using the original deployment linked payroll rates and marked Ready for Payroll without a separate adjustment approval.' }} Attendance remains unchanged. Approved or Ready for Payroll adjustments are posted when the target payroll is finalized.</p>
+            <p class="calculation-note">{{ entryMode === 'amount' ? 'The named amount is added to employee income.' : 'Attendance components are priced using the original deployment payroll rates.' }} Status updates automatically when the target DTR is computed to payroll or billing. Adjustments saved to an already-computed cutoff are included automatically. Payroll finalization posts the amount once.</p>
             <p v-if="formError" class="error-banner" role="alert">{{ formError }}</p>
-            <footer><button type="button" :disabled="busy" @click="closeCreate">Cancel</button><button type="button" :disabled="busy || !canSave" @click="save(false)">Save draft</button><button class="primary" :disabled="busy || !canSave">{{ busy ? 'Saving…' : entryMode === 'manual' ? 'Save for payroll review' : 'Submit for approval' }}</button></footer>
+            <footer><button type="button" :disabled="busy" @click="closeCreate">Cancel</button><button class="primary" :disabled="busy || !canSave">{{ busy ? 'Saving…' : 'Save adjustment' }}</button></footer>
           </form>
         </div>
       </section>

@@ -46,12 +46,8 @@ function assertCanWrite(userType: unknown) {
   if (String(userType) === 'Viewer') throw createError({ statusCode: 403, statusMessage: 'Viewer accounts cannot change payroll adjustments.' })
 }
 
-function assertCanApprove(userType: unknown) {
-  if (!['Admin', 'Supervisor'].includes(String(userType))) throw createError({ statusCode: 403, statusMessage: 'Only an Admin or Supervisor can approve or reject payroll adjustments.' })
-}
-
 function permissions(userType: unknown) {
-  return { canCreate: String(userType) !== 'Viewer', canApprove: ['Admin', 'Supervisor'].includes(String(userType)) }
+  return { canCreate: String(userType) !== 'Viewer', canApprove: false }
 }
 
 function cleanReason(value: unknown) {
@@ -300,7 +296,6 @@ export async function createPayrollAdjustment(event: any) {
   const verificationReference = String(body.VerificationReference || '').trim()
   if (verificationReference.length > 255) throw createError({ statusCode: 400, statusMessage: 'Verification reference cannot exceed 255 characters.' })
   const reason = cleanReason(amountEntry && !String(body.Reason || '').trim() ? `Manual amount: ${adjustmentName}` : body.Reason)
-  const submit = body.Submit === true
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction(); await assertReady(connection)
@@ -403,10 +398,11 @@ export async function createPayrollAdjustment(event: any) {
     }
 
     const total = Math.round(lines.reduce((sum, line) => sum + line.amount, 0) * 100) / 100
-    const status: Status = submit ? verifiedDays.length ? 'Ready for Payroll' : 'For Approval' : 'Draft'
+    const ready = String(target.Status).startsWith('Computed to ')
+    const status: Status = ready ? 'Ready for Payroll' : 'Draft'
     const [result] = await connection.execute<any>(`INSERT INTO payroll_adjustment
       (EmployeeID, SourceBatchID, TargetBatchID, AdjustmentType, Reason, VerificationReference, Status, TotalAmount, CreatedBy, SubmittedBy, SubmittedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, amountEntry ? 'Manual Amount' : verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length && verificationReference ? verificationReference : null, status, total, session.sub, submit ? session.sub : null, submit ? new Date() : null])
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [employeeId, sourceBatchId, targetBatchId, amountEntry ? 'Manual Amount' : verifiedDays.length ? 'Verified Missed Attendance' : 'Missed Attendance Pay', reason, verifiedDays.length && verificationReference ? verificationReference : null, status, total, session.sub, ready ? session.sub : null, ready ? new Date() : null])
     for (const day of verifiedDays) await connection.execute(`INSERT INTO payroll_adjustment_manual_day
       (AdjustmentID, EmployeeID, SourceBatchID, SourceDate, ShiftCodeID, RegularHours, OTHours, OTExtHours, NightDiffHours)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [result.insertId, employeeId, sourceBatchId, day.sourceDate, day.shiftCodeId,
@@ -425,41 +421,35 @@ export async function createPayrollAdjustment(event: any) {
   } finally { connection.release() }
 }
 
+// Called inside computeDtr's transaction after its attendance checks succeed.
+// Both compute targets stage the payroll correction; billing never posts it.
+export async function readyAdjustmentsForComputedDtr(connection: any, batchId: number, actorId: number) {
+  await assertReady(connection)
+  const [result] = await connection.execute(`UPDATE payroll_adjustment
+    SET Status = 'Ready for Payroll', SubmittedBy = ?, SubmittedAt = NOW(),
+      UpdatedBy = ?, Revision = Revision + 1
+    WHERE TargetBatchID = ? AND TargetPayrollID IS NULL
+      AND Status IN ('Draft', 'For Approval', 'Approved', 'Ready for Payroll')`, [actorId, actorId, batchId])
+  return Number(result.affectedRows || 0)
+}
+
 export async function updatePayrollAdjustment(event: any) {
   const session = requireSession(event); assertCanWrite(session.userType)
   const body = await readBody<Body>(event) || {}
   const adjustmentId = positiveId(body.AdjustmentID, 'Adjustment')
-  const action = String(body.Action || '').toLowerCase()
+  if (String(body.Action || '').toLowerCase() !== 'cancel') throw createError({ statusCode: 400, statusMessage: 'Only cancellation is available. Adjustment status updates automatically when the target DTR is computed.' })
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction(); await assertReady(connection)
-    const [[current]] = await connection.execute<any[]>('SELECT AdjustmentID, AdjustmentType, Status, TargetPayrollID, Revision FROM payroll_adjustment WHERE AdjustmentID = ? FOR UPDATE', [adjustmentId])
+    const [[pending]] = await connection.execute<any[]>('SELECT TargetBatchID FROM payroll_adjustment WHERE AdjustmentID = ?', [adjustmentId])
+    if (!pending) throw createError({ statusCode: 404, statusMessage: 'Payroll adjustment not found.' })
+    await connection.execute('SELECT BatchID FROM attendance_dtr WHERE BatchID = ? FOR UPDATE', [pending.TargetBatchID])
+    const [[current]] = await connection.execute<any[]>('SELECT Status, TargetPayrollID, Revision FROM payroll_adjustment WHERE AdjustmentID = ? FOR UPDATE', [adjustmentId])
     if (!current) throw createError({ statusCode: 404, statusMessage: 'Payroll adjustment not found.' })
     if (current.TargetPayrollID || current.Status === 'Applied') throw createError({ statusCode: 409, statusMessage: 'An applied payroll adjustment is locked. Create a reversal adjustment for another correction.' })
-    let nextStatus: Status
-    let extraSql = ''
-    const values: any[] = []
-    if (action === 'submit' && current.Status === 'Draft') {
-      nextStatus = current.AdjustmentType === 'Verified Missed Attendance' ? 'Ready for Payroll' : 'For Approval'
-      extraSql = ', SubmittedBy = ?, SubmittedAt = NOW(), ApprovedBy = NULL, ApprovedAt = NULL'; values.push(session.sub)
-    } else if (action === 'approve' && current.Status === 'For Approval' && current.AdjustmentType !== 'Verified Missed Attendance') {
-      assertCanApprove(session.userType); nextStatus = 'Approved'; extraSql = ', ApprovedBy = ?, ApprovedAt = NOW()'; values.push(session.sub)
-    } else if (action === 'reject' && current.Status === 'For Approval' && current.AdjustmentType !== 'Verified Missed Attendance') {
-      assertCanApprove(session.userType); nextStatus = 'Rejected'; extraSql = ', ApprovedBy = ?, ApprovedAt = NOW()'; values.push(session.sub)
-    } else if (action === 'cancel' && ['Draft', 'For Approval', 'Approved', 'Ready for Payroll'].includes(current.Status)) {
-      nextStatus = 'Cancelled'
-    } else if (action === 'reopen' && ['Rejected', 'Cancelled'].includes(current.Status)) {
-      nextStatus = 'Draft'; extraSql = ', SubmittedBy = NULL, SubmittedAt = NULL, ApprovedBy = NULL, ApprovedAt = NULL'
-    } else {
-      throw createError({ statusCode: 409, statusMessage: `Cannot ${action || 'update'} an adjustment with status ${current.Status}.` })
-    }
-    await connection.execute(`UPDATE payroll_adjustment SET Status = ?, Revision = Revision + 1, UpdatedBy = ?${extraSql} WHERE AdjustmentID = ?`, [nextStatus, session.sub, ...values, adjustmentId])
-    if (['Rejected', 'Cancelled'].includes(nextStatus)) await connection.execute('UPDATE payroll_adjustment_manual_day SET ClaimActive = NULL WHERE AdjustmentID = ?', [adjustmentId])
-    if (action === 'reopen') await connection.execute('UPDATE payroll_adjustment_manual_day SET ClaimActive = 1 WHERE AdjustmentID = ?', [adjustmentId])
-    await connection.commit(); return { success: true, status: nextStatus, revision: Number(current.Revision) + 1 }
-  } catch (error: any) {
-    await connection.rollback()
-    if (error?.code === 'ER_DUP_ENTRY') throw createError({ statusCode: 409, statusMessage: 'A newer adjustment already claims this missed date. Keep the old adjustment cancelled or rejected.' })
-    throw error
-  } finally { connection.release() }
+    if (!['Draft', 'For Approval', 'Approved', 'Ready for Payroll'].includes(current.Status)) throw createError({ statusCode: 409, statusMessage: `Cannot cancel an adjustment with status ${current.Status}.` })
+    await connection.execute("UPDATE payroll_adjustment SET Status = 'Cancelled', Revision = Revision + 1, UpdatedBy = ? WHERE AdjustmentID = ?", [session.sub, adjustmentId])
+    await connection.execute('UPDATE payroll_adjustment_manual_day SET ClaimActive = NULL WHERE AdjustmentID = ?', [adjustmentId])
+    await connection.commit(); return { success: true, status: 'Cancelled', revision: Number(current.Revision) + 1 }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }

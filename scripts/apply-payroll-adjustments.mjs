@@ -39,8 +39,6 @@ try {
   const [[shiftColumn]] = await connection.query(`SELECT IS_NULLABLE AS IsNullable FROM information_schema.columns
     WHERE table_schema = DATABASE() AND table_name = 'payroll_adjustment_manual_day' AND column_name = 'ShiftCodeID'`)
   if (shiftColumn?.IsNullable !== 'YES') await connection.query(`ALTER TABLE payroll_adjustment_manual_day MODIFY COLUMN ShiftCodeID INT NULL`)
-  await connection.query(`UPDATE payroll_adjustment SET Status = 'Ready for Payroll'
-    WHERE AdjustmentType = 'Verified Missed Attendance' AND Status IN ('For Approval', 'Approved') AND TargetPayrollID IS NULL`)
   const [tables] = await connection.query(`SELECT table_name FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name IN ('payroll_adjustment', 'payroll_adjustment_line', 'payroll_adjustment_manual_day')
     ORDER BY table_name`)

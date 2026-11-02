@@ -302,7 +302,7 @@ export async function payrollProcessingData(requestedStart = '', requestedEnd = 
       }
       const adjustmentRowsForPerson = adjustmentsByPerson.get(`${batch.BatchID}:${person.EmployeeID}`) || []
       if (adjustmentRowsForPerson.some(row => row.Status === 'Draft' || row.Status === 'For Approval')) {
-        warnings.push('A prior-period adjustment is still awaiting approval or submission.')
+        warnings.push('An adjustment is awaiting DTR computation. Return the target DTR to Draft and compute it again, or cancel the adjustment before finalizing.')
       }
       const adjustments = adjustmentRowsForPerson.filter(row =>
         ['Approved', 'Ready for Payroll'].includes(row.Status) && row.AdjustmentLineID,

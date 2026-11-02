@@ -45,14 +45,14 @@ test('manual amount form needs only employee, name and amount and sends no stale
     }
     state.amountValue.value = '700.25'
     assert.equal(state.canSave.value, true)
-    await state.save(true)
+    await state.save()
     assert.equal(posted.length, 1)
     assert.equal(posted[0].ManualAmount, 700.25)
     assert.equal(posted[0].AdjustmentName, state.amountName.value)
     assert.equal(posted[0].SourceBatchID, null)
     assert.equal(posted[0].SourceDates.length, 0)
     assert.equal(posted[0].ManualDays.length, 0)
-    assert.equal(posted[0].Reason, '')
+    assert.equal(posted[0].Reason, ''); assert.equal(posted[0].Submit, undefined)
     assert.equal(state.lineDates({ Lines: [{ SourceDate: null }] }), 'Amount only')
     assert.equal(state.adjustmentLabel({ AdjustmentType: 'Manual Amount', Lines: [{ Description: state.amountName.value }] }), state.amountName.value)
     state.entryMode.value = 'saved'
@@ -61,7 +61,7 @@ test('manual amount form needs only employee, name and amount and sends no stale
   } finally { scope.stop() }
 })
 
-test('manual amounts validate, approve, post once, appear on payslips, and reopen safely after cancellation', {
+test('DTR compute automatically stages all adjustment sources and finalization posts them once', {
   skip: process.env.PAYROLL_AMOUNT_TEST_DATABASE !== '1',
 }, async () => {
   const mysql = require('mysql2/promise')
@@ -88,10 +88,12 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
       "INSERT INTO site_rate (SiteRateID,SiteID,PayrollRateID,BillingRateID,Status) VALUES (1,1,1,1,'Active')",
       "INSERT INTO employee (EmployeeID,AgencyPositionID,FirstName,LastName,Status) VALUES (1,1,'Amount','Employee','Active'),(2,1,'Not','Enrolled','Active')",
       "INSERT INTO employee_deployment (DeploymentID,EmployeeID,SiteRateID,SiteID,DeploymentType,IsPermanentSite,StartDate) VALUES (1,1,1,1,'Regular',1,'2026-01-01')",
-      "INSERT INTO attendance_dtr (BatchID,AgencyID,ClientID,SiteID,PeriodStart,PeriodEnd,Status,CreatedBy) VALUES (1,1,1,1,'2026-09-01','2026-09-15','Computed to Payroll',1),(2,1,1,1,'2026-09-16','2026-09-30','Computed to Payroll',1)",
+      "INSERT INTO attendance_dtr (BatchID,AgencyID,ClientID,SiteID,PeriodStart,PeriodEnd,Status,CreatedBy) VALUES (1,1,1,1,'2026-09-01','2026-09-15','Computed to Payroll',1),(2,1,1,1,'2026-09-16','2026-09-30','Draft',1)",
       "INSERT INTO attendance_dtr_employee (BatchID,EmployeeID,DeploymentID,AttendanceType,IsPermanentSite,CreatedBy) VALUES (1,1,1,'Regular',1,1),(2,1,1,'Regular',1,1)",
       "INSERT INTO attendance (AttendanceID,EmployeeID,DeploymentID,BatchID,AttendanceDate,AttendanceStatus,RegularHours,CreatedBy) VALUES (1,1,1,1,'2026-09-10','Present',8,1),(2,1,1,2,'2026-09-20','Present',8,1)",
     ]) await db.query(sql)
+    await db.query("INSERT INTO shift_code (ShiftCodeID,AgencyID,ShiftCode,ShiftName,ShiftType,TimeIn,TimeOut,RegularHours,RegularOTCap,Status) VALUES (1,1,'DS','Day','DS','09:00','17:00',8,0,'Active')")
+    const audit={fail:false}
     const connection = { execute: (sql, args) => db.execute(sql, args), beginTransaction: () => db.beginTransaction(), commit: () => db.commit(), rollback: () => db.rollback(), release() {} }
     const pool = { execute: connection.execute, getConnection: async () => connection }
     const h3 = { readBody: async e => e.body, getQuery: e => e.query || {}, getRouterParam: (e, key) => e.params[key], createError: details => Object.assign(new Error(details.statusMessage), details) }
@@ -99,8 +101,9 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
     const common = name => name === 'h3' ? h3 : name.includes('dbconnect') ? pool : name.endsWith('/auth') ? { requireSession: e => e.session || { sub: 1, userType: 'Admin' } }
       : name.includes('rateVersions') ? versions : name.includes('payrollPreview') ? require('../shared/utils/payrollPreview.ts')
       : name.includes('dtrDeploymentDates') ? require('../server/utils/dtrDeploymentDates.ts')
-      : name.includes('dtrWorkflowAudit') ? { recordDtrWorkflowEvent: async () => {} } : {}
+      : name.includes('dtrWorkflowAudit') ? { recordDtrWorkflowEvent: async () => { if(audit.fail)throw Error('Injected compute failure') } } : {}
     const api = load('server/utils/payrollAdjustmentCrud.ts', common)
+    const dtr = load('server/utils/dtrCrud.ts', name => name.includes('payrollAdjustmentCrud') ? api : name.includes('dtrBtrCrud') ? {assertDtrBtrReady:async()=>{}} : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts') : common(name))
     const payroll = load('server/utils/payrollProcessingCrud.ts', common)
     const payslips = load('server/utils/payslipCrud.ts', common)
     const event = (body, extra = {}) => ({ body, params: { id: '2' }, ...extra })
@@ -112,7 +115,7 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
     await assert.rejects(() => api.createPayrollAdjustment(event({ ...body, EmployeeID: 2 })), /Add the employee/)
     const attendanceBefore = (await db.query('SELECT * FROM attendance ORDER BY AttendanceID'))[0]
     const created = await api.createPayrollAdjustment(event(body))
-    assert.equal(created.status, 'For Approval'); assert.equal(created.totalAmount, 700.25)
+    assert.equal(created.status, 'Draft', 'A save waits for target DTR computation even with a legacy Submit flag'); assert.equal(created.totalAmount, 700.25)
     const listing = await api.listPayrollAdjustments({ query: { targetBatchId: '2', search: 'approved difference' } })
     assert.equal(listing.items.length, 1)
     const line = listing.items[0].Lines[0]
@@ -121,6 +124,21 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
     assert.equal(line.Description, body.AdjustmentName); assert.equal(line.EntrySource, 'Manual Amount')
     assert.equal(Number(line.Quantity), 1); assert.equal(Number(line.Amount), 700.25)
     assert.equal((await db.query('SELECT COUNT(*) count FROM payroll_adjustment_manual_day'))[0][0].count, 0)
+    await assert.rejects(()=>dtr.computeDtr(event({target:'billing'})),/without a shift code/)
+    assert.equal((await db.execute('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?',[created.id]))[0][0].Status,'Draft')
+    await db.query('UPDATE attendance SET ShiftCodeID=1 WHERE AttendanceID=2');attendanceBefore[1]=(await db.query('SELECT * FROM attendance WHERE AttendanceID=2'))[0][0]
+    await db.execute("UPDATE payroll_adjustment SET Status='For Approval' WHERE AdjustmentID=?",[created.id])
+    audit.fail=true
+    await assert.rejects(()=>dtr.computeDtr(event({target:'billing'})),/Injected compute failure/)
+    audit.fail=false
+    assert.equal((await db.query('SELECT Status FROM attendance_dtr WHERE BatchID=2'))[0][0].Status,'Draft')
+    assert.equal((await db.execute('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?',[created.id]))[0][0].Status,'For Approval','Failed compute rolls back adjustment staging too')
+    assert.equal((await dtr.computeDtr(event({target:'billing'}))).status,'Computed to Billing')
+    assert.equal((await db.execute('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?',[created.id]))[0][0].Status,'Ready for Payroll')
+    assert.equal((await db.query('SELECT COUNT(*) n FROM payroll WHERE Status<>\'Cancelled\''))[0][0].n,0,'Compute billing does not post payroll')
+    for(const action of ['submit','approve','reject','reopen'])await assert.rejects(()=>api.updatePayrollAdjustment(event({AdjustmentID:created.id,Action:action})),/Only cancellation/)
+    assert.equal((await dtr.computeDtr(event({target:'payroll'}))).status,'Computed to Both')
+    await assert.rejects(()=>dtr.computeDtr(event({target:'payroll'})),/already computed/)
     // Account metadata must resolve the exact site/agency pair, even when another
     // agency is the only retained link for a site.
     await db.query("INSERT INTO agency (AgencyID,AgencyName,Status) VALUES (2,'Other test agency','Active')")
@@ -135,10 +153,7 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
     await db.query('UPDATE site_agency SET SiteAccountID=NULL WHERE SiteID=1 AND AgencyID=1')
     assert.equal((await preview()).SiteAccountID, null, 'Unassigned sites cannot borrow another agency account')
     await db.query('UPDATE site_agency SET SiteAccountID=1 WHERE SiteID=1 AND AgencyID=1')
-    assert.equal((await preview()).gross, 640, 'Unapproved amounts are excluded')
-    assert.ok((await preview()).warningCount > 0)
-    await assert.rejects(() => api.updatePayrollAdjustment(event({ AdjustmentID: created.id, Action: 'approve' }, { session: { sub: 1, userType: 'Encoder' } })), /Admin or Supervisor/)
-    await api.updatePayrollAdjustment(event({ AdjustmentID: created.id, Action: 'approve' }))
+    assert.equal((await preview()).gross, 1340.25, 'Computation includes the adjustment once, even after computing both targets')
     const reviewed = await preview()
     assert.equal(reviewed.gross, 1340.25); assert.equal(reviewed.netPreview, 1340.25)
     assert.equal(reviewed.employees[0].adjustments[0].hours, 0, 'Flat amounts have no attendance hours')
@@ -157,19 +172,26 @@ test('manual amounts validate, approve, post once, appear on payslips, and reope
     assert.ok(named.label.includes(body.AdjustmentName)); assert.equal(named.amount, 700.25); assert.equal(named.hours, 0)
     await assert.rejects(() => payroll.reviewPayrollProcessing(event({ action: 'finalize' })), /already finalized/)
     await payroll.reviewPayrollProcessing(event({ action: 'cancel', reason: 'Correct this test payroll' }))
-    assert.equal((await db.query('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?', [created.id]))[0][0].Status, 'Approved')
+    assert.equal((await db.query('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?', [created.id]))[0][0].Status, 'Ready for Payroll')
     await api.updatePayrollAdjustment(event({ AdjustmentID: created.id, Action: 'cancel' }))
     assert.equal((await preview()).gross, 1340.25, 'Cancelled review retains its historical snapshot')
-    await db.query("UPDATE payroll_processing_review SET ReviewStatus='Pending',SnapshotJson=NULL WHERE BatchID=2")
-    await db.query("UPDATE attendance_dtr SET Status='Computed to Payroll' WHERE BatchID=2")
-    assert.equal((await preview()).gross, 640, 'A fresh review excludes cancelled adjustments')
-    const draft = await api.createPayrollAdjustment(event({ ...body, Submit: false }))
+    const draft = await api.createPayrollAdjustment(event({ ...body, Submit: true }))
     assert.equal(draft.status, 'Draft')
-    assert.equal((await api.updatePayrollAdjustment(event({ AdjustmentID: draft.id, Action: 'submit' }))).status, 'For Approval')
     const saved = await api.createPayrollAdjustment(event({ EmployeeID: 1, SourceBatchID: 1, TargetBatchID: 2, SourceDates: ['2026-09-10'], Reason: 'Saved attendance regression', Submit: true }))
-    assert.equal(saved.status, 'For Approval'); assert.equal(saved.totalAmount, 640)
-    const verified = await api.createPayrollAdjustment(event({ EmployeeID: 1, SourceBatchID: 1, TargetBatchID: 2, ManualDays: [{ SourceDate: '2026-09-11', RegularHours: 8, OTHours: 0, OTExtHours: 0, NightDiffHours: 0 }], Reason: 'Verified attendance regression', Submit: true }))
-    assert.equal(verified.status, 'Ready for Payroll'); assert.equal(verified.totalAmount, 640)
-    assert.deepEqual((await db.query('SELECT * FROM attendance ORDER BY AttendanceID'))[0], attendanceBefore)
+    assert.equal(saved.status, 'Draft'); assert.equal(saved.totalAmount, 640)
+    const verified = await api.createPayrollAdjustment(event({ EmployeeID: 1, SourceBatchID: 1, TargetBatchID: 2, ManualDays: [{ SourceDate: '2026-09-11', RegularHours: 8, OTHours: 0, OTExtHours: 0, NightDiffHours: 0 }], Reason: 'Verified attendance regression', Submit: false }))
+    assert.equal(verified.status, 'Draft'); assert.equal(verified.totalAmount, 640)
+    assert.equal((await dtr.computeDtr(event({target:'payroll'}))).status,'Computed to Payroll')
+    for(const id of [draft.id,saved.id,verified.id])assert.equal((await db.execute('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?',[id]))[0][0].Status,'Ready for Payroll')
+    assert.equal((await db.execute('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?',[created.id]))[0][0].Status,'Cancelled','Compute leaves cancelled rows out')
+    const late = await api.createPayrollAdjustment(event({...body,ManualAmount:10,Submit:false}))
+    assert.equal(late.status,'Ready for Payroll','Save to an already-computed cutoff follows its status without a manual action')
+    await api.updatePayrollAdjustment(event({AdjustmentID:late.id,Action:'cancel'}))
+    assert.equal((await preview()).gross, 2620.25, 'Ready saved dates, missed days and named amounts are all included once')
+    assert.equal((await preview()).warningCount, 0)
+    await payroll.reviewPayrollProcessing(event({ action: 'finalize' }))
+    for (const id of [draft.id, saved.id, verified.id]) assert.equal((await db.execute('SELECT Status FROM payroll_adjustment WHERE AdjustmentID=?', [id]))[0][0].Status, 'Applied')
+    await assert.rejects(() => payroll.reviewPayrollProcessing(event({ action: 'finalize' })), /already finalized/)
+    const attendanceAfter=(await db.query('SELECT * FROM attendance ORDER BY AttendanceID'))[0];assert.deepEqual(attendanceAfter, attendanceBefore)
   } finally { await db.end() }
 })

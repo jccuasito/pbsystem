@@ -6,7 +6,7 @@ const { transformSync } = require('esbuild')
 
 const source = fs.readFileSync('server/utils/dtrCrud.ts', 'utf8')
 
-function backend(roster) {
+function backend(roster, failStaging = false) {
   const calls = []
   const connection = {
     async beginTransaction() { calls.push('begin') },
@@ -30,6 +30,7 @@ function backend(roster) {
       ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: () => '79', readBody: async () => ({ target: 'billing' }) }
       : name.includes('dbconnect') ? { getConnection: async () => connection }
         : name === './auth' ? { requireSession: () => ({ sub: 1 }) }
+          : name === './payrollAdjustmentCrud' ? { readyAdjustmentsForComputedDtr: async () => { calls.push('stage adjustments'); if(failStaging)throw Error('Failed staging') } }
           : name === './dtrWorkflowAudit' ? { recordDtrWorkflowEvent: async () => { calls.push('audit') } }
             : {},
   })
@@ -67,6 +68,7 @@ test('a site with only one ready employee can compute and record an audit event'
   assert.ok(calls.some(call => call.sql?.startsWith('UPDATE attendance_dtr')))
   assert.ok(calls.includes('audit'))
   assert.ok(calls.includes('commit'))
+  assert.ok(calls.indexOf('stage adjustments') < calls.indexOf('commit'))
 })
 
 function saveBackend({ status = 'Present', shiftCodeId = null, importedDuties = false } = {}) {
@@ -93,6 +95,7 @@ function saveBackend({ status = 'Present', shiftCodeId = null, importedDuties = 
       ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: () => '79', readBody: async () => ({ EmployeeID: 13, AttendanceDate: '2026-09-30', AttendanceStatus: status, ShiftCodeID: shiftCodeId, TimeIn: '2026-09-30 07:00', TimeOut: '2026-09-30 19:00', RegularHours: 8, OTHours: 4 }) }
       : name.includes('dbconnect') ? { getConnection: async () => connection }
         : name === './auth' ? { requireSession: () => ({ sub: 1 }) }
+          : name.includes('dtrDeploymentDates') ? {dtrDeploymentAtDate:async(_,enrollment)=>enrollment}
           : name.includes('attendanceStatuses') ? { attendanceStatuses: ['Present', 'Absent', 'Reliever'] } : {},
   })
   return { save: () => moduleState.exports.createDtrAttendance({}), calls }
@@ -109,4 +112,10 @@ test('coded work, consolidated imported duties and no-work statuses retain their
     const { save } = saveBackend(options)
     await assert.rejects(save(), error => error.message === 'Reached overlap validation')
   }
+})
+
+test('a staging failure rolls back compute and does not commit its status', async () => {
+ const {compute,calls}=backend([employee()],true)
+ await assert.rejects(compute(),/Failed staging/)
+ assert.ok(calls.includes('rollback'));assert.equal(calls.includes('commit'),false)
 })

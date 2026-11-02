@@ -65,7 +65,7 @@ async function main() {
     const created = await request('/api/payroll/adjustments', { method: 'POST', headers, body: JSON.stringify(payload) })
     assert.equal(created.response.status, 200, JSON.stringify(created.body))
     adjustmentIds.push(Number(created.body.id))
-    assert.equal(created.body.status, 'Ready for Payroll')
+    assert.equal(created.body.status, 'Draft')
     assert.equal(Number(created.body.lineCount), 4)
     const [[savedAdjustment]] = await connection.query('SELECT VerificationReference FROM payroll_adjustment WHERE AdjustmentID = ?', [adjustmentIds[0]])
     assert.equal(savedAdjustment.VerificationReference, null)
@@ -76,7 +76,7 @@ async function main() {
 
     const approval = await request('/api/payroll/adjustments', { method: 'PUT', headers,
       body: JSON.stringify({ AdjustmentID: adjustmentIds[0], Action: 'approve' }) })
-    assert.equal(approval.response.status, 409, JSON.stringify(approval.body))
+    assert.equal(approval.response.status, 400, JSON.stringify(approval.body))
     const duplicate = await request('/api/payroll/adjustments', { method: 'POST', headers, body: JSON.stringify(payload) })
     assert.equal(duplicate.response.status, 409, JSON.stringify(duplicate.body))
     const cancelled = await request('/api/payroll/adjustments', { method: 'PUT', headers,
@@ -86,7 +86,7 @@ async function main() {
     const recreated = await request('/api/payroll/adjustments', { method: 'POST', headers, body: JSON.stringify(payload) })
     assert.equal(recreated.response.status, 200, JSON.stringify(recreated.body))
     adjustmentIds.push(Number(recreated.body.id))
-    assert.equal(recreated.body.status, 'Ready for Payroll')
+    assert.equal(recreated.body.status, 'Draft')
     console.log('Verified missed day workflow passed: ordinary-rate Sunday, direct hours, optional shift, no separate approval, duplicate claim, and cancellation release.')
   } finally {
     for (const id of adjustmentIds) {

@@ -8,6 +8,7 @@ import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/aler
 import { attachPendingEmployeeStatuses, employeeStatusAttendanceStatuses } from './employeeStatusCrud.ts'
 import { attendanceStatuses } from '../../shared/utils/attendanceStatuses'
 import { effectiveAmountSql } from './rateVersions'
+import { readyAdjustmentsForComputedDtr } from './payrollAdjustmentCrud'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { dtrDeploymentAtDate } from './dtrDeploymentDates'
 
@@ -303,6 +304,7 @@ export async function computeDtr(event: any) {
         ? 'Computed to Both'
         : target === 'payroll' ? 'Computed to Payroll' : 'Computed to Billing'
     await connection.execute('UPDATE attendance_dtr SET Status = ? WHERE BatchID = ?', [nextStatus, id])
+    await readyAdjustmentsForComputedDtr(connection, id, session.sub)
     if (target === 'payroll') {
       await connection.execute(`INSERT INTO payroll_processing_review
         (BatchID, ReviewStatus, SnapshotJson, ApprovedBy, ApprovedAt, RejectedBy, RejectedAt, RejectionReason)

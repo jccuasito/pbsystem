@@ -23,7 +23,7 @@ async function main() {
   try {
     const [[user]] = await connection.query("SELECT UserID, Email, UserType FROM `user` WHERE Status = 'Active' AND UserType IN ('Admin', 'Supervisor') ORDER BY UserType = 'Admin' DESC, UserID LIMIT 1")
     assert.ok(user, 'An active Admin or Supervisor is required for the workflow test.')
-    const [[candidate]] = await connection.query(`SELECT source.BatchID AS SourceBatchID, target.BatchID AS TargetBatchID,
+    const [[candidate]] = await connection.query(`SELECT source.BatchID AS SourceBatchID, target.BatchID AS TargetBatchID, target.Status AS TargetStatus,
       at.EmployeeID, DATE_FORMAT(at.AttendanceDate, '%Y-%m-%d') AS AttendanceDate
       FROM attendance at
       INNER JOIN attendance_dtr source ON source.BatchID = at.BatchID
@@ -76,12 +76,8 @@ async function main() {
     assert.equal(create.response.status, 200, JSON.stringify(create.body))
     createdId = Number(create.body.id)
     assert.ok(createdId > 0)
-    assert.equal(create.body.status, 'For Approval')
+    assert.equal(create.body.status, String(candidate.TargetStatus).startsWith('Computed to ') ? 'Ready for Payroll' : 'Draft')
     assert.ok(Number(create.body.lineCount) > 0)
-
-    const approve = await request('/api/payroll/adjustments', { method: 'PUT', headers, body: JSON.stringify({ AdjustmentID: createdId, Action: 'approve' }) })
-    assert.equal(approve.response.status, 200, JSON.stringify(approve.body))
-    assert.equal(approve.body.status, 'Approved')
 
     const duplicate = await request('/api/payroll/adjustments', { method: 'POST', headers, body: JSON.stringify({
       EmployeeID: candidate.EmployeeID,
@@ -109,7 +105,7 @@ async function main() {
       Submit: false,
     }) })
     assert.equal(emptyDates.response.status, 400, JSON.stringify(emptyDates.body))
-    console.log(`Payroll adjustment workflow passed using DTR-${candidate.SourceBatchID} -> DTR-${candidate.TargetBatchID}; eligible-cutoff filtering, saved attendance, approval, and duplicate blocking passed.`)
+    console.log(`Payroll adjustment workflow passed using DTR-${candidate.SourceBatchID} -> DTR-${candidate.TargetBatchID}; eligible-cutoff filtering, saved attendance, payroll readiness, and duplicate blocking passed.`)
   } finally {
     if (createdId) {
       await connection.beginTransaction()
