@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
+import '../../../../assets/css/setup-directory.css'
 
 type Status = 'Active' | 'Inactive'
 type Kind = 'Loan' | 'Deduction' | 'Contribution' | 'Recurring Deduction'
@@ -42,6 +43,7 @@ const modalKind = ref<'type' | 'classification'>('type')
 const editing = ref<any>(null)
 const modalError = ref('')
 const confirmItem = ref<{ resource: string; id: number; name: string } | null>(null)
+const expandedKinds = ref(new Set<Kind>())
 const collapsedClassifications = ref<Set<string>>(new Set())
 const collapsedStateInitialized = ref(false)
 const parentClassificationLocked = ref(false)
@@ -119,6 +121,15 @@ const groupedTypes = computed(() => {
     .filter(group => group.matches)
     .sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
 })
+const catalogSections = computed(() => ([
+  { kind: 'Contribution', title: 'Contributions', hint: 'Scheduled employee contributions.' },
+  { kind: 'Recurring Deduction', title: 'Recurring deductions', hint: 'Scheduled deductions, including items with optional refunds.' },
+  { kind: 'Deduction', title: 'Deductions', hint: 'Items assigned through employee deduction accounts.' },
+  { kind: 'Loan', title: 'Loans', hint: 'Items assigned through employee loan accounts.' },
+] as const).map(section => {
+  const groups = groupedTypes.value.filter(group => group.kind === section.kind)
+  return { ...section, groups, count: groups.reduce((total, group) => total + group.items.length, 0) }
+}).filter(section => section.groups.length))
 const groupedChildCount = computed(() => groupedTypes.value.reduce((total, group) => total + group.items.length, 0))
 const modalTitle = computed(() => {
   if (modalKind.value === 'classification') return editing.value ? 'Edit classification' : 'Add classification'
@@ -268,6 +279,24 @@ function typeResource(item: CatalogItem) {
   return item.kind === 'Loan' ? 'loan-type' : 'deduction-type'
 }
 
+function toggleKind(kind: Kind) {
+  const next = new Set(expandedKinds.value)
+  next.has(kind) ? next.delete(kind) : next.add(kind)
+  expandedKinds.value = next
+}
+watch([search, kindFilter, classificationFilter, statusFilter], () => {
+  const filtered = search.value.trim() || kindFilter.value || classificationFilter.value || statusFilter.value !== 'Active'
+  expandedKinds.value = new Set(filtered ? catalogSections.value.map(section => section.kind) : [])
+  if (!search.value.trim() && !classificationFilter.value) return
+  const next = new Set(collapsedClassifications.value)
+  for (const group of groupedTypes.value) next.delete(group.key)
+  collapsedClassifications.value = next
+})
+
+function isCollapsed(key: string) {
+  return collapsedClassifications.value.has(key)
+}
+
 function toggleClassification(key: string) {
   const next = new Set(collapsedClassifications.value)
   next.has(key) ? next.delete(key) : next.add(key)
@@ -295,79 +324,100 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 
     <div v-if="pageError" class="error-banner" role="alert"><span>{{ pageError }}</span><button type="button" aria-label="Dismiss error" @click="pageError = ''">×</button></div>
 
-    <section class="filters" aria-label="Catalog filters">
+    <section class="filters directory-filters" aria-label="Catalog filters">
       <label class="search-field"><span>Search catalog</span><input v-model="search" type="search" placeholder="Search classification or sub-classification"></label>
       <label><span>Type</span><select v-model="kindFilter"><option value="">All</option><option value="Loan">Loans</option><option value="Deduction">Deductions</option><option value="Contribution">Contributions</option><option value="Recurring Deduction">Recurring deductions</option></select></label>
       <label><span>Classification</span><select v-model="classificationFilter"><option value="">All classifications</option><option v-for="item in classifications" :key="item.ClassificationID" :value="String(item.ClassificationID)">{{ item.ClassificationName }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
 
-    <div class="list-summary">
-      <span>{{ loading ? 'Loading catalog…' : `Showing ${groupedTypes.length} ${groupedTypes.length === 1 ? 'classification' : 'classifications'} and ${groupedChildCount} ${groupedChildCount === 1 ? 'sub-classification' : 'sub-classifications'}` }}</span>
+    <div class="list-summary setup-directory-heading"><div><h2>Catalog types</h2><p>Browse classifications and their reusable items.</p></div>
+      <span class="directory-total">{{ loading ? 'Loading catalog…' : `Showing ${groupedTypes.length} ${groupedTypes.length === 1 ? 'classification' : 'classifications'} and ${groupedChildCount} ${groupedChildCount === 1 ? 'sub-classification' : 'sub-classifications'}` }}</span>
       <button v-if="search || kindFilter || classificationFilter || statusFilter !== 'Active'" type="button" @click="clearFilters">Clear filters</button>
     </div>
 
-    <div class="desktop-table">
-      <table>
-        <thead><tr><th>Name</th><th>Status</th><th class="actions-heading">Actions</th></tr></thead>
-        <tbody>
-          <tr v-if="loading" class="table-message"><td colspan="3">Loading sub-classifications…</td></tr>
-          <tr v-else-if="!groupedTypes.length" class="table-message"><td colspan="3"><strong>No catalog entries found.</strong><span>Add a classification and its first sub-classification.</span></td></tr>
-          <template v-for="group in groupedTypes" :key="group.key">
-            <tr class="classification-group-row">
-              <td colspan="3">
-                <div class="classification-bar">
-                  <button type="button" class="classification-toggle" :aria-expanded="!collapsedClassifications.has(group.key)" @click="toggleClassification(group.key)">
-                    <span class="chevron" :class="{ collapsed: collapsedClassifications.has(group.key) }">⌄</span>
-                    <span class="classification-title">
-                      <strong>{{ group.name }}</strong>
-                      <span class="classification-meta"><small>Classification</small><span class="kind" :class="`kind--${group.kind.toLowerCase().replaceAll(' ', '-')}`">{{ group.kind }}</span><span class="child-count">{{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</span></span>
-                    </span>
-                  </button>
-                  <span class="status classification-status" :class="`status--${group.classification.Status.toLowerCase()}`">{{ group.classification.Status }}</span>
-                  <div class="classification-actions">
-                    <button class="add-child" type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">+ Add sub-classification</button>
-                    <button type="button" @click="openClassification(group.classification)">Edit</button>
-                    <button type="button" :disabled="group.classification.Status === 'Inactive'" @click="requestDeactivate('classification', group.classification.ClassificationID, group.classification.ClassificationName)">Deactivate</button>
+    <p v-if="loading" class="catalog-empty" role="status">Loading catalog...</p>
+    <p v-else-if="!catalogSections.length" class="catalog-empty">No catalog entries match the current filters.</p>
+    <div v-else class="catalog-directory setup-directory">
+      <div class="directory-columns" aria-hidden="true"><span>Type</span><span>Classifications</span><span>Items</span><span></span></div>
+    <section v-for="section in catalogSections" :key="section.kind" class="catalog-section" :class="{'is-open':expandedKinds.has(section.kind)}" :aria-labelledby="`catalog-${section.kind.replaceAll(' ', '-')}`">
+      <header class="catalog-section-heading">
+        <h2 :id="`catalog-${section.kind.replaceAll(' ', '-')}`"><button type="button" class="catalog-type-toggle directory-row" :aria-expanded="expandedKinds.has(section.kind)" :aria-controls="`catalog-content-${section.kind.replaceAll(' ', '-')}`" @click="toggleKind(section.kind)">
+          <span class="directory-icon" :class="`directory-icon--${section.kind.toLowerCase().replaceAll(' ', '-')}`" aria-hidden="true"><svg viewBox="0 0 24 24">
+            <template v-if="section.kind==='Contribution'"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></template>
+            <template v-else-if="section.kind==='Recurring Deduction'"><path d="M20 7h-9a6 6 0 0 0-6 6M16 3l4 4-4 4M4 17h9a6 6 0 0 0 6-6M8 21l-4-4 4-4"/></template>
+            <template v-else-if="section.kind==='Deduction'"><circle cx="12" cy="12" r="8"/><path d="M8 12h8"/></template>
+            <template v-else><path d="M3 6h16v14H3zM3 6V4h13v2M15 11h6v5h-6zM17.5 13.5h.01"/></template>
+          </svg></span>
+          <span class="directory-identity"><span class="catalog-type-name directory-title">{{ section.title }}</span><span class="directory-subtitle">{{ section.hint }}</span></span>
+          <span class="directory-stats">
+          <span class="directory-metric"><span class="metric-value">{{ section.groups.length }}</span><span class="metric-label">{{ section.groups.length === 1 ? 'classification' : 'classifications' }}</span></span>
+          <span class="directory-metric"><span class="metric-value">{{ section.count }}</span><span class="metric-label">{{ section.count === 1 ? 'item' : 'items' }}</span></span>
+          </span>
+          <span class="directory-chevron" :class="{expanded:expandedKinds.has(section.kind)}" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg></span>
+        </button></h2>
+      </header>
+      <div v-show="expandedKinds.has(section.kind)" :id="`catalog-content-${section.kind.replaceAll(' ', '-')}`" class="catalog-type-content">
+      <div class="desktop-table">
+        <table>
+          <thead><tr><th>Name</th><th>Status</th><th class="actions-heading">Actions</th></tr></thead>
+          <tbody>
+            <template v-for="group in section.groups" :key="group.key">
+              <tr class="classification-group-row">
+                <td colspan="3">
+                  <div class="classification-bar">
+                    <button type="button" class="classification-toggle" :aria-expanded="!isCollapsed(group.key)" @click="toggleClassification(group.key)">
+                      <span class="chevron" :class="{ collapsed: isCollapsed(group.key) }">⌄</span>
+                      <span class="classification-title">
+                        <strong>{{ group.name }}</strong>
+                        <span class="classification-meta"><span class="child-count">{{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</span></span>
+                      </span>
+                    </button>
+                    <span class="status classification-status" :class="`status--${group.classification.Status.toLowerCase()}`">{{ group.classification.Status }}</span>
+                    <div class="classification-actions">
+                      <button class="add-child" type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">+ Add sub-classification</button>
+                      <button type="button" @click="openClassification(group.classification)">Edit</button>
+                      <button type="button" :disabled="group.classification.Status === 'Inactive'" @click="requestDeactivate('classification', group.classification.ClassificationID, group.classification.ClassificationName)">Deactivate</button>
+                    </div>
                   </div>
-                </div>
-              </td>
-            </tr>
-            <tr v-for="item in collapsedClassifications.has(group.key) ? [] : group.items" :key="`${item.kind}-${item.id}`" class="subclassification-row">
-              <td><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small></td>
-              <td><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></td>
-              <td><div class="actions"><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></div></td>
-            </tr>
-            <tr v-if="!collapsedClassifications.has(group.key) && !group.items.length" class="empty-children-row">
-              <td colspan="3"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
+                </td>
+              </tr>
+              <tr v-for="item in isCollapsed(group.key) ? [] : group.items" :key="`${item.kind}-${item.id}`" class="subclassification-row">
+                <td><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small></td>
+                <td><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></td>
+                <td><div class="actions"><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></div></td>
+              </tr>
+              <tr v-if="!isCollapsed(group.key) && !group.items.length" class="empty-children-row">
+                <td colspan="3"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
 
-    <section class="mobile-list" aria-label="Catalog hierarchy">
-      <p v-if="loading" class="mobile-message">Loading catalog…</p>
-      <p v-else-if="!groupedTypes.length" class="mobile-message">No catalog entries match the current filters.</p>
+      <section class="mobile-list" aria-label="Catalog hierarchy">
 
-      <section v-for="group in groupedTypes" :key="group.key" class="mobile-group">
-          <button type="button" class="mobile-group__head" :aria-expanded="!collapsedClassifications.has(group.key)" @click="toggleClassification(group.key)">
-            <span class="chevron" :class="{ collapsed: collapsedClassifications.has(group.key) }">⌄</span>
-            <span class="mobile-group__title"><strong>{{ group.name }}</strong><small>Classification · {{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</small></span>
-            <span class="mobile-group__badges"><span class="kind" :class="`kind--${group.kind.toLowerCase().replaceAll(' ', '-')}`">{{ group.kind }}</span><span class="status" :class="`status--${group.classification.Status.toLowerCase()}`">{{ group.classification.Status }}</span></span>
-          </button>
-          <div class="mobile-group__parent-actions"><button class="add-child" type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">+ Add sub-classification</button><button type="button" @click="openClassification(group.classification)">Edit classification</button><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="requestDeactivate('classification', group.classification.ClassificationID, group.classification.ClassificationName)">Deactivate</button></div>
-          <div v-if="!collapsedClassifications.has(group.key)" class="mobile-group__items">
-            <div class="mobile-group__items-head"><strong>Sub-classifications</strong><span>{{ group.items.length }}</span></div>
-            <div v-if="!group.items.length" class="mobile-empty"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></div>
-            <article v-for="item in group.items" :key="`${item.kind}-${item.id}`" class="record-card">
-              <header><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></header>
-              <footer><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></footer>
-            </article>
-          </div>
+        <section v-for="group in section.groups" :key="group.key" class="mobile-group">
+            <button type="button" class="mobile-group__head" :aria-expanded="!isCollapsed(group.key)" @click="toggleClassification(group.key)">
+              <span class="chevron" :class="{ collapsed: isCollapsed(group.key) }">⌄</span>
+              <span class="mobile-group__title"><strong>{{ group.name }}</strong><small>Classification · {{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</small></span>
+              <span class="mobile-group__badges"><span class="status" :class="`status--${group.classification.Status.toLowerCase()}`">{{ group.classification.Status }}</span></span>
+            </button>
+            <div class="mobile-group__parent-actions"><button class="add-child" type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">+ Add sub-classification</button><button type="button" @click="openClassification(group.classification)">Edit classification</button><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="requestDeactivate('classification', group.classification.ClassificationID, group.classification.ClassificationName)">Deactivate</button></div>
+            <div v-if="!isCollapsed(group.key)" class="mobile-group__items">
+              <div class="mobile-group__items-head"><strong>Sub-classifications</strong><span>{{ group.items.length }}</span></div>
+              <div v-if="!group.items.length" class="mobile-empty"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></div>
+              <article v-for="item in group.items" :key="`${item.kind}-${item.id}`" class="record-card">
+                <header><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></header>
+                <footer><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></footer>
+              </article>
+            </div>
+        </section>
+
       </section>
-
+      </div>
     </section>
+    </div>
 
     <Teleport to="body">
       <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">
@@ -447,6 +497,10 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 @media(max-width:650px){.catalog-page{padding:16px 12px}.page-head{align-items:stretch;flex-direction:column;margin-bottom:17px}.page-head .primary{width:100%}.tabs{width:100%}.tabs button{justify-content:center;flex:1}.filters,.filters--classifications{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.filters .search-field,.filters--classifications .search-field{grid-column:1/-1;grid-row:1}.filters label:nth-child(2){grid-column:1;grid-row:2}.filters label:nth-child(4){grid-column:2;grid-row:2}.filters label:nth-child(3){grid-column:1/-1;grid-row:3}.list-summary{align-items:flex-start;flex-direction:column;gap:5px}.mobile-group__badges .status{display:none}.modal-backdrop{align-items:end;padding:0}.catalog-modal{width:100%;max-height:calc(100dvh - 10px);gap:14px;padding:20px 14px;border-radius:16px 16px 0 0}.form-grid{grid-template-columns:1fr}.form-field--wide{grid-column:auto}.modal-footer{position:sticky;bottom:-20px;display:grid;grid-template-columns:1fr 1fr;margin:0 -14px -20px;padding:11px 14px;background:#fff;border-top:1px solid #e5eaf2}.modal-footer>button{width:100%}.confirm-modal{align-self:center;width:calc(100% - 24px);grid-template-columns:1fr;padding:20px}.confirm-modal .confirm-icon{margin-bottom:-4px}.confirm-modal footer{grid-column:auto;display:grid;grid-template-columns:1fr 1fr}.confirm-modal footer button{min-height:40px}}
 @media(max-width:370px){.tabs{display:grid;width:100%}.filters,.filters--classifications{grid-template-columns:1fr}.filters label:nth-child(n){grid-column:1;grid-row:auto}.mobile-group__head{grid-template-columns:auto minmax(0,1fr)}.mobile-group__badges{grid-column:2;justify-content:flex-start}.mobile-empty{align-items:stretch;flex-direction:column}.confirm-modal footer,.modal-footer{grid-template-columns:1fr}}
 .kind--contribution{background:#dcfce7;color:#166534}
+
+.list-summary.setup-directory-heading{margin:26px 0 14px}.catalog-section{margin:0}.catalog-section-heading{margin:0}.catalog-section-heading h2{margin:0;font-size:1rem}.catalog-type-content{padding:16px 20px 20px 68px;border-top:1px solid #e6edf5;background:#fafcff}.catalog-type-content .classification-group-row td{background:#fff}.catalog-type-content .classification-toggle{padding-top:5px;padding-bottom:5px}.catalog-type-content .classification-title{gap:5px}.catalog-type-content .classification-bar{padding:10px 0}.catalog-type-content .subclassification-row{background:#f8fbff}.catalog-empty{padding:30px;text-align:center;color:#71809a}
+@media(max-width:900px){.catalog-type-content{padding:12px 16px 16px 24px}}
+@media(max-width:650px){.catalog-type-content{padding:10px 12px 12px 20px}.list-summary.setup-directory-heading{flex-direction:row;align-items:center}.list-summary.setup-directory-heading>div{flex-basis:100%}}
 </style>
 
 <style>
@@ -492,5 +546,5 @@ html[data-theme='dark'] .catalog-modal .close:hover{background:#243757}
 html[data-theme='dark'] .catalog-modal .modal-footer{border-color:#344763;background:rgba(20,34,61,.97)}
 html[data-theme='dark'] .catalog-modal .modal-footer>button:not(.primary),html[data-theme='dark'] .confirm-modal footer button:not(.danger){border-color:#405273;background:#1b2946;color:#d3deef}
 html[data-theme='dark'] .catalog-modal .modal-error{border-color:#7f3340;background:#3d1e28;color:#fecdd3}
+html[data-theme='dark'] .catalog-type-content{background:#101d34;border-color:var(--line)}html[data-theme='dark'] .catalog-type-content .classification-group-row td{background:#172845}html[data-theme='dark'] .catalog-type-content .subclassification-row{background:#101d34}
 </style>
-

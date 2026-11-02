@@ -207,6 +207,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/philippineAddress.ts`
+  - `assets/css/setup-directory.css`
   - `components/alertmessage/logoutalert.vue`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
@@ -450,6 +451,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `assets/css/setup-directory.css`
 - API calls and handlers:
   - `DELETE /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].delete.ts`
   - `POST /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].post.ts`
@@ -473,7 +475,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/deductions-loans/contributions/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - `app/components/RefundableDeductionBalances.vue`
+  - `assets/css/setup-directory.css`
   - `components/ModernDateField.vue`
 - API calls and handlers:
   - `DELETE /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.delete.ts`
@@ -481,20 +483,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.post.ts`
   - `PUT /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.put.ts`
   - `POST /api/deductions-loans/agency-contributions/bulk` → `server/api/deductions-loans/agency-contributions/bulk.post.ts`
-  - `GET /api/deductions-loans/cash-bonds` → `server/api/deductions-loans/cash-bonds.get.ts`
-  - `POST /api/deductions-loans/cash-bonds/refund` → `server/api/deductions-loans/cash-bonds/refund.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
-  - `server/utils/cashBondCrud.ts`
-  - `server/utils/cashBondLedger.ts`
-  - `server/utils/dtrWorkflowAudit.ts`
-  - `server/utils/employeeAccountTransactionCrud.ts`
   - `server/utils/jwt.ts`
-  - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/rateVersions.ts`
-  - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
 - Static assets:
   - None detected.
