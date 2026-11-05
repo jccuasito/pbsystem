@@ -11,6 +11,7 @@ import { effectiveAmountSql } from './rateVersions'
 import { readyAdjustmentsForComputedDtr } from './payrollAdjustmentCrud'
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { dtrDeploymentAtDate } from './dtrDeploymentDates'
+import { attendanceFieldList, attendanceOverrideMap, permittedAttendanceOverrides, attendanceTimeConflict, reconcileAttendanceAllocations } from '../../shared/utils/attendanceFieldControls'
 
 type DtrBody = Record<string, unknown>
 
@@ -296,6 +297,7 @@ export async function computeDtr(event: any) {
       const names = uncoded.slice(0, 3).map((employee: any) => `${employee.EmployeeNumber || employee.EmployeeName}${employee.UncodedWorkDates ? ': ' + employee.UncodedWorkDates : ''}`).join('; ')
       throw createError({ statusCode: 409, statusMessage: `${uncoded.length} employee${uncoded.length === 1 ? '' : 's'} ${uncoded.length === 1 ? 'has' : 'have'} worked attendance without a shift code (${names}${uncoded.length > 3 ? ', ...' : ''}). Select a shift code for the affected dates in Edit DTR before computing to ${target}.` })
     }
+    if (current.Status === 'Draft') await restoreDisabledAttendanceOverrides(connection, current, await sitePolicyForBatch(connection, current))
     await syncBatchHolidays(connection, current, session.sub)
     if (target === 'payroll') await assertDtrBtrReady(connection, current)
     const nextStatus = current.Status === 'Computed to Both'
@@ -460,11 +462,14 @@ async function sitePolicyForBatch(connection: any, batch: any) {
       COALESCE(sp.DefaultBreakMinutes, 0) AS DefaultBreakMinutes,
       COALESCE(sp.RelieverPositionOverrideEnabled, 0) AS RelieverPositionOverrideEnabled,
       COALESCE(sp.AutoWDOEnabled, 1) AS AutoWDOEnabled,
-      COALESCE(sp.SundayWDOOTEnabled, 0) AS SundayWDOOTEnabled
+      COALESCE(sp.SundayWDOOTEnabled, 0) AS SundayWDOOTEnabled,
+      COALESCE(fc.EditableFields, '[]') AS AttendanceEditableFields
     FROM site s
     LEFT JOIN site_policy sp ON sp.SiteID = s.SiteID AND sp.Status = 'Active'
+    LEFT JOIN site_attendance_field_control fc ON fc.SiteID = s.SiteID
     WHERE s.SiteID = ?`, [batch.SiteID])
-  return policy || { DayShiftNDEnabled: 0, AutoBreakEnabled: 0, DefaultBreakMinutes: 0, RelieverPositionOverrideEnabled: 0, AutoWDOEnabled: 1, SundayWDOOTEnabled: 0 }
+  if (policy) return { ...policy, AttendanceEditableFields: attendanceFieldList(policy.AttendanceEditableFields) }
+  return { AttendanceEditableFields: [], DayShiftNDEnabled: 0, AutoBreakEnabled: 0, DefaultBreakMinutes: 0, RelieverPositionOverrideEnabled: 0, AutoWDOEnabled: 1, SundayWDOOTEnabled: 0 }
 }
 
 function autoBreakHours(policy: any) {
@@ -509,6 +514,7 @@ export async function getDtrSitePolicy(event: any) {
 export async function updateDtrSitePolicy(event: any) {
   const session = requireSession(event)
   const id = batchId(event), body = await readBody<Record<string, unknown>>(event) || {}
+  if (body.FieldControlsOnly === true) return updateAttendanceFieldControls(id, body, session.sub)
   const dayShiftNDEnabled = optionalBoolean(body.DayShiftNDEnabled, 'Day shift Night Differential')
   const autoBreakEnabled = optionalBoolean(body.AutoBreakEnabled, 'Automatic break')
   const relieverPositionOverrideEnabled = optionalBoolean(body.RelieverPositionOverrideEnabled, 'Reliever position override')
@@ -549,6 +555,88 @@ export async function updateDtrSitePolicy(event: any) {
     const specialHolidays = await specialHolidayOptionsForBatch(connection, batch)
     await connection.commit()
     return { success: true, policy, specialHolidays, recalculatedDayShiftRecords, recalculatedWdoEmployees: enrollments.length }
+  } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
+}
+
+function checkedManualOverrides(value: unknown, policy: any) {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) throw createError({ statusCode: 400, statusMessage: 'Manual field overrides must be an object.' })
+  const parsed = attendanceOverrideMap(value), allowed = new Set(attendanceFieldList(policy.AttendanceEditableFields))
+  for (const [key, amount] of Object.entries(value)) {
+    if (!(key in parsed) || typeof amount !== 'number' || !allowed.has(key as any)) throw createError({ statusCode: 400, statusMessage: `Manual editing is disabled or the value is invalid for ${key}.` })
+  }
+  return parsed
+}
+
+async function applySavedAttendanceOverrides(connection: any, batch: any, policy?: any, employeeId?: number) {
+  if (batch.Status !== 'Draft') return
+  const [records] = await connection.execute<any[]>(`SELECT AttendanceID, AttendanceStatus, ManualFieldOverrides, IsWDO, ${hourColumns.join(', ')} FROM attendance WHERE BatchID = ? AND ManualFieldOverrides IS NOT NULL${employeeId ? ' AND EmployeeID = ?' : ''} FOR UPDATE`, employeeId ? [batch.BatchID, employeeId] : [batch.BatchID])
+  if (!records.length) return
+  const settings = policy || await sitePolicyForBatch(connection, batch)
+  for (const record of records) {
+    if (noWorkAttendanceStatuses.has(normalizeAttendanceStatus(record.AttendanceStatus))) continue
+    const manual = permittedAttendanceOverrides(record.ManualFieldOverrides, settings.AttendanceEditableFields)
+    const entries = Object.entries(manual)
+    if (!entries.length) continue
+    const changed = entries.filter(([key, value]) => Number(record[key]) !== Number(value))
+    const updates = changed.map(([key]) => `${key} = ?`), values: any[] = changed.map(([, value]) => value)
+    if (entries.some(([key]) => key.startsWith('RestDay'))) {
+      const merged = { ...record, ...manual }
+      const isWdo = ['RestDayHours', 'RestDayOTHours', 'RestDayLegalHolidayHours', 'RestDayLegalHolidayOTHours', 'RestDaySpecialHolidayHours', 'RestDaySpecialHolidayOTHours'].some(key => Number(merged[key]) > 0) ? 1 : 0
+      if (Number(record.IsWDO) !== isWdo) { updates.push('IsWDO = ?'); values.push(isWdo) }
+    }
+    if (!updates.length) continue
+    await connection.execute(`UPDATE attendance SET ${updates.join(', ')} WHERE AttendanceID = ?`, [...values, record.AttendanceID])
+  }
+}
+
+async function restoreDisabledAttendanceOverrides(connection: any, batch: any, policy: any) {
+  if (batch.Status !== 'Draft') return 0
+  const [records] = await connection.execute<any[]>(`SELECT at.*, DATE_FORMAT(at.TimeIn, '%Y-%m-%d %H:%i:%s') AS InputTimeIn, DATE_FORMAT(at.TimeOut, '%Y-%m-%d %H:%i:%s') AS InputTimeOut, sc.ShiftType, sc.TimeIn AS ScheduledTimeIn, sc.TimeOut AS ScheduledTimeOut, sc.RegularHours AS ScheduledRegularHours, sc.RegularOTCap, sc.NDEnabled, sc.NDStartTime, sc.NDEndTime
+    FROM attendance at LEFT JOIN shift_code sc ON sc.ShiftCodeID = at.ShiftCodeID
+    WHERE at.BatchID = ? AND at.ManualFieldOverrides IS NOT NULL FOR UPDATE`, [batch.BatchID])
+  let changed = 0
+  for (const record of records) {
+    const previous = attendanceOverrideMap(record.ManualFieldOverrides)
+    const noWork = noWorkAttendanceStatuses.has(normalizeAttendanceStatus(record.AttendanceStatus))
+    const manual = noWork ? {} : permittedAttendanceOverrides(previous, policy.AttendanceEditableFields)
+    if (!noWork && Object.keys(previous).every(key => key in manual)) continue
+    let automatic = hourColumns.map(column => Number(record[column] || 0))
+    const timeIn = mysqlDateTime(record.InputTimeIn, 'Time in'), timeOut = mysqlDateTime(record.InputTimeOut, 'Time out')
+    if (record.ShiftCodeID && timeIn && timeOut) {
+      const shift = { ...record, TimeIn: record.ScheduledTimeIn, TimeOut: record.ScheduledTimeOut, RegularHours: record.ScheduledRegularHours }
+      automatic = applyAutoBreak(importedDutyHours(shift, databaseDate(record.AttendanceDate), timeIn, timeOut, policy), policy)
+    } else if (!record.ShiftCodeID) {
+      const [[duty]] = await connection.execute<any[]>(`SELECT ${['RegularHours','OTHours','OTExtHours','NightDiffHours','LateHours','UndertimeHours'].map(column => `COALESCE(SUM(${column}),0) AS ${column}`).join(', ')} FROM attendance_duty WHERE AttendanceID = ?`, [record.AttendanceID])
+      automatic = applyAutoBreak(hourColumns.map(column => Number(duty?.[column] || 0)), policy)
+    }
+    if (noWorkAttendanceStatuses.has(normalizeAttendanceStatus(record.AttendanceStatus))) automatic = hourColumns.map(() => 0)
+    const reconciled = reconcileAttendanceAllocations({ ...Object.fromEntries(hourColumns.map((key,index) => [key,automatic[index]])), TimeIn: timeIn, TimeOut: timeOut }, manual, policy)
+    automatic = hourColumns.map(key => Number(reconciled[key] || 0))
+    await connection.execute(`UPDATE attendance SET ${hourColumns.map(column => `${column} = ?`).join(', ')}, ManualFieldOverrides = ? WHERE AttendanceID = ?`, [...automatic, Object.keys(manual).length ? JSON.stringify(manual) : null, record.AttendanceID])
+    changed++
+  }
+  return changed
+}
+
+async function updateAttendanceFieldControls(id: number, body: any, actorId: number) {
+  const fields = attendanceFieldList(body.AttendanceEditableFields)
+  if (!Array.isArray(body.AttendanceEditableFields) || fields.length !== body.AttendanceEditableFields.length) throw createError({ statusCode: 400, statusMessage: 'Choose only supported attendance fields, without duplicates.' })
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const batch = await batchDetail(connection, id, true); assertEditableBatch(batch)
+    await connection.execute(`INSERT INTO site_attendance_field_control (SiteID, EditableFields, UpdatedBy) VALUES (?, ?, ?)
+      ON DUPLICATE KEY UPDATE EditableFields = VALUES(EditableFields), UpdatedBy = VALUES(UpdatedBy)`, [batch.SiteID, JSON.stringify(fields), actorId])
+    const policy = await sitePolicyForBatch(connection, batch)
+    const restoredRecords = await restoreDisabledAttendanceOverrides(connection, batch, policy)
+    await syncDayShiftNightDifferential(connection, batch, policy, actorId)
+    await syncBatchHolidays(connection, batch, actorId)
+    const [enrollments] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ?', [id])
+    for (const row of enrollments) await syncAutoWdo(connection, batch, Number(row.EmployeeID), policy)
+    await applySavedAttendanceOverrides(connection, batch, policy)
+    await connection.commit()
+    return { success: true, policy, restoredRecords }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
@@ -829,6 +917,7 @@ async function syncAutoWdo(connection: any, batch: any, employeeId: number, supp
       [allocation.restDayHours, allocation.restDayOtHours, row.AttendanceID],
     )
   }
+  await applySavedAttendanceOverrides(connection, batch, policy, employeeId)
   return markerIds.length
 }
 
@@ -839,13 +928,14 @@ export async function listDtrRecords(event: any) {
   try {
     await connection.beginTransaction()
     const batch = await batchDetail(connection, id, true)
+    const policy = await sitePolicyForBatch(connection, batch)
+    if (batch.Status === 'Draft' && event.context.moduleCanEdit !== false) await restoreDisabledAttendanceOverrides(connection, batch, policy)
     if (event.context.moduleCanEdit !== false) {
       await syncPermanentSiteEmployees(connection, batch, session.sub)
       await attachPendingEmployeeStatuses(connection, batch, session.sub)
       await syncBatchHolidays(connection, batch, session.sub)
       await syncAutomaticAttendanceStatuses(connection, batch)
     }
-    const policy = await sitePolicyForBatch(connection, batch)
     if (batch.Status === 'Draft' && event.context.moduleCanEdit !== false) {
       const [enrollments] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? ORDER BY EmployeeID FOR UPDATE', [id])
       for (const enrollment of enrollments) await syncAutoWdo(connection, batch, Number(enrollment.EmployeeID), policy)
@@ -865,7 +955,7 @@ export async function listDtrRecords(event: any) {
       WHERE de.BatchID = ? GROUP BY de.EmployeeID, p.PositionName, ed.DeploymentID, ed.StartDate, ed.EndDate, de.IsPermanentSite, de.AttendanceType, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName
       ORDER BY e.LastName, e.FirstName, e.MiddleName`, [batch.PeriodEnd, batch.PeriodStart, batch.PeriodEnd, batch.PeriodStart, id]), connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftName, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime
         FROM shift_code WHERE AgencyID = ? AND Status = 'Active' ORDER BY ShiftCode, ShiftName`, [batch.AgencyID]), connection.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.AttendanceDate, at.ShiftCodeID, at.AttendanceStatus, at.AttendanceType, at.IsWDO, at.HolidayID,
-        at.TimeIn, at.TimeOut, at.Remarks, at.WorkdayCount, at.WorkAgencyPositionID, at.WorkSiteRateID, at.WorkPositionName, at.WorkPayrollRegularRate, at.WorkBillingRegularRate, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
+        at.TimeIn, at.TimeOut, at.Remarks, at.ManualFieldOverrides, at.WorkdayCount, at.WorkAgencyPositionID, at.WorkSiteRateID, at.WorkPositionName, at.WorkPayrollRegularRate, at.WorkBillingRegularRate, ${hourColumns.map(column => `at.${column}`).join(', ')}, sc.ShiftCode, sc.ShiftName, sc.ShiftType, h.HolidayName, h.HolidayType,
         COALESCE(sc.RegularHours, (SELECT MAX(status_shift.RegularHours) FROM attendance_duty status_duty INNER JOIN shift_code status_shift ON status_shift.ShiftCodeID = status_duty.ShiftCodeID WHERE status_duty.AttendanceID = at.AttendanceID)) AS ShiftRegularHours,
         CASE WHEN EXISTS (
           SELECT 1 FROM attendance_duty flexible_duty
@@ -1239,6 +1329,7 @@ async function syncBatchHolidays(connection: Pick<PoolConnection, 'execute'>, ba
     await connection.execute(`UPDATE attendance SET HolidayID = ?, WorkdayCount = ?, AttendanceStatus = ?, ${holidayHourColumns.map(column => `${column} = ?`).join(', ')}, UpdatedBy = ? WHERE AttendanceID = ?`, [next.holidayId, workdayCount, status, ...holidayHourColumns.map(column => next.values[hourColumns.indexOf(column)]), updatedBy, row.AttendanceID])
     changed++
   }
+  await applySavedAttendanceOverrides(connection, batch)
   return changed
 }
 
@@ -1248,7 +1339,7 @@ async function syncBatchHolidays(connection: Pick<PoolConnection, 'execute'>, ba
 // would otherwise make ordinary 07:00–19:00 duty look like night work.
 async function syncDayShiftNightDifferential(connection: any, batch: any, policy: any, updatedBy: number) {
   if (batch.Status !== 'Draft') return 0
-  const [attendanceRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.NightDiffHours, sc.ShiftType,
+  const [attendanceRows] = await connection.execute<any[]>(`SELECT at.AttendanceID, at.NightDiffHours, at.ManualFieldOverrides, sc.ShiftType,
     DATE_FORMAT(at.TimeIn, '%Y-%m-%d %H:%i:%s') AS TimeIn,
     DATE_FORMAT(at.TimeOut, '%Y-%m-%d %H:%i:%s') AS TimeOut
     FROM attendance at
@@ -1257,7 +1348,7 @@ async function syncDayShiftNightDifferential(connection: any, batch: any, policy
     FOR UPDATE`, [batch.BatchID])
   let changed = 0
   for (const row of attendanceRows) {
-    const nightDiffHours = shiftNightDifferentialHours(row.TimeIn, row.TimeOut, row, policy)
+    const nightDiffHours = permittedAttendanceOverrides(row.ManualFieldOverrides, policy.AttendanceEditableFields).NightDiffHours ?? shiftNightDifferentialHours(row.TimeIn, row.TimeOut, row, policy)
     if (Number(row.NightDiffHours || 0) === nightDiffHours) continue
     await connection.execute('UPDATE attendance SET NightDiffHours = ?, UpdatedBy = ? WHERE AttendanceID = ?', [nightDiffHours, updatedBy, row.AttendanceID])
     changed++
@@ -1312,7 +1403,7 @@ async function applyDtrShiftBatchBody(event: any, body: { EmployeeID?: unknown, 
         const updateColumns = hourColumns.map(column => column + ' = ?').join(', ')
         // A cutoff apply is an intentional reset: replace every per-day status, manual
         // time/hours, holiday marker, and remark with the selected shift's clean values.
-        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = \'Present\', AttendanceType = ?, HolidayID = ?, Remarks = NULL, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [datedEnrollment.DeploymentID, id, shiftCodeId, workdayCount, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, holiday.holidayId, session.sub, current.AttendanceID])
+        await connection.execute('UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ' + updateColumns + ', AttendanceStatus = \'Present\', AttendanceType = ?, HolidayID = ?, Remarks = NULL, ManualFieldOverrides = NULL, IsManualEdit = 1, UpdatedBy = ? WHERE AttendanceID = ?', [datedEnrollment.DeploymentID, id, shiftCodeId, workdayCount, shiftTimeIn, shiftTimeOut, ...hourValues, enrollment.AttendanceType, holiday.holidayId, session.sub, current.AttendanceID])
       } else {
         await connection.execute<any>('INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ' + columns + ', HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ' + placeholders + ', ?, \'Present\', ?, 1, ?)', [employeeId, datedEnrollment.DeploymentID, shiftCodeId, workdayCount, id, attendanceDate, shiftTimeIn, shiftTimeOut, ...hourValues, holiday.holidayId, enrollment.AttendanceType, session.sub])
       }
@@ -1472,7 +1563,7 @@ async function importDtrAttendanceRows(event: any, body: { Rows?: unknown }, ses
       const conflict = attendanceConflict(await otherDtrAttendance(connection, Number(enrollment.EmployeeID), id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
       if (conflict) { skip(conflict); continue }
       if (existing) {
-        await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = NULL, UpdatedBy = ? WHERE AttendanceID = ?`, [enrollment.DeploymentID, shift?.ShiftCodeID || null, workdayCount, timeIn, timeOut, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub, existing.AttendanceID])
+        await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = NULL, ManualFieldOverrides = NULL, UpdatedBy = ? WHERE AttendanceID = ?`, [enrollment.DeploymentID, shift?.ShiftCodeID || null, workdayCount, timeIn, timeOut, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub, existing.AttendanceID])
         updated++
       } else {
         await connection.execute(`INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${placeholders}, ?, ?, ?, 1, ?)`, [enrollment.EmployeeID, enrollment.DeploymentID, shift?.ShiftCodeID || null, workdayCount, id, attendanceDate, timeIn, timeOut, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub])
@@ -1657,7 +1748,7 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       const holiday = holidayHours(baseValues, attendanceStatus, summary.TimeIn, summary.TimeOut, holidays.get(attendanceDate))
       const payableDays = noWorkStatus || holiday.holidayId ? 1 : Math.max(1, Math.floor(Number(summary.RegularHours || 0) / 8))
       const summaryShiftCodeId = Number(summary.DutyCount || 0) === 1 ? Number(summary.OnlyShiftCodeID) : null
-      await connection.execute(`UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = NULL, UpdatedBy = ? WHERE AttendanceID = ?`, [enrollment.DeploymentID, id, summaryShiftCodeId, payableDays, summary.TimeIn || null, summary.TimeOut || null, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub, attendanceId])
+      await connection.execute(`UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = NULL, ManualFieldOverrides = NULL, UpdatedBy = ? WHERE AttendanceID = ?`, [enrollment.DeploymentID, id, summaryShiftCodeId, payableDays, summary.TimeIn || null, summary.TimeOut || null, ...holiday.values, holiday.holidayId, attendanceStatus, enrollment.AttendanceType, session.sub, attendanceId])
       affectedEmployeeIds.add(Number(enrollment.EmployeeID))
     }
     await syncBatchHolidays(connection, batch, session.sub)
@@ -1728,35 +1819,39 @@ export async function createDtrAttendance(event: any) {
     const attendanceType = deployment.AttendanceType === 'Reliever' ? 'Reliever' : 'Regular'
     let shift: any = null
     if (shiftCodeId) {
-      const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, ShiftType, TimeIn, TimeOut, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
+      const [[activeShift]] = await connection.execute<any[]>('SELECT ShiftCodeID, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount, NDEnabled, NDStartTime, NDEndTime FROM shift_code WHERE ShiftCodeID = ? AND AgencyID = ? AND Status = \'Active\'', [shiftCodeId, batch.AgencyID])
       shift = activeShift
       if (!shift) throw createError({ statusCode: 400, statusMessage: 'Shift code must be active under this DTR agency.' })
     }
     const timeIn = noWorkStatus ? null : mysqlDateTime(body.TimeIn, 'Time in')
     const timeOut = noWorkStatus ? null : normalizedOvernightTimeOut(timeIn, mysqlDateTime(body.TimeOut, 'Time out'), shift)
     if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) throw createError({ statusCode: 400, statusMessage: 'Time out must be after time in. For an overnight shift, use the next calendar date.' })
-    // ND is always time-window based for a selected shift. The site setting only
-    // gates Day Shift; NS/MS/SS/Flexible keep their shift-code ND behavior.
-    const manualValues = hourColumns.map(column => column === 'NightDiffHours' && shift
-      ? shiftNightDifferentialHours(timeIn, timeOut, shift, policy)
-      : hours(body[column], column))
-    // A newly selected individual shift previews the break immediately in the UI.
-    // Preserve that same preview on save instead of deducting the break twice.
-    const previewAlreadyApplied = body.AutoBreakPreviewApplied === true
-      && Number(manualValues[hourColumns.indexOf('BreakHours')] || 0) === autoBreakHours(policy)
-    const baseValues = noWorkStatus
-      ? hourColumns.map(() => 0)
-      : body.ApplySitePolicy === true && shift && !previewAlreadyApplied ? applyAutoBreak(manualValues, policy) : manualValues
+    if (!noWorkStatus && shift && (!timeIn || !timeOut)) throw createError({ statusCode: 400, statusMessage: 'Enter both Time in and Time out for worked attendance.' })
+    const manual = noWorkStatus ? {} : checkedManualOverrides(body.ManualFieldOverrides, policy)
+    const [[existing]] = await connection.execute<any[]>(`SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate,
+      EXISTS (SELECT 1 FROM attendance_duty duty WHERE duty.AttendanceID = attendance.AttendanceID) AS HasImportedDuty
+      FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE`, [employeeId, attendanceDate, id])
+    let rawValues = hourColumns.map(column => hours(body[column], column))
+    if (!noWorkStatus && !shift && Number(existing?.HasImportedDuty || 0)) {
+      const [[duty]] = await connection.execute<any[]>(`SELECT ${['RegularHours','OTHours','OTExtHours','NightDiffHours','LateHours','UndertimeHours'].map(column => `COALESCE(SUM(${column}),0) AS ${column}`).join(', ')} FROM attendance_duty WHERE AttendanceID = ?`, [existing.AttendanceID])
+      rawValues = applyAutoBreak(hourColumns.map(column => Number(duty?.[column] || 0)), policy)
+    }
+    const baseValues = noWorkStatus ? hourColumns.map(() => 0)
+      : shift && timeIn && timeOut ? applyAutoBreak(importedDutyHours(shift, attendanceDate, timeIn, timeOut, policy), policy) : rawValues
     const matchingHolidays = await activeHolidaysByDate(connection, [attendanceDate], Number(batch.SiteID))
     const holiday = holidayHours(baseValues, attendanceStatus, timeIn, timeOut, matchingHolidays.get(attendanceDate))
     const values = holiday.values
+    const reconciled = reconcileAttendanceAllocations({ ...Object.fromEntries(hourColumns.map((key,index) => [key,values[index]])), TimeIn: timeIn, TimeOut: timeOut }, manual, policy)
+    for (let index=0; index<hourColumns.length; index++) values[index] = Number(reconciled[hourColumns[index]!] || 0)
+    if (Object.keys(manual).length) {
+      const conflict = attendanceTimeConflict({ ...Object.fromEntries(hourColumns.map((key,index) => [key,values[index]])), AttendanceDate: attendanceDate, TimeIn: timeIn, TimeOut: timeOut, WorkdayCount: shift?.WorkdayCount || 1 }, manual, shift, policy)
+      if (conflict) throw createError({ statusCode: 400, statusMessage: conflict })
+    }
+    const manualJson = Object.keys(manual).length ? JSON.stringify(manual) : null
     const workdayCount = holiday.holidayId ? 1 : Number(shift?.WorkdayCount || 1)
     const columns = hourColumns.join(', '), placeholders = hourColumns.map(() => '?').join(', ')
     const remarks = typeof body.Remarks === 'string' ? body.Remarks.trim() || null : null
     if (attendanceStatus === 'Suspended' && !remarks) throw createError({ statusCode: 400, statusMessage: 'A reason is required for Suspended.' })
-    const [[existing]] = await connection.execute<any[]>(`SELECT AttendanceID, BatchID, AttendanceStatus, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate,
-      EXISTS (SELECT 1 FROM attendance_duty duty WHERE duty.AttendanceID = attendance.AttendanceID) AS HasImportedDuty
-      FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE`, [employeeId, attendanceDate, id])
     // Consolidated imported duties have their own shifts. An ordinary daily
     // entry must retain a shift now rather than fail only at cutoff computation.
     if (!noWorkStatus && !shiftCodeId && !Number(existing?.HasImportedDuty || 0)) {
@@ -1775,15 +1870,15 @@ export async function createDtrAttendance(event: any) {
       PositionName: existing.WorkPositionName, PayrollRegularRate: existing.WorkPayrollRegularRate, BillingRegularRate: existing.WorkBillingRegularRate,
     } : noWorkStatus || !requestedWorkAgencyPositionId ? null : await matchingWorkPositionRate(connection, batch, requestedWorkAgencyPositionId, attendanceDate)
     if (existing) {
-      await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkAgencyPositionID = ?, WorkSiteRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
+      await connection.execute(`UPDATE attendance SET DeploymentID = ?, ShiftCodeID = ?, WorkAgencyPositionID = ?, WorkSiteRateID = ?, WorkPositionName = ?, WorkPayrollRegularRate = ?, WorkBillingRegularRate = ?, WorkdayCount = ?, TimeIn = ?, TimeOut = ?, ${hourColumns.map(column => `${column} = ?`).join(', ')}, HolidayID = ?, AttendanceStatus = ?, AttendanceType = ?, IsManualEdit = 1, Remarks = ?, ManualFieldOverrides = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, manualJson, session.sub, existing.AttendanceID])
       const relieverPositionRows = workPositionApplyThrough && requestedWorkAgencyPositionId ? await applyWorkPositionThrough(connection, batch, employeeId, attendanceDate, workPositionApplyThrough, requestedWorkAgencyPositionId, session.sub) : 0
       await syncBatchHolidays(connection, batch, session.sub)
       const wdoCount = await syncAutoWdo(connection, batch, employeeId)
       await connection.commit(); return { id: existing.AttendanceID, updated: true, wdoCount, relieverPositionRows }
     }
     const [result] = await connection.execute<any>(`INSERT INTO attendance
-      (EmployeeID, DeploymentID, ShiftCodeID, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, Remarks, CreatedBy)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${placeholders}, ?, ?, ?, 1, ?, ?)`, [employeeId, deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, id, attendanceDate, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, session.sub])
+      (EmployeeID, DeploymentID, ShiftCodeID, WorkAgencyPositionID, WorkSiteRateID, WorkPositionName, WorkPayrollRegularRate, WorkBillingRegularRate, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${columns}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, Remarks, ManualFieldOverrides, CreatedBy)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${placeholders}, ?, ?, ?, 1, ?, ?, ?)`, [employeeId, deployment.DeploymentID, shiftCodeId, ...workPositionValues(workRate), workdayCount, id, attendanceDate, timeIn, timeOut, ...values, holiday.holidayId, attendanceStatus, attendanceType, remarks, manualJson, session.sub])
     const relieverPositionRows = workPositionApplyThrough && requestedWorkAgencyPositionId ? await applyWorkPositionThrough(connection, batch, employeeId, attendanceDate, workPositionApplyThrough, requestedWorkAgencyPositionId, session.sub) : 0
     await syncBatchHolidays(connection, batch, session.sub)
     const wdoCount = await syncAutoWdo(connection, batch, employeeId)

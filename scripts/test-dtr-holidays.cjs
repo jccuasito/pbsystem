@@ -7,7 +7,7 @@ const { parse, compileScript, compileTemplate, compileStyle } = require('@vue/co
 const vue = require('vue')
 
 const moduleState = { exports: {} }
-vm.runInNewContext(transformSync(fs.readFileSync('server/utils/dtrCrud.ts', 'utf8') + '\nmodule.exports.holidays={holidayHours,hourColumns,syncBatchHolidays,previousHolidayDate,workedAttendanceCondition};', { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: name => name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts') : name.includes('dtrDeploymentDates') ? { dtrDeploymentAtDate: async (_, enrollment) => enrollment } : {} })
+vm.runInNewContext(transformSync(fs.readFileSync('server/utils/dtrCrud.ts', 'utf8') + '\nmodule.exports.holidays={holidayHours,hourColumns,syncBatchHolidays,previousHolidayDate,workedAttendanceCondition};', { loader: 'ts', format: 'cjs' }).code, { module: moduleState, require: name => name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts') : name.includes('dtrDeploymentDates') ? { dtrDeploymentAtDate: async (_, enrollment) => enrollment } : {} })
 const { holidayHours, hourColumns, syncBatchHolidays, previousHolidayDate, workedAttendanceCondition } = moduleState.exports.holidays
 const legal = { HolidayID: 1, HolidayName: 'Test LH', HolidayType: 'Legal' }
 const special = { ...legal, HolidayID: 2, HolidayType: 'Special' }
@@ -78,7 +78,7 @@ test('paid unworked LH appears in totals only, with a blank cell and no worked d
   vm.runInNewContext(transformSync(fs.readFileSync('shared/utils/dtrAttendanceStatus.ts', 'utf8'), { loader: 'ts', format: 'cjs' }).code, { module: status })
   const attendanceStatusesModule = { exports: {} }
   vm.runInNewContext(transformSync(fs.readFileSync('shared/utils/attendanceStatuses.ts', 'utf8'), { loader: 'ts', format: 'cjs' }).code, { module: attendanceStatusesModule })
-  const context = { ...vue, onMounted() {}, defineProps: () => ({ dtr: {} }), defineEmits: () => () => {}, require: name => name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : status.exports, module: { exports: {} } }
+  const context = { ...vue, onMounted() {}, defineProps: () => ({ dtr: {} }), defineEmits: () => () => {}, require: name => name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : status.exports, module: { exports: {} } }
   const scope = vue.effectScope()
   try {
     scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports={cellText,cellSub,dayCellClass,isWorkedDay,totalDays,wdoDays,attendanceRows,summaryValue,holidays,sitePolicy,dayForm,syncHolidayHours};', { loader: 'ts', format: 'cjs' }).code, context))
@@ -138,7 +138,7 @@ test('MySQL holiday sync handles empty cells, edits, cross-cutoff eligibility an
     await db.query(`CREATE TEMPORARY TABLE attendance (AttendanceID INT AUTO_INCREMENT PRIMARY KEY,
       EmployeeID INT NOT NULL, DeploymentID INT NOT NULL, BatchID INT, AttendanceDate DATE,
       AttendanceStatus VARCHAR(20), AttendanceType VARCHAR(20) DEFAULT 'Regular', WorkdayCount INT DEFAULT 1,
-      TimeIn DATETIME NULL, TimeOut DATETIME NULL, HolidayID INT NULL, IsManualEdit INT DEFAULT 0,
+      TimeIn DATETIME NULL, TimeOut DATETIME NULL, HolidayID INT NULL, IsManualEdit INT DEFAULT 0, ManualFieldOverrides JSON NULL, IsWDO INT DEFAULT 0,
       CreatedBy INT NULL, UpdatedBy INT NULL, ${hourColumns.map(column => column + ' DECIMAL(10,2) DEFAULT 0').join(', ')},
       UNIQUE KEY employee_date (EmployeeID, AttendanceDate))`)
     await db.query('CREATE TEMPORARY TABLE attendance_dtr (BatchID INT PRIMARY KEY, AgencyID INT)')

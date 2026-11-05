@@ -249,7 +249,7 @@ export async function updateEmployeeDailyStatus(event: any) {
         if (noWorkStatuses.has(attendanceStatus)) {
           await connection.execute('DELETE FROM attendance_duty WHERE AttendanceID = ?', [existing.AttendanceID])
           await connection.execute(`UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = NULL, TimeIn = NULL, TimeOut = NULL,
-            ${hourColumns.map(column => `${column} = 0`).join(', ')}, HolidayID = NULL, AttendanceStatus = ?, AttendanceType = ?, IsWDO = 0,
+            ${hourColumns.map(column => `${column} = 0`).join(', ')}, HolidayID = NULL, ManualFieldOverrides = NULL, AttendanceStatus = ?, AttendanceType = ?, IsWDO = 0,
             IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, batchId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
         } else {
           await connection.execute(`UPDATE attendance SET DeploymentID = ?, BatchID = ?, AttendanceStatus = ?, AttendanceType = ?,

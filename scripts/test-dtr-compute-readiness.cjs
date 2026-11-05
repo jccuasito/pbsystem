@@ -29,6 +29,7 @@ function backend(roster, failStaging = false) {
     require: name => name === 'h3'
       ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: () => '79', readBody: async () => ({ target: 'billing' }) }
       : name.includes('dbconnect') ? { getConnection: async () => connection }
+        : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts')
         : name === './auth' ? { requireSession: () => ({ sub: 1 }) }
           : name === './payrollAdjustmentCrud' ? { readyAdjustmentsForComputedDtr: async () => { calls.push('stage adjustments'); if(failStaging)throw Error('Failed staging') } }
           : name === './dtrWorkflowAudit' ? { recordDtrWorkflowEvent: async () => { calls.push('audit') } }
@@ -84,6 +85,7 @@ function saveBackend({ status = 'Present', shiftCodeId = null, importedDuties = 
       if (sql.startsWith('SELECT ShiftCodeID, ShiftType')) return [[{ ShiftCodeID: 3, ShiftType: 'DS', TimeIn: '07:00:00', TimeOut: '19:00:00' }]]
       if (sql.includes('FROM holiday WHERE') || sql.startsWith('SELECT HolidayID FROM site_special_holiday')) return [[]]
       if (sql.startsWith('SELECT AttendanceID, BatchID, AttendanceStatus')) return [[{ AttendanceID: 1823, BatchID: 79, AttendanceStatus: 'Present', HasImportedDuty: Number(importedDuties) }]]
+      if (sql.includes('SUM(RegularHours)') && sql.includes('FROM attendance_duty')) return [[{ RegularHours: 8, OTHours: 4 }]]
       if (sql.includes('FROM attendance at LEFT JOIN attendance_dtr')) throw new Error('Reached overlap validation')
       throw new Error('Unexpected query: ' + sql)
     },
@@ -94,6 +96,7 @@ function saveBackend({ status = 'Present', shiftCodeId = null, importedDuties = 
     require: name => name === 'h3'
       ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: () => '79', readBody: async () => ({ EmployeeID: 13, AttendanceDate: '2026-09-30', AttendanceStatus: status, ShiftCodeID: shiftCodeId, TimeIn: '2026-09-30 07:00', TimeOut: '2026-09-30 19:00', RegularHours: 8, OTHours: 4 }) }
       : name.includes('dbconnect') ? { getConnection: async () => connection }
+        : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts')
         : name === './auth' ? { requireSession: () => ({ sub: 1 }) }
           : name.includes('dtrDeploymentDates') ? {dtrDeploymentAtDate:async(_,enrollment)=>enrollment}
           : name.includes('attendanceStatuses') ? { attendanceStatuses: ['Present', 'Absent', 'Reliever'] } : {},

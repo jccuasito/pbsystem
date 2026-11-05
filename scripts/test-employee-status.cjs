@@ -84,7 +84,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
       employee_deployment: 'DeploymentID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, SiteRateID INT, SiteID INT, DeploymentType VARCHAR(20), IsPermanentSite TINYINT, StartDate DATE, EndDate DATE',
       attendance_dtr: 'BatchID INT PRIMARY KEY, AgencyID INT, ClientID INT, SiteID INT, PeriodStart DATE, PeriodEnd DATE, Status VARCHAR(30)',
       attendance_dtr_employee: 'BatchID INT, EmployeeID INT, DeploymentID INT, AttendanceType VARCHAR(20), IsPermanentSite TINYINT, CreatedBy INT, PRIMARY KEY(BatchID,EmployeeID)',
-      attendance: `AttendanceID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, DeploymentID INT, BatchID INT NULL, AttendanceDate DATE, ShiftCodeID INT, TimeIn DATETIME, TimeOut DATETIME, AttendanceStatus VARCHAR(30), AttendanceType VARCHAR(20), IsWDO TINYINT DEFAULT 0, IsManualEdit TINYINT DEFAULT 0, Remarks VARCHAR(255), CreatedBy INT, UpdatedBy INT, CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP, UpdatedAt DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+      attendance: `AttendanceID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, DeploymentID INT, BatchID INT NULL, AttendanceDate DATE, ManualFieldOverrides JSON NULL, ShiftCodeID INT, TimeIn DATETIME, TimeOut DATETIME, AttendanceStatus VARCHAR(30), AttendanceType VARCHAR(20), IsWDO TINYINT DEFAULT 0, IsManualEdit TINYINT DEFAULT 0, Remarks VARCHAR(255), CreatedBy INT, UpdatedBy INT, CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP, UpdatedAt DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
         RegularHours DECIMAL(8,2) DEFAULT 0, OTHours DECIMAL(8,2) DEFAULT 0, OTExtHours DECIMAL(8,2) DEFAULT 0, NightDiffHours DECIMAL(8,2) DEFAULT 0, RestDayHours DECIMAL(8,2) DEFAULT 0, RestDayOTHours DECIMAL(8,2) DEFAULT 0, LegalHolidayHours DECIMAL(8,2) DEFAULT 0, LegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, LateHours DECIMAL(8,2) DEFAULT 0, UndertimeHours DECIMAL(8,2) DEFAULT 0, BreakHours DECIMAL(8,2) DEFAULT 0, HolidayID INT, UNIQUE(EmployeeID,AttendanceDate)`,
       attendance_duty: 'AttendanceDutyID INT AUTO_INCREMENT PRIMARY KEY, AttendanceID INT',
     }
@@ -148,14 +148,15 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     const present = await api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Present', StartDate: '2026-09-24', EndDate: '2026-09-24', Remarks: '' } })
     assert.equal(present.updated, 1)
     assert.equal((await c.query("SELECT AttendanceStatus FROM attendance WHERE AttendanceDate='2026-09-24'"))[0][0].AttendanceStatus, 'Present')
-    await c.query("UPDATE attendance SET RegularHours=8, TimeIn='2026-09-24 07:00:00', TimeOut='2026-09-24 15:00:00' WHERE AttendanceDate='2026-09-24'")
+    await c.query("UPDATE attendance SET ManualFieldOverrides=JSON_OBJECT('NightDiffHours',2), RegularHours=8, TimeIn='2026-09-24 07:00:00', TimeOut='2026-09-24 15:00:00' WHERE AttendanceDate='2026-09-24'")
     await c.query("INSERT INTO attendance_duty (AttendanceID) SELECT AttendanceID FROM attendance WHERE AttendanceDate='2026-09-24'")
     await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Suspended', Remarks: '' } }), /A reason is required for Suspended/)
     await api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Suspended', StartDate: '2026-09-24', EndDate: '2026-09-24', Remarks: 'HR suspension reference' } })
-    const [absentRows] = await c.query("SELECT AttendanceStatus, RegularHours, TimeIn, Remarks FROM attendance WHERE AttendanceDate='2026-09-24'")
+    const [absentRows] = await c.query("SELECT AttendanceStatus, RegularHours, TimeIn, Remarks, ManualFieldOverrides FROM attendance WHERE AttendanceDate='2026-09-24'")
     assert.equal(absentRows[0].AttendanceStatus, 'Suspended')
     assert.equal(Number(absentRows[0].RegularHours), 0)
     assert.equal(absentRows[0].TimeIn, null)
+    assert.equal(absentRows[0].ManualFieldOverrides, null)
     assert.equal(absentRows[0].Remarks, 'HR suspension reference')
     assert.equal((await c.query('SELECT COUNT(*) count FROM attendance_duty'))[0][0].count, 0)
     assert.equal((await c.query('SELECT Status FROM employee WHERE EmployeeID=8'))[0][0].Status, 'Active')

@@ -30,7 +30,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
   const context = {
     Date,
     ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 11, PeriodStart: '2026-09-01', PeriodEnd: '2026-09-15' } }), defineEmits: () => () => {},
-    module: { exports: {} }, require: name => name.includes('dtrAttendanceStatus') ? statusModule.exports : name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.endsWith('/messages') ? alertModule.exports : name.endsWith('.vue') ? {} : require(name),
+    module: { exports: {} }, require: name => name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : name.includes('dtrAttendanceStatus') ? statusModule.exports : name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.endsWith('/messages') ? alertModule.exports : name.endsWith('.vue') ? {} : require(name),
     xlsxForTest: { ...require('xlsx'), writeFile: workbook => workbooks.push(workbook) },
     $fetch: async (url, options) => {
       if (options) requests.push({ url, ...options })
@@ -38,7 +38,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
     },
   }
   vm.createContext(context)
-  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, shifts, sitePolicy, attendanceRows, relieverElsewhereRows, displayedEntry, elsewhereLabel, totalDays, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr };', { loader: 'ts', format: 'cjs' }).code, context))
+  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, dayTimeConflict, canEditAttendanceField, resetControlledField, editControlledField, shifts, sitePolicy, attendanceRows, relieverElsewhereRows, displayedEntry, elsewhereLabel, totalDays, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr };', { loader: 'ts', format: 'cjs' }).code, context))
   const state = context.module.exports
   state.shifts.value = [shift]
   state.sitePolicy.value = { ...sitePolicy }
@@ -481,3 +481,76 @@ for (const [name, shift, timeIn, timeOut, regular, ot, ext] of [
     } finally { harness.close() }
   })
 }
+
+test('field controls default to automatic and only explicitly enabled hours become editable', () => {
+  const automatic = workspace()
+  const controlled = workspace(philtob, record, { ...policy, AttendanceEditableFields: ['NightDiffHours'] })
+  try {
+    automatic.state.openDay(employee, record.AttendanceDate)
+    controlled.state.openDay(employee, record.AttendanceDate)
+    assert.equal(automatic.state.canEditAttendanceField('NightDiffHours'), false)
+    assert.equal(controlled.state.canEditAttendanceField('NightDiffHours'), true)
+    assert.equal(controlled.state.canEditAttendanceField('RegularHours'), false)
+  } finally { automatic.close(); controlled.close() }
+})
+
+test('manual ND keeps Time in, previews next-date Time out and persists an explicit override', async () => {
+  const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }
+  const saved = { ...record, TimeIn: '2026-09-01 07:00', TimeOut: '2026-09-01 19:00', LateHours: 0, OTHours: 4, BreakHours: 0 }
+  const harness = workspace(shift, saved, { AutoBreakEnabled: 0, AttendanceEditableFields: ['NightDiffHours'] })
+  try {
+    const { state } = harness
+    state.openDay(employee, record.AttendanceDate)
+    state.dayForm.value.NightDiffHours = 3
+    state.onHourInput('NightDiffHours')
+    assert.equal(state.dayForm.value.TimeIn, saved.TimeIn)
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-02 01:00')
+    assert.equal(state.dayTimeConflict.value, '')
+    state.onHourInput('NightDiffHours') // input + change must not shift the date twice
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-02 01:00')
+    await state.saveDay()
+    assert.equal(harness.requests[0].body.ManualFieldOverrides.NightDiffHours, 3)
+    assert.equal(harness.requests[0].body.TimeIn, saved.TimeIn)
+    assert.equal(harness.requests[0].body.TimeOut, '2026-09-02 01:00')
+    state.openDay(employee, record.AttendanceDate)
+    state.dayForm.value.NightDiffHours = 3; state.onHourInput('NightDiffHours')
+    state.resetControlledField('NightDiffHours')
+    assert.equal(state.dayForm.value.NightDiffHours, 0) // DS automatic ND is off at this site
+    assert.equal(Object.keys(state.dayForm.value.ManualFieldOverrides).length, 0)
+  } finally { harness.close() }
+})
+
+test('an impossible ND/clock combination stays visible as a conflict and cannot save', async () => {
+  const shift = { ...philtob, ShiftType: 'NS', TimeIn: '22:00', TimeOut: '06:00', NDEnabled: 1, NDStartTime: '22:00', NDEndTime: '06:00' }
+  const saved = { ...record, TimeIn: '2026-09-01 22:00', TimeOut: '2026-09-02 06:00', NightDiffHours: 8, LateHours: 0, BreakHours: 0 }
+  const harness = workspace(shift, saved, { AutoBreakEnabled: 0, AttendanceEditableFields: ['NightDiffHours'] })
+  try {
+    harness.state.openDay(employee, record.AttendanceDate)
+    harness.state.dayForm.value.NightDiffHours = 0
+    harness.state.onHourInput('NightDiffHours')
+    assert.match(harness.state.dayTimeConflict.value, /no matching Time out/)
+    assert.equal(harness.state.dayForm.value.TimeIn, saved.TimeIn)
+    await harness.state.saveDay()
+    assert.equal(harness.requests.length, 0)
+    assert.ok(harness.state.dayTimeConflict.value)
+  } finally { harness.close() }
+})
+
+test('manual regular allocation adjusts Time out without duplicating extension or undertime', async () => {
+  const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }
+  const harness = workspace(shift, { ...record, TimeIn: '2026-09-01 07:00', TimeOut: '2026-09-01 19:00', LateHours: 0, OTHours: 4, BreakHours: 0 }, { AutoBreakEnabled: 0, AttendanceEditableFields: ['RegularHours'] })
+  try {
+    const { state } = harness
+    state.openDay(employee, record.AttendanceDate)
+    state.dayForm.value.RegularHours = 12; state.onHourInput('RegularHours')
+    assert.equal(state.dayForm.value.TimeIn, '2026-09-01 07:00')
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 23:00')
+    assert.equal(state.dayForm.value.RegularHours, 12)
+    assert.equal(state.dayForm.value.OTHours, 4)
+    assert.equal(state.dayForm.value.OTExtHours, 0)
+    assert.equal(state.dayForm.value.UndertimeMinutes, 0)
+    assert.equal(state.dayTimeConflict.value, '')
+    await state.saveDay()
+    assert.equal(harness.requests[0].body.ManualFieldOverrides.RegularHours, 12)
+  } finally { harness.close() }
+})
