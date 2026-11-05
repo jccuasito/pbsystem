@@ -554,3 +554,73 @@ test('manual regular allocation adjusts Time out without duplicating extension o
     assert.equal(harness.requests[0].body.ManualFieldOverrides.RegularHours, 12)
   } finally { harness.close() }
 })
+
+test('manual undertime keeps custom gross regular and OT allocations through save', async () => {
+  const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }
+  for (const metadata of [{ OTHours: 5.6 }, null]) {
+    const saved = { ...record, TimeIn: '2026-09-01 07:00', TimeOut: '2026-09-01 20:36', LateHours: 0, OTHours: 5.6, OTExtHours: 0, BreakHours: 0, ManualFieldOverrides: metadata }
+    const harness = workspace(shift, saved, { AutoBreakEnabled: 0, AttendanceEditableFields: ['RegularHours','OTHours','OTExtHours','UndertimeHours'] })
+    try {
+      const { state } = harness
+      state.openDay(employee, saved.AttendanceDate)
+      state.dayForm.value.UndertimeMinutes = 60; state.onMinuteInput('UndertimeMinutes')
+      assert.equal(state.dayForm.value.RegularHours, 8)
+      assert.equal(state.dayForm.value.OTHours, 5.6)
+      assert.equal(state.dayForm.value.OTExtHours, 0)
+      assert.equal(state.dayForm.value.TimeOut, '2026-09-01 19:36')
+      assert.equal(state.dayForm.value.UndertimeMinutes, 60)
+      assert.equal(state.dayTimeConflict.value, '')
+      await state.saveDay()
+      assert.equal(harness.requests[0].body.RegularHours, 8)
+      assert.equal(harness.requests[0].body.OTHours, 5.6)
+      assert.equal(harness.requests[0].body.UndertimeHours, 1)
+    } finally { harness.close() }
+  }
+})
+
+test('late and undertime remain separate from gross hours with field controls enabled', async () => {
+  const shift = { ...philtob, TimeIn: '07:00', TimeOut: '19:00', RegularOTCap: 4 }
+  const saved = { ...record, TimeIn: '2026-09-01 07:00', TimeOut: '2026-09-01 19:00', LateHours: 0, OTHours: 4, OTExtHours: 0, BreakHours: 0 }
+  const harness = workspace(shift, saved, { AutoBreakEnabled: 0, AttendanceEditableFields: ['LateHours','UndertimeHours'] })
+  try {
+    const { state } = harness
+    state.openDay(employee, saved.AttendanceDate)
+    state.dayForm.value.LateMinutes = 60; state.onMinuteInput('LateMinutes')
+    state.dayForm.value.UndertimeMinutes = 60; state.onMinuteInput('UndertimeMinutes')
+    assert.equal(state.dayForm.value.RegularHours, 8)
+    assert.equal(state.dayForm.value.OTHours, 4)
+    assert.equal(state.dayForm.value.TimeIn, '2026-09-01 08:00')
+    assert.equal(state.dayForm.value.TimeOut, '2026-09-01 18:00')
+    assert.equal(state.dayForm.value.LateMinutes, 60)
+    assert.equal(state.dayForm.value.UndertimeMinutes, 60)
+    assert.equal(state.dayTimeConflict.value, '')
+    await state.saveDay()
+    assert.equal(harness.requests[0].body.LateHours, 1)
+    assert.equal(harness.requests[0].body.UndertimeHours, 1)
+    assert.equal(harness.requests[0].body.RegularHours, 8)
+    assert.equal(harness.requests[0].body.OTHours, 4)
+  } finally { harness.close() }
+})
+
+test('manual late updates an overnight Time in date without accumulating or moving Time out', async () => {
+  const shift = { ...philtob, ShiftType:'NS', TimeIn:'23:00', TimeOut:'11:00', RegularOTCap:4, NDEnabled:1, NDStartTime:'22:00', NDEndTime:'06:00' }
+  const saved = { ...record, TimeIn:'2026-09-01 23:00', TimeOut:'2026-09-02 11:00', RegularHours:8, OTHours:4, OTExtHours:0, BreakHours:0, LateHours:0, NightDiffHours:7 }
+  const harness = workspace(shift, saved, { AutoBreakEnabled:0, AttendanceEditableFields:['LateHours'] })
+  try {
+    const { state } = harness
+    state.openDay(employee, saved.AttendanceDate)
+    state.dayForm.value.LateMinutes=90; state.onMinuteInput('LateMinutes')
+    assert.equal(state.dayForm.value.TimeIn,'2026-09-02 00:30')
+    assert.equal(state.dayForm.value.TimeOut,saved.TimeOut)
+    assert.equal(state.dayForm.value.NightDiffHours,5.5)
+    state.onMinuteInput('LateMinutes')
+    assert.equal(state.dayForm.value.TimeIn,'2026-09-02 00:30')
+    state.dayForm.value.LateMinutes=30; state.onMinuteInput('LateMinutes')
+    assert.equal(state.dayForm.value.TimeIn,'2026-09-01 23:30')
+    assert.equal(state.dayForm.value.RegularHours,8); assert.equal(state.dayForm.value.OTHours,4)
+    assert.equal(state.dayTimeConflict.value,'')
+    await state.saveDay()
+    assert.equal(harness.requests[0].body.LateHours,.5)
+    assert.equal(harness.requests[0].body.TimeOut,saved.TimeOut)
+  } finally { harness.close() }
+})

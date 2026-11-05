@@ -26,8 +26,8 @@ const earningComponents = [
 ] as const
 
 const deductionComponents = [
-  ['LateHours', 'LateDeduction', 'Late deduction'],
-  ['UndertimeHours', 'UndertimeDeduction', 'Undertime deduction'],
+  ['LateHours', 'RegularRate', 'Late deduction'],
+  ['UndertimeHours', 'RegularRate', 'Undertime deduction'],
   ['BreakHours', 'BreakDeduction', 'Break deduction'],
 ] as const
 
@@ -347,7 +347,7 @@ export async function createPayrollAdjustment(event: any) {
       for (const [component, rateField, label] of deductionComponents) {
         const quantity = payrollDeductionHours(component, row, source)
         if (!quantity) continue
-        const rate = Number(effectiveRate[rateField] || 0)
+        const rate = Number(rateField === 'RegularRate' && row.WorkPayrollRegularRate != null ? row.WorkPayrollRegularRate : effectiveRate[rateField] || 0)
         lines.push({ attendanceId: Number(row.AttendanceID), sourceDate, component, label, entrySource: 'DTR Snapshot', direction: 'Deduction', quantity, rate, amount: -Math.round(quantity * rate * 100) / 100 })
       }
     }

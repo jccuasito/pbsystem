@@ -16,9 +16,10 @@ export const payrollHourComponents = [
   ['RestDaySpecialHolidayOTHours', 'SpecialHolidayOTRate', 'Rest day special holiday OT'],
 ] as const
 
+// Late/undertime are separate payroll deductions against regular hourly pay.
 export const payrollTimeDeductions = [
-  ['LateHours', 'LateDeduction', 'Late'],
-  ['UndertimeHours', 'UndertimeDeduction', 'Undertime'],
+  ['LateHours', 'RegularRate', 'Late'],
+  ['UndertimeHours', 'RegularRate', 'Undertime'],
   ['BreakHours', 'BreakDeduction', 'Break'],
 ] as const
 

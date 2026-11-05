@@ -28,8 +28,13 @@ test('manual fields are whitelisted, finite and explicitly enabled on the server
   assert.equal(checkedManualOverrides({ NightDiffHours: 3 }, { AttendanceEditableFields: ['NightDiffHours'] }).NightDiffHours, 3)
 })
 
-test('late edits cannot move fixed Time in, and overlapping categories add no duration', () => {
-  assert.match(controls.previewAttendanceFieldEdit({ ...day, LateHours: 1 }, 'LateHours', shift).conflict, /Time in/)
+test('late edits move Time in from the schedule, and overlapping categories add no duration', () => {
+  const late = controls.previewAttendanceFieldEdit({ ...day, LateHours: 1 }, 'LateHours', shift)
+  assert.equal(late.timeIn, '2026-09-01 08:00')
+  assert.equal(late.timeOut, day.TimeOut)
+  assert.equal(late.conflict, '')
+  assert.match(controls.attendanceTimeConflict({ ...day, LateHours: 1 }, { LateHours: 1 }, shift), /Late minutes do not match/)
+  assert.equal(controls.attendanceTimeConflict({ ...day, TimeIn:late.timeIn, LateHours:1 }, { LateHours:1 }, shift), '')
   const rest = controls.previewAttendanceFieldEdit({ ...day, RestDayHours: 8 }, 'RestDayHours', shift)
   assert.equal(rest.timeOut, day.TimeOut)
   assert.equal(rest.conflict, '')

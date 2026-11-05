@@ -17,6 +17,17 @@ test('automatic break is paid through net DTR hours without a second monetary de
   assert.equal(day.RegularHours, 8)
 })
 
+test('late and undertime deduct regular pay once while gross regular and OT stay intact', () => {
+  const day = Object.freeze({ RegularHours: 8, OTHours: 4, LateHours: 1, UndertimeHours: 1, BreakHours: 0 })
+  const rate = { RegularRate: 94.38, OTRate: 117.90, LateDeduction: 999, UndertimeDeduction: 888 }
+  const gross = componentAmountCents(day.RegularHours, rate.RegularRate) + componentAmountCents(day.OTHours, rate.OTRate)
+  const deductions = payrollTimeDeductions.reduce((sum, [hours, field]) => sum + componentAmountCents(payrollDeductionHours(hours, day, {}), rate[field]), 0)
+  assert.equal(gross, 122664)
+  assert.equal(deductions, 18876)
+  assert.equal(gross - deductions, 103788)
+  assert.equal(day.RegularHours, 8); assert.equal(day.OTHours, 4)
+})
+
 test('review display combines late and undertime without changing either deduction', () => {
   const lines = combinedLateUndertimeLines([
     { code: 'LateHours', label: 'Late', direction: 'Deduction', hours: 0.1, amount: 0.14 },

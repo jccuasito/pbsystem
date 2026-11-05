@@ -99,6 +99,7 @@ test('DTR compute automatically stages all adjustment sources and finalization p
     const h3 = { readBody: async e => e.body, getQuery: e => e.query || {}, getRouterParam: (e, key) => e.params[key], createError: details => Object.assign(new Error(details.statusMessage), details) }
     const versions = load('server/utils/rateVersions.ts', name => name.includes('rateFields') ? require('../shared/utils/rateFields.ts') : {})
     const common = name => name === 'h3' ? h3 : name.includes('dbconnect') ? pool : name.endsWith('/auth') ? { requireSession: e => e.session || { sub: 1, userType: 'Admin' } }
+      : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts')
       : name.includes('rateVersions') ? versions : name.includes('payrollPreview') ? require('../shared/utils/payrollPreview.ts')
       : name.includes('dtrDeploymentDates') ? require('../server/utils/dtrDeploymentDates.ts')
       : name.includes('cashBondLedger') ? load('server/utils/cashBondLedger.ts',common)
@@ -108,6 +109,25 @@ test('DTR compute automatically stages all adjustment sources and finalization p
     const payroll = load('server/utils/payrollProcessingCrud.ts', common)
     const payslips = load('server/utils/payslipCrud.ts', common)
     const event = (body, extra = {}) => ({ body, params: { id: '2' }, ...extra })
+    // Separate minute deductions must never rewrite gross DTR quantities or charge OT rates.
+    await db.query('UPDATE payroll_rate SET OTRate=120, LateDeduction=999, UndertimeDeduction=888 WHERE PayrollRateID=1')
+    await db.query('UPDATE attendance SET OTHours=4, LateHours=1, UndertimeHours=1 WHERE AttendanceID=1')
+    const beforeDeductionPreview = (await db.query('SELECT * FROM attendance WHERE AttendanceID=1'))[0][0]
+    const regularPayPreview = (await payroll.payrollProcessingData('2026-09-01', '2026-09-15', connection)).sites[0].employees[0]
+    assert.equal(regularPayPreview.gross, 1120)
+    assert.equal(regularPayPreview.timeDeductions, 160)
+    assert.equal(regularPayPreview.netPreview, 960)
+    assert.deepEqual((await db.query('SELECT * FROM attendance WHERE AttendanceID=1'))[0][0], beforeDeductionPreview)
+    await db.query('UPDATE attendance SET WorkPayrollRegularRate=90 WHERE AttendanceID=1')
+    const deductionAdjustment = await api.createPayrollAdjustment(event({ EmployeeID:1, SourceBatchID:1, TargetBatchID:2, SourceDates:['2026-09-10'], Reason:'Regular pay deduction regression' }))
+    assert.equal(deductionAdjustment.totalAmount, 1020)
+    const [minuteLines] = await db.execute("SELECT Rate, Amount FROM payroll_adjustment_line WHERE AdjustmentID=? AND Direction='Deduction'", [deductionAdjustment.id])
+    assert.equal(minuteLines.length, 2)
+    assert.ok(minuteLines.every(line => Number(line.Rate)===90 && Number(line.Amount)===-90))
+    await db.execute('DELETE FROM payroll_adjustment_line WHERE AdjustmentID=?', [deductionAdjustment.id])
+    await db.execute('DELETE FROM payroll_adjustment WHERE AdjustmentID=?', [deductionAdjustment.id])
+    await db.query('UPDATE attendance SET OTHours=0,LateHours=0,UndertimeHours=0,WorkPayrollRegularRate=NULL WHERE AttendanceID=1')
+    await db.query('UPDATE payroll_rate SET OTRate=0,LateDeduction=0,UndertimeDeduction=0 WHERE PayrollRateID=1')
     const body = { EmployeeID: 1, TargetBatchID: 2, ManualAmount: 700.25, AdjustmentName: 'Salary correction - approved difference', Submit: true }
     for (const changes of [{ ManualAmount: 0 }, { ManualAmount: -1 }, { ManualAmount: 1.234 }, { ManualAmount: 'Infinity' }, { ManualAmount: true }, { ManualAmount: 10000000000 }, { AdjustmentName: '' }, { AdjustmentName: 'x'.repeat(101) }, { SourceBatchID: 1 }, { SourceDates: ['2026-09-10'] }]) {
       await assert.rejects(() => api.createPayrollAdjustment(event({ ...body, ...changes })), error => error.statusCode === 400)

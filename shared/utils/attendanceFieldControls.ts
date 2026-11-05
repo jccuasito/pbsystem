@@ -61,7 +61,7 @@ export function manualNightWindowHours(timeIn: unknown, timeOut: unknown, shift:
   return Math.round(total / 3600000 * 100) / 100
 }
 
-export function previewAttendanceFieldEdit(row: any, field: AttendanceControlledField, shift: any, policy: any = {}): { timeOut: string; conflict: string } {
+export function previewAttendanceFieldEdit(row: any, field: AttendanceControlledField, shift: any, policy: any = {}): { timeIn?: string; timeOut: string; conflict: string } {
   const start = stamp(row.TimeIn), current = stamp(row.TimeOut)
   const value = Number(row[field])
   const unchanged = String(row.TimeOut || '')
@@ -80,11 +80,11 @@ export function previewAttendanceFieldEdit(row: any, field: AttendanceControlled
     if (!Number.isFinite(best)) return { timeOut: unchanged, conflict: 'This ND value has no matching Time out with the current Time in. Adjust the time or use the automatic value.' }
     end = best
   } else if (field === 'LateHours') {
-    const expected = Math.max(0, (start - scheduled(row, shift)) / 3600000)
-    if (!Number.isFinite(expected) || Math.abs(expected - value) > 1 / 120) return { timeOut: unchanged, conflict: 'Late minutes depend on Time in. Change Time in or use the matching late value; Time in will not be moved automatically.' }
-  } else if (field === 'UndertimeHours') {
-    end = scheduled(row, shift, true) - value * 3600000
-  } else if (['RegularHours', 'OTHours', 'OTExtHours', 'BreakHours'].includes(field)) {
+    const adjustedStart = scheduled(row, shift) + Math.round(value * 60) * 60000
+    if (!Number.isFinite(adjustedStart)) return { timeOut: unchanged, conflict: 'Choose a shift with a scheduled Time in before editing late minutes.' }
+    if (!Number.isFinite(current) || current <= adjustedStart || current - adjustedStart > maxHours * 3600000) return { timeOut: unchanged, conflict: 'The adjusted Time in must be before Time out and within the allowed duty duration.' }
+    return { timeIn: clock(adjustedStart), timeOut: unchanged, conflict: '' }
+  } else if (['RegularHours', 'OTHours', 'OTExtHours', 'BreakHours', 'UndertimeHours'].includes(field)) {
     const durationFields = Number(policy.AutoBreakEnabled) === 1 ? ['RegularHours', 'OTHours', 'OTExtHours', 'BreakHours'] : ['RegularHours', 'OTHours', 'OTExtHours']
     const gross = durationFields.reduce((sum, key) => sum + Math.max(0, Number(row[key] || 0)), 0)
     end = start + Math.round((gross - Number(row.LateHours || 0) - Number(row.UndertimeHours || 0)) * 60) * 60000
@@ -115,6 +115,7 @@ export function attendanceTimeConflict(row: any, overrides: unknown, shift: any,
     if (key === 'LateHours' || key === 'UndertimeHours' || /Holiday|^RestDay/.test(key)) {
       const preview = previewAttendanceFieldEdit(row, key, shift, policy)
       if (preview.conflict) return preview.conflict
+      if (key === 'LateHours' && Math.abs(stamp(preview.timeIn) - stamp(row.TimeIn)) > 30000) return 'Late minutes do not match Time in. Apply the late value again or correct Time in.'
       if (key === 'UndertimeHours' && Math.abs(stamp(preview.timeOut) - stamp(row.TimeOut)) > 30000) return 'Undertime does not match the proposed Time out.'
     }
   }
