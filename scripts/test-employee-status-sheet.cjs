@@ -36,7 +36,7 @@ function workspace(fetch) {
     : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts')
     : name.includes('employeeStatusSheet') ? { employeeStatusCutoffSummary }
     : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : {} }
-  scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports={employees,deployments,selectedYear,selectedCutoffKey,sheetEmployeeId,sheetOpen,sheetHistory,sheetHistoryLoading,sheetTotals,statusForm,statusReadOnly,canSaveStatus,statusAt,openStatusCell};', { loader: 'ts', format: 'cjs' }).code, context))
+  scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports={employees,deployments,cutoffs,sheetEmployees,selectedYear,selectedCutoffKey,sheetEmployeeId,sheetOpen,sheetHistory,sheetHistoryLoading,sheetTotals,statusForm,statusReadOnly,canSaveStatus,statusAt,openStatusCell};', { loader: 'ts', format: 'cjs' }).code, context))
   const state = module.exports
   state.employees.value = [{ EmployeeID: 8, EmployeeName: 'Test Employee' }]
   state.deployments.value = [{ EmployeeID: 8, DeploymentID: 1, StartDate: '2026-09-18', EndDate: '2026-09-20' }]
@@ -60,7 +60,7 @@ test('sheet uses full employee history, counts one record per day, and opens loc
     assert.equal(requests[0].options.query.year, '2026')
     assert.equal(harness.state.sheetTotals.value.counts.Present, 1, JSON.stringify({ totals: harness.state.sheetTotals.value, loading: harness.state.sheetHistoryLoading.value, rows: harness.state.sheetHistory.value.length, cutoff: harness.state.selectedCutoffKey.value }))
     assert.equal(harness.state.sheetTotals.value.counts.Suspended, 1)
-    assert.equal(harness.state.sheetTotals.value.missingDays, 1)
+    assert.equal(harness.state.sheetTotals.value.missingDays, 13)
     harness.state.openStatusCell({ EmployeeID: 8 }, '2026-09-19')
     assert.equal(harness.state.statusReadOnly.value, true)
     assert.equal(harness.state.canSaveStatus.value, false)
@@ -80,5 +80,28 @@ test('changing year ignores a slower response for the previous selection', async
     await vue.nextTick(); await vue.nextTick()
     assert.equal(harness.state.sheetHistory.value.length, 0)
     assert.equal(harness.state.sheetHistoryLoading.value, false)
+  } finally { harness.close() }
+})
+
+
+test('HR can encode any cutoff day without a deployment or DTR, for later Regular or Reliever enrollment', async () => {
+  const harness = workspace(async () => ({ history: [] }))
+  try {
+    const state = harness.state
+    state.deployments.value = []
+    state.sheetOpen.value = true
+    await vue.nextTick(); await new Promise(resolve => setImmediate(resolve)); await vue.nextTick()
+    assert.equal(state.sheetEmployees.value.length, 1)
+    assert.equal(state.sheetTotals.value.assignedDays, 15)
+    assert.equal(state.sheetTotals.value.missingDays, 15)
+    state.openStatusCell({ EmployeeID: 8 }, '2026-09-16')
+    state.statusForm.value.AttendanceStatus = 'Sick Leave'
+    state.statusForm.value.Remarks = 'HR medical certificate'
+    assert.equal(state.canSaveStatus.value, true)
+    assert.equal(state.statusReadOnly.value, false)
+    // A computed roster locks even an otherwise blank attendance date.
+    state.cutoffs.value = [{ EmployeeID: 8, BatchID: 5, PeriodStart: '2026-09-16', PeriodEnd: '2026-09-30', DtrStatus: 'Computed to Payroll' }]
+    assert.equal(state.statusReadOnly.value, true)
+    assert.equal(state.canSaveStatus.value, false)
   } finally { harness.close() }
 })

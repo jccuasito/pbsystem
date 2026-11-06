@@ -57,7 +57,7 @@ function backend({ enrolled = false, insertConflict = false, initialEnrollment =
   }
   const api = evaluate(fs.readFileSync('server/utils/dtrCrud.ts', 'utf8'), {
     require: name => name === 'h3' ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: event => event.id, readBody: async event => event.body } :
-      name.includes('dbconnect') ? { getConnection: async () => connection } : name === './auth' ? { requireSession: () => ({ sub: 1 }) } : name.includes('employeeStatusCrud') ? { attachPendingEmployeeStatuses: async () => {} } : name.endsWith('/messages') ? alerts : {},
+      name.includes('dbconnect') ? { getConnection: async () => connection } : name === './auth' ? { requireSession: () => ({ sub: 1 }) } : name.includes('employeeStatusCrud') ? { attachPendingEmployeeStatuses: async (_connection, batch) => { calls.push({ attachedBatch: batch.BatchID, enrolled: enrollments.has(batch.BatchID + ':2') }) } } : name.endsWith('/messages') ? alerts : {},
   })
   return { api, calls, enrollments }
 }
@@ -78,6 +78,8 @@ test('reliever enrollment is added once per DTR and may join another site in the
   assert.deepEqual(h.enrollments.get('5:2'), { type: 'Reliever', permanent: 0, deployment: 30 })
   assert.equal((await h.api.addDtrEmployee(request(10))).success, true)
   assert.equal(h.enrollments.size, 2)
+  assert.ok(h.calls.some(call => call.attachedBatch === 5 && call.enrolled), 'Read pending HR status after cutoff-only enrollment')
+  assert.ok(h.calls.some(call => call.attachedBatch === 10 && call.enrolled))
   assert.deepEqual(h.enrollments.get('10:2'), { type: 'Reliever', permanent: 0, deployment: 30 })
 })
 
@@ -115,7 +117,7 @@ function frontend(fetch) {
   const scope = vue.effectScope()
   const state = scope.run(() => evaluate(descriptor.scriptSetup.content + '\nmodule.exports={rows,employeeAlert,saving,pickerFixed,isPickerFixed,setPickerFixed,addEmployee,employeeAlreadyAdded,updatePermanentSite,typeSaving,detailsError,editableRoster,batchStatus};', {
     ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 5 } }), defineEmits: () => () => {},
-    require: name => name.endsWith('/messages') ? alerts : {}, $fetch: fetch,
+    require: name => name.endsWith('/messages') ? alerts : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : {}, $fetch: fetch,
   }))
   return { state, close: () => scope.stop() }
 }

@@ -38,15 +38,19 @@ function datesBetween(start: string, end: string) {
 export async function attachPendingEmployeeStatuses(connection: any, batch: any, updatedBy: unknown) {
   if (batch.Status !== 'Draft') return 0
   const [result] = await connection.execute<any>(`UPDATE attendance at
-    INNER JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
+    INNER JOIN attendance_dtr_employee de ON de.BatchID = ? AND de.EmployeeID = at.EmployeeID
+    INNER JOIN employee_deployment ed ON ed.DeploymentID = COALESCE(at.DeploymentID, de.DeploymentID)
     INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
     INNER JOIN site s ON s.SiteID = sr.SiteID
     INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
     INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-    INNER JOIN attendance_dtr_employee de ON de.BatchID = ? AND de.EmployeeID = at.EmployeeID
-    SET at.BatchID = ?, at.AttendanceType = de.AttendanceType, at.UpdatedBy = ?
+    LEFT JOIN attendance existing ON existing.BatchID = de.BatchID
+      AND existing.EmployeeID = at.EmployeeID AND existing.AttendanceDate = at.AttendanceDate
+    SET at.BatchID = ?, at.DeploymentID = COALESCE(at.DeploymentID, de.DeploymentID), at.AttendanceType = de.AttendanceType, at.UpdatedBy = ?
     WHERE at.BatchID IS NULL AND at.AttendanceDate BETWEEN ? AND ?
-      AND ap.AgencyID = ? AND s.ClientID = ? AND ed.SiteID = ?`, [
+      AND ap.AgencyID = ? AND s.ClientID = ? AND ed.SiteID = ?
+      AND ed.StartDate <= at.AttendanceDate AND (ed.EndDate IS NULL OR ed.EndDate >= at.AttendanceDate)
+      AND existing.AttendanceID IS NULL`, [
     batch.BatchID, batch.BatchID, updatedBy, batch.PeriodStart, batch.PeriodEnd,
     batch.AgencyID, batch.ClientID, batch.SiteID,
   ])
@@ -88,7 +92,7 @@ export async function listEmployeeStatus(event: any) {
       WHERE ed.IsPermanentSite = 1
       ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`),
     pool.execute<any[]>(`SELECT de.EmployeeID, d.BatchID, d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
-      ed.DeploymentID, c.ClientName, s.SiteName
+      ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName
       FROM attendance_dtr_employee de
       INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
@@ -104,10 +108,10 @@ export async function listEmployeeStatus(event: any) {
       d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
       c.ClientName, s.SiteName
       FROM attendance at
-      INNER JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
-      INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
-      INNER JOIN site s ON s.SiteID = ed.SiteID
-      INNER JOIN client c ON c.ClientID = s.ClientID
+      LEFT JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
+      LEFT JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+      LEFT JOIN site s ON s.SiteID = ed.SiteID
+      LEFT JOIN client c ON c.ClientID = s.ClientID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
       LEFT JOIN \`user\` actor ON actor.UserID = COALESCE(at.UpdatedBy, at.CreatedBy)
       ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC LIMIT 1000`),
@@ -174,9 +178,9 @@ export async function getEmployeeStatusSummary(event: any) {
       at.AttendanceStatus, at.Remarks, d.PeriodStart, d.PeriodEnd,
       d.Status AS DtrStatus, c.ClientName, s.SiteName
       FROM attendance at
-      INNER JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
-      INNER JOIN site s ON s.SiteID = ed.SiteID
-      INNER JOIN client c ON c.ClientID = s.ClientID
+      LEFT JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
+      LEFT JOIN site s ON s.SiteID = ed.SiteID
+      LEFT JOIN client c ON c.ClientID = s.ClientID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
       LEFT JOIN \`user\` actor ON actor.UserID = COALESCE(at.UpdatedBy, at.CreatedBy)
       WHERE at.EmployeeID = ? AND at.AttendanceDate BETWEEN ? AND ?
@@ -213,23 +217,41 @@ export async function updateEmployeeDailyStatus(event: any) {
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
     const assignments: any[] = []
     for (const attendanceDate of selectedDates) {
-      const [[deployment]] = await connection.execute<any[]>(`SELECT ed.DeploymentID, ed.DeploymentType, ed.SiteID, s.ClientID, ap.AgencyID
-        FROM employee_deployment ed
-        INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
-        INNER JOIN site s ON s.SiteID = sr.SiteID
-        INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
-        INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-        WHERE ed.EmployeeID = ? AND ed.IsPermanentSite = 1
+      // A cutoff roster takes precedence, including cutoff-only Regular and Reliever assignments.
+      const [enrollments] = await connection.execute<any[]>(`SELECT d.BatchID, d.Status, ed.DeploymentID,
+          de.AttendanceType AS DeploymentType, de.IsPermanentSite, d.SiteID, d.ClientID, d.AgencyID
+        FROM attendance_dtr_employee de
+        INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
+        INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+        WHERE de.EmployeeID = ? AND d.PeriodStart <= ? AND d.PeriodEnd >= ?
           AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
-        ORDER BY ed.StartDate DESC, ed.DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, attendanceDate, attendanceDate])
-      if (!deployment) throw createError({ statusCode: 409, statusMessage: `No site deployment covers ${attendanceDate}. Create or correct the deployment before saving the employee status.` })
-      const [[batch]] = await connection.execute<any[]>(`SELECT BatchID, Status FROM attendance_dtr
-        WHERE AgencyID = ? AND ClientID = ? AND SiteID = ? AND PeriodStart <= ? AND PeriodEnd >= ?
-        ORDER BY PeriodStart DESC, BatchID DESC LIMIT 1 FOR UPDATE`, [deployment.AgencyID, deployment.ClientID, deployment.SiteID, attendanceDate, attendanceDate])
+        ORDER BY d.BatchID FOR UPDATE`, [employeeId, attendanceDate, attendanceDate, attendanceDate, attendanceDate])
+      if (enrollments.length > 1) throw createError({ statusCode: 409, statusMessage: `Multiple site DTRs cover ${attendanceDate}. Review those DTRs before setting a whole-day employee status.` })
+      let deployment = enrollments[0] || null
+      let batch = deployment ? { BatchID: deployment.BatchID, Status: deployment.Status } : null
+      if (!deployment) {
+        const [[fixedDeployment]] = await connection.execute<any[]>(`SELECT ed.DeploymentID, ed.DeploymentType, ed.IsPermanentSite, ed.SiteID, s.ClientID, ap.AgencyID
+          FROM employee_deployment ed
+          INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
+          INNER JOIN site s ON s.SiteID = sr.SiteID
+          INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+          INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+          WHERE ed.EmployeeID = ? AND ed.IsPermanentSite = 1
+            AND ed.StartDate <= ? AND (ed.EndDate IS NULL OR ed.EndDate >= ?)
+          ORDER BY ed.StartDate DESC, ed.DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, attendanceDate, attendanceDate])
+        deployment = fixedDeployment || null
+        if (deployment) {
+          const [[matchingBatch]] = await connection.execute<any[]>(`SELECT BatchID, Status FROM attendance_dtr
+            WHERE AgencyID = ? AND ClientID = ? AND SiteID = ? AND PeriodStart <= ? AND PeriodEnd >= ?
+            ORDER BY PeriodStart DESC, BatchID DESC LIMIT 1 FOR UPDATE`, [deployment.AgencyID, deployment.ClientID, deployment.SiteID, attendanceDate, attendanceDate])
+          batch = matchingBatch || null
+        }
+      }
       if (batch && batch.Status !== 'Draft') throw createError({ statusCode: 409, statusMessage: `The DTR covering ${attendanceDate} is ${batch.Status} and can no longer be edited.` })
       const [sameDayRows] = await connection.execute<any[]>('SELECT AttendanceID, BatchID FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? FOR UPDATE', [employeeId, attendanceDate])
       const otherSiteRow = sameDayRows.find(row => row.BatchID !== null && Number(row.BatchID) !== Number(batch?.BatchID || 0))
       if (otherSiteRow) throw createError({ statusCode: 409, statusMessage: `Attendance on ${attendanceDate} also belongs to another site DTR. Correct that DTR before setting a whole-day employee status.` })
+      if (sameDayRows.length > 1) throw createError({ statusCode: 409, statusMessage: `Multiple attendance records cover ${attendanceDate}. Review the pending status and DTR before updating this date.` })
       const existing = sameDayRows.find(row => Number(row.BatchID) === Number(batch?.BatchID || 0)) || sameDayRows.find(row => row.BatchID === null) || null
       assignments.push({ attendanceDate, deployment, batch: batch || null, existing: existing || null })
     }
@@ -237,12 +259,14 @@ export async function updateEmployeeDailyStatus(event: any) {
     let created = 0
     let pending = 0
     for (const { attendanceDate, deployment, batch, existing } of assignments) {
-      const attendanceType = deployment.DeploymentType === 'Reliever' ? 'Reliever' : 'Regular'
+      // An unassigned entry is a dated HR status, not a site or roster assignment.
+      const attendanceType = deployment?.DeploymentType === 'Reliever' ? 'Reliever' : 'Regular'
+      const deploymentId = deployment?.DeploymentID || null
       if (batch) {
         await connection.execute(`INSERT INTO attendance_dtr_employee
           (BatchID, EmployeeID, DeploymentID, AttendanceType, IsPermanentSite, CreatedBy)
-          VALUES (?, ?, ?, ?, 1, ?)
-          ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID), AttendanceType = VALUES(AttendanceType)`, [batch.BatchID, employeeId, deployment.DeploymentID, attendanceType, session.sub])
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE DeploymentID = VALUES(DeploymentID), AttendanceType = VALUES(AttendanceType)`, [batch.BatchID, employeeId, deploymentId, attendanceType, Number(deployment.IsPermanentSite) ? 1 : 0, session.sub])
       } else pending++
       const batchId = batch?.BatchID || null
       if (existing) {
@@ -250,16 +274,16 @@ export async function updateEmployeeDailyStatus(event: any) {
           await connection.execute('DELETE FROM attendance_duty WHERE AttendanceID = ?', [existing.AttendanceID])
           await connection.execute(`UPDATE attendance SET DeploymentID = ?, BatchID = ?, ShiftCodeID = NULL, TimeIn = NULL, TimeOut = NULL,
             ${hourColumns.map(column => `${column} = 0`).join(', ')}, HolidayID = NULL, ManualFieldOverrides = NULL, AttendanceStatus = ?, AttendanceType = ?, IsWDO = 0,
-            IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, batchId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
+            IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deploymentId, batchId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
         } else {
           await connection.execute(`UPDATE attendance SET DeploymentID = ?, BatchID = ?, AttendanceStatus = ?, AttendanceType = ?,
-            IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deployment.DeploymentID, batchId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
+            IsManualEdit = 1, Remarks = ?, UpdatedBy = ? WHERE AttendanceID = ?`, [deploymentId, batchId, attendanceStatus, attendanceType, remarks, session.sub, existing.AttendanceID])
         }
         updated++
       } else {
         const [result] = await connection.execute<any>(`INSERT INTO attendance
           (EmployeeID, DeploymentID, BatchID, AttendanceDate, AttendanceStatus, AttendanceType, IsManualEdit, Remarks, CreatedBy)
-          VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, [employeeId, deployment.DeploymentID, batchId, attendanceDate, attendanceStatus, attendanceType, remarks, session.sub])
+          VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, [employeeId, deploymentId, batchId, attendanceDate, attendanceStatus, attendanceType, remarks, session.sub])
         if (!result.insertId) throw createError({ statusCode: 500, statusMessage: 'Unable to create the employee status.' })
         created++
       }

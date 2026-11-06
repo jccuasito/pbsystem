@@ -1086,6 +1086,7 @@ export async function addDtrEmployee(event: any) {
     }
     await connection.execute('DELETE FROM attendance_dtr_employee_exclusion WHERE BatchID=? AND EmployeeID=?', [id, employeeId])
     if (isPermanentSite) await syncPermanentSiteEmployees(connection, batch, session.sub)
+    await attachPendingEmployeeStatuses(connection, batch, session.sub)
     await connection.commit(); return { success: true, deploymentId }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }

@@ -85,7 +85,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
       attendance_dtr: 'BatchID INT PRIMARY KEY, AgencyID INT, ClientID INT, SiteID INT, PeriodStart DATE, PeriodEnd DATE, Status VARCHAR(30)',
       attendance_dtr_employee: 'BatchID INT, EmployeeID INT, DeploymentID INT, AttendanceType VARCHAR(20), IsPermanentSite TINYINT, CreatedBy INT, PRIMARY KEY(BatchID,EmployeeID)',
       attendance: `AttendanceID INT AUTO_INCREMENT PRIMARY KEY, EmployeeID INT, DeploymentID INT, BatchID INT NULL, AttendanceDate DATE, ManualFieldOverrides JSON NULL, ShiftCodeID INT, TimeIn DATETIME, TimeOut DATETIME, AttendanceStatus VARCHAR(30), AttendanceType VARCHAR(20), IsWDO TINYINT DEFAULT 0, IsManualEdit TINYINT DEFAULT 0, Remarks VARCHAR(255), CreatedBy INT, UpdatedBy INT, CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP, UpdatedAt DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
-        RegularHours DECIMAL(8,2) DEFAULT 0, OTHours DECIMAL(8,2) DEFAULT 0, OTExtHours DECIMAL(8,2) DEFAULT 0, NightDiffHours DECIMAL(8,2) DEFAULT 0, RestDayHours DECIMAL(8,2) DEFAULT 0, RestDayOTHours DECIMAL(8,2) DEFAULT 0, LegalHolidayHours DECIMAL(8,2) DEFAULT 0, LegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, LateHours DECIMAL(8,2) DEFAULT 0, UndertimeHours DECIMAL(8,2) DEFAULT 0, BreakHours DECIMAL(8,2) DEFAULT 0, HolidayID INT, UNIQUE(EmployeeID,AttendanceDate)`,
+        RegularHours DECIMAL(8,2) DEFAULT 0, OTHours DECIMAL(8,2) DEFAULT 0, OTExtHours DECIMAL(8,2) DEFAULT 0, NightDiffHours DECIMAL(8,2) DEFAULT 0, RestDayHours DECIMAL(8,2) DEFAULT 0, RestDayOTHours DECIMAL(8,2) DEFAULT 0, LegalHolidayHours DECIMAL(8,2) DEFAULT 0, LegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayHours DECIMAL(8,2) DEFAULT 0, RestDayLegalHolidayOTHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayHours DECIMAL(8,2) DEFAULT 0, SpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayHours DECIMAL(8,2) DEFAULT 0, RestDaySpecialHolidayOTHours DECIMAL(8,2) DEFAULT 0, LateHours DECIMAL(8,2) DEFAULT 0, UndertimeHours DECIMAL(8,2) DEFAULT 0, BreakHours DECIMAL(8,2) DEFAULT 0, HolidayID INT, AttendanceScopeBatchID INT GENERATED ALWAYS AS (COALESCE(BatchID, 0)) PERSISTENT, UNIQUE(EmployeeID,AttendanceDate,AttendanceScopeBatchID)`,
       attendance_duty: 'AttendanceDutyID INT AUTO_INCREMENT PRIMARY KEY, AttendanceID INT',
     }
     for (const [name, columns] of Object.entries(tables)) await c.query(`CREATE TEMPORARY TABLE \`${name}\` (${columns}) ENGINE=InnoDB`)
@@ -170,6 +170,49 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal(unknownRecord.UpdatedAt, '2026-09-27 09:30:00')
     await c.query("UPDATE attendance_dtr SET Status='Computed to Payroll' WHERE BatchID=71")
     await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Suspended' } }), /DTR covering/)
+
+    // These employees have no fixed posting, no cutoff roster and no DTR in 2027.
+    await c.query("INSERT INTO employee VALUES (9,NULL,11,'Pending','','Reliever','Active'),(10,NULL,11,'Pending','','Regular','Active')")
+    for (const id of [9, 10]) {
+      const beforeDtr = await api.updateEmployeeDailyStatus({ body: { EmployeeID: id, AttendanceStatus: 'Sick Leave', StartDate: '2027-01-17', Remarks: 'HR before assignment' } })
+      assert.equal(beforeDtr.created, 1)
+      assert.equal(beforeDtr.pending, 1)
+      const edited = await api.updateEmployeeDailyStatus({ body: { EmployeeID: id, AttendanceStatus: 'Suspended', StartDate: '2027-01-17', Remarks: 'Updated HR reference' } })
+      assert.equal(edited.updated, 1)
+      assert.equal(edited.created, 0)
+      const summary = await api.getEmployeeStatusSummary({ params: { id: String(id) }, query: { year: '2027' } })
+      assert.equal(summary.history.length, 1)
+      assert.equal(summary.history[0].DeploymentID, null)
+      assert.equal(summary.history[0].BatchID, null)
+      assert.equal(summary.history[0].UpdatedByName, 'Test Encoder')
+      assert.equal(summary.history[0].AttendanceStatus, 'Suspended')
+    }
+    assert.equal((await c.query('SELECT COUNT(*) count FROM employee_deployment WHERE EmployeeID IN (9,10)'))[0][0].count, 0)
+    assert.equal((await c.query('SELECT COUNT(*) count FROM attendance_dtr_employee WHERE EmployeeID IN (9,10)'))[0][0].count, 0)
+    assert.equal((await api.listEmployeeStatus({})).history.filter(row => row.DeploymentID === null).length, 2)
+    const batch = { BatchID: 72, AgencyID: 3, ClientID: 41, SiteID: 51, PeriodStart: '2027-01-16', PeriodEnd: '2027-01-31', Status: 'Draft' }
+    await c.query("INSERT INTO attendance_dtr VALUES (72,3,41,51,'2027-01-16','2027-01-31','Draft')")
+    assert.equal(await api.attachPendingEmployeeStatuses(connection, batch, 14), 0, 'Never auto-enroll an unassigned employee')
+    for (const [id, type, permanent] of [[9, 'Reliever', 0], [10, 'Regular', 1]]) {
+      const [saved] = await c.execute("INSERT INTO employee_deployment (EmployeeID,SiteRateID,SiteID,DeploymentType,IsPermanentSite,StartDate,EndDate) VALUES (?,31,51,?,?,'2027-01-16','2027-01-31')", [id,type,permanent])
+      await c.execute('INSERT INTO attendance_dtr_employee VALUES (72,?,?,?,?,14)', [id,saved.insertId,type,permanent])
+    }
+    assert.equal(await api.attachPendingEmployeeStatuses(connection, { ...batch, Status: 'Computed to Payroll' }, 14), 0)
+    assert.equal(await api.attachPendingEmployeeStatuses(connection, { ...batch, SiteID: 99 }, 14), 0)
+    assert.equal(await api.attachPendingEmployeeStatuses(connection, batch, 14), 2)
+    assert.equal(await api.attachPendingEmployeeStatuses(connection, batch, 14), 0, 'Attach only once')
+    const [attachedRows] = await c.query('SELECT EmployeeID,DeploymentID,BatchID,AttendanceType,AttendanceStatus,RegularHours,TimeIn FROM attendance WHERE EmployeeID IN (9,10) ORDER BY EmployeeID')
+    assert.equal(attachedRows[0].AttendanceType, 'Reliever')
+    assert.equal(attachedRows[1].AttendanceType, 'Regular')
+    assert.ok(attachedRows.every(row => row.BatchID === 72 && row.DeploymentID > 0 && row.AttendanceStatus === 'Suspended' && Number(row.RegularHours) === 0 && row.TimeIn === null))
+    await api.updateEmployeeDailyStatus({ body: { EmployeeID: 9, AttendanceStatus: 'Vacation Leave', StartDate: '2027-01-17', Remarks: 'HR update after enrollment' } })
+    const [[reliever]] = await c.query('SELECT AttendanceType,IsPermanentSite FROM attendance_dtr_employee WHERE BatchID=72 AND EmployeeID=9')
+    assert.equal(reliever.AttendanceType, 'Reliever')
+    assert.equal(reliever.IsPermanentSite, 0)
+    await c.query("UPDATE attendance_dtr SET Status='Computed to Payroll' WHERE BatchID=72")
+    await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { EmployeeID: 9, AttendanceStatus: 'Present', StartDate: '2027-01-18' } }), /DTR covering/)
+    assert.equal((await c.query("SELECT COUNT(*) count FROM attendance WHERE EmployeeID=9 AND AttendanceDate='2027-01-18'"))[0][0].count, 0)
+
   } finally {
     await c.end()
   }
