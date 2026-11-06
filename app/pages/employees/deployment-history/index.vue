@@ -240,12 +240,12 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
       <button type="button" :class="{ active: historyView === 'deployments' }" @click="historyView = 'deployments'">Deployment records</button>
       <button type="button" :class="{ active: historyView === 'dtr' }" @click="historyView = 'dtr'">DTR cutoff rosters</button>
     </nav>
-    <form class="filters" @submit.prevent><label><span>Employee</span><input v-model="employeeSearch" placeholder="Search employee ID, number, or name" /></label><label><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label><label><span>Client</span><select v-model="clientFilter"><option value="">All clients</option><option v-for="client in filterClients" :key="client.ClientID" :value="String(client.ClientID)">{{ client.ClientName }}</option></select></label><label><span>Site</span><select v-model="siteFilter"><option value="">All sites</option><option v-for="site in filterSites" :key="site.SiteID" :value="String(site.SiteID)">{{ site.SiteName }}</option></select></label><label v-if="historyView === 'dtr'"><span>Cutoff</span><select v-model="cutoffFilter"><option value="">All cutoffs</option><option v-for="cutoff in cutoffOptions" :key="cutoff.key" :value="cutoff.key">{{ cutoffLabel(cutoff.start, cutoff.end) }}</option></select></label><button class="ghost" type="submit">Search</button></form>
+    <form class="filters" :class="{'filters--dtr':historyView==='dtr'}" @submit.prevent><label><span>Employee</span><input v-model="employeeSearch" placeholder="Search employee ID, number, or name" /></label><label><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label><label><span>Client</span><select v-model="clientFilter"><option value="">All clients</option><option v-for="client in filterClients" :key="client.ClientID" :value="String(client.ClientID)">{{ client.ClientName }}</option></select></label><label><span>Site</span><select v-model="siteFilter"><option value="">All sites</option><option v-for="site in filterSites" :key="site.SiteID" :value="String(site.SiteID)">{{ site.SiteName }}</option></select></label><label v-if="historyView === 'dtr'"><span>Cutoff</span><select v-model="cutoffFilter"><option value="">All cutoffs</option><option v-for="cutoff in cutoffOptions" :key="cutoff.key" :value="cutoff.key">{{ cutoffLabel(cutoff.start, cutoff.end) }}</option></select></label><button class="ghost" type="submit">Search</button></form>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <section v-if="historyView === 'deployments'" class="records-section">
       <p class="view-note">Showing saved deployment records. Open Details to review the complete timeline.</p>
       <div class="table-wrap records-wrap">
-        <table class="responsive-table deployment-records-table">
+        <table class="responsive-table deployment-records-table" aria-label="Employee deployment records">
           <thead><tr><th>Employee</th><th>Agency</th><th>Assignment</th><th>Period</th><th>Status</th><th>History</th></tr></thead>
           <tbody>
             <tr v-if="loading" class="message-row"><td colspan="6">Loading...</td></tr>
@@ -265,7 +265,7 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
     <section v-else class="records-section">
       <p class="view-note">{{ cutoffFilter ? 'Showing the DTR roster for the selected cutoff.' : 'Showing all saved DTR cutoffs.' }}</p>
       <div class="table-wrap records-wrap">
-        <table class="responsive-table cutoff-rosters-table">
+        <table class="responsive-table cutoff-rosters-table" aria-label="DTR cutoff rosters">
           <thead><tr><th>Client / site</th><th>Agency</th><th>Cutoff</th><th>People</th><th>DTR status</th><th>Roster</th></tr></thead>
           <tbody>
             <tr v-if="loading" class="message-row"><td colspan="6">Loading...</td></tr>
@@ -275,7 +275,7 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
               <td data-label="Agency">{{ roster.AgencyName }}</td>
               <td data-label="Cutoff" class="period-cell">{{ cutoffLabel(roster.PeriodStart, roster.PeriodEnd) }}</td>
               <td data-label="People"><span class="roster-count">{{ roster.people.length }} assigned</span><span class="roster-breakdown"><span class="type type--regular">{{ roster.regularCount }} Regular</span><span class="type type--reliever">{{ roster.relieverCount }} Reliever</span></span></td>
-              <td data-label="DTR status"><span class="status">{{ roster.DtrStatus }}</span></td>
+              <td data-label="DTR status" class="roster-status-cell"><span class="status">{{ roster.DtrStatus }}</span></td>
               <td data-label="Roster" class="action-cell"><button class="details" type="button" @click="openRoster(roster)">View people ({{ roster.people.length }})</button></td>
             </tr>
           </tbody>
@@ -443,7 +443,39 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
 .history-modal .empty-history{margin:0;padding:16px;border:1px dashed #dce3ee;border-radius:9px;color:#64748b;font-size:.82rem}
 .history-modal>footer{flex-shrink:0;margin:0;padding:13px 24px;border-top:1px solid #e1e8f1;background:#fff}
 @media(max-width:760px){.history-modal{max-height:92dvh}.history-header{padding:18px 48px 14px 16px}.history-header h2{font-size:1.12rem}.history-header .employee-id{font-size:.75rem}.history-content{padding:16px;gap:20px}.history-modal>footer{padding:12px 16px}}
-.records-wrap{overflow:hidden}.responsive-table{table-layout:fixed}.responsive-table th,.responsive-table td{white-space:normal;vertical-align:middle;line-height:1.35}.deployment-records-table th:nth-child(1){width:21%}.deployment-records-table th:nth-child(2){width:20%}.deployment-records-table th:nth-child(3){width:20%}.deployment-records-table th:nth-child(4){width:19%}.deployment-records-table th:nth-child(5){width:8%}.deployment-records-table th:nth-child(6){width:12%}.cutoff-rosters-table th:nth-child(1){width:22%}.cutoff-rosters-table th:nth-child(2){width:21%}.cutoff-rosters-table th:nth-child(3){width:18%}.cutoff-rosters-table th:nth-child(4){width:19%}.cutoff-rosters-table th:nth-child(5){width:8%}.cutoff-rosters-table th:nth-child(6){width:12%}.record-name,.record-client{display:block;color:#172b4d;font-size:.88rem}.record-meta{display:flex;align-items:center;gap:5px;margin-top:4px;color:#6b7a90;font-size:.72rem}.record-meta b{color:#2349e6}.period-cell{color:#334155}.action-cell{text-align:right}.deployment-records-table th:last-child,.deployment-records-table .action-cell{text-align:center}.deployment-records-table .details{font-variant-numeric:tabular-nums}.action-cell .details{white-space:nowrap;padding:9px 12px}.roster-count{display:block;font-size:.78rem;font-weight:700;color:#334155}.roster-breakdown{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.roster-breakdown .type{font-size:.67rem;padding:2px 6px}
-@media(max-width:900px){.records-wrap{overflow:visible;border:0;background:transparent}.responsive-table,.responsive-table tbody{display:block;width:100%}.responsive-table thead{display:none}.responsive-table tbody{display:grid;gap:10px}.responsive-table tr:not(.message-row){display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;padding:14px;border:1px solid #dce3ee;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(28,48,80,.04)}.responsive-table td{display:block;padding:0;border:0;min-width:0}.responsive-table td::before{content:attr(data-label);display:block;margin-bottom:3px;color:#7b8799;font-size:.64rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.responsive-table td:first-child{grid-column:1 / -1;padding-bottom:10px;border-bottom:1px solid #edf1f6}.responsive-table .period-cell{grid-column:1 / -1}.responsive-table .action-cell{grid-column:1 / -1;text-align:stretch}.responsive-table .action-cell::before{display:none}.responsive-table .action-cell .details{width:100%;min-height:40px}.responsive-table .message-row{display:block;padding:16px;border:1px solid #dce3ee;border-radius:12px;background:#fff}.responsive-table .message-row td{display:block}.responsive-table .message-row td::before{display:none}.record-name,.record-client{font-size:.84rem}.record-meta{font-size:.7rem}.cutoff-rosters-table td:nth-child(2),.deployment-records-table td:nth-child(2){grid-column:1 / -1}.roster-breakdown{margin-top:5px}}
+.records-wrap{overflow-x:auto;overscroll-behavior-x:contain}.responsive-table{table-layout:fixed;min-width:1060px}.responsive-table th,.responsive-table td{white-space:normal;vertical-align:middle;line-height:1.35}.deployment-records-table th:nth-child(1){width:20%}.deployment-records-table th:nth-child(2){width:18%}.deployment-records-table th:nth-child(3){width:20%}.deployment-records-table th:nth-child(4){width:16%}.deployment-records-table th:nth-child(5){width:12%}.deployment-records-table th:nth-child(6){width:14%}.cutoff-rosters-table th:nth-child(1){width:20%}.cutoff-rosters-table th:nth-child(2){width:20%}.cutoff-rosters-table th:nth-child(3){width:16%}.cutoff-rosters-table th:nth-child(4){width:14%}.cutoff-rosters-table th:nth-child(5){width:16%}.cutoff-rosters-table th:nth-child(6){width:14%}.record-name,.record-client{display:block;color:#172b4d;font-size:.88rem}.record-meta{display:flex;align-items:center;gap:5px;margin-top:4px;color:#6b7a90;font-size:.72rem}.record-meta b{color:#2349e6}.period-cell{color:#334155}.action-cell{text-align:right}.deployment-records-table th:last-child,.deployment-records-table .action-cell{text-align:center}.deployment-records-table .details{font-variant-numeric:tabular-nums}.action-cell .details{white-space:nowrap;padding:9px 12px}.roster-count{display:block;font-size:.78rem;font-weight:700;color:#334155}.roster-breakdown{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.roster-breakdown .type{font-size:.67rem;padding:2px 6px}
+@media(max-width:900px){.records-wrap{overflow:visible;border:0;background:transparent}.responsive-table,.responsive-table tbody{display:block;width:100%;min-width:0}.responsive-table thead{display:none}.responsive-table tbody{display:grid;gap:10px}.responsive-table tr:not(.message-row){display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;padding:14px;border:1px solid #dce3ee;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(28,48,80,.04)}.responsive-table td{display:block;padding:0;border:0;min-width:0}.responsive-table td::before{content:attr(data-label);display:block;margin-bottom:3px;color:#7b8799;font-size:.64rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.responsive-table td:first-child{grid-column:1 / -1;padding-bottom:10px;border-bottom:1px solid #edf1f6}.responsive-table .period-cell{grid-column:1 / -1}.responsive-table .action-cell{grid-column:1 / -1;text-align:left}.responsive-table .action-cell::before{display:none}.responsive-table .action-cell .details{width:100%;min-height:40px}.responsive-table .message-row{display:block;padding:16px;border:1px solid #dce3ee;border-radius:12px;background:#fff}.responsive-table .message-row td{display:block}.responsive-table .message-row td::before{display:none}.record-name,.record-client{font-size:.84rem}.record-meta{font-size:.7rem}.cutoff-rosters-table td:nth-child(2),.deployment-records-table td:nth-child(2){grid-column:1 / -1}.roster-breakdown{margin-top:5px}}
 @media(max-width:760px){.deployment-form{padding:20px}.history-tabs{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}.assignment-grid,.date-range{grid-template-columns:1fr}.date-arrow{transform:rotate(90deg)}.ongoing-toggle{width:auto}}
+
+/* Reserve room for full status text and the roster action at every table size. */
+.deployments-page .responsive-table th,.deployments-page .responsive-table td{padding:15px 18px;overflow-wrap:anywhere}
+.deployments-page .responsive-table .status{display:inline-flex;align-items:center;box-sizing:border-box;max-width:100%;padding:5px 9px;white-space:normal;line-height:1.4;font-size:.72rem}
+.deployments-page .responsive-table .action-cell .details{box-sizing:border-box;max-width:100%;min-height:38px;padding:9px 12px;font:inherit;font-size:.78rem;font-weight:650;white-space:nowrap;border:1px solid #dce6fa;background:#f1f5ff;border-radius:8px}
+.deployments-page .responsive-table .action-cell .details:hover{background:#e5edff;border-color:#b8cdf6}
+.deployments-page .responsive-table tbody tr:last-child td{border-bottom:0}
+.deployments-page .responsive-table tbody tr:hover{background:#fafcff}
+.deployments-page .filters{display:grid;grid-template-columns:minmax(200px,1.6fr) repeat(3,minmax(0,1fr)) auto;align-items:end;gap:14px;margin-bottom:18px}
+.deployments-page .filters.filters--dtr{grid-template-columns:minmax(210px,1.6fr) repeat(3,minmax(0,1fr)) minmax(180px,1.2fr) auto}
+.deployments-page .filters label{min-width:0}
+.deployments-page .filters input,.deployments-page .filters select,.deployments-page .filters label:first-child input{box-sizing:border-box;width:100%;min-width:0;min-height:42px;font-size:.8rem}
+.deployments-page .filters .ghost{min-height:42px;padding:10px 16px;white-space:nowrap}
+.deployments-page .view-note{font-size:.82rem;line-height:1.5}
+@media(max-width:1250px){
+ .deployments-page .filters,.deployments-page .filters.filters--dtr{grid-template-columns:repeat(3,minmax(0,1fr))}
+ .deployments-page .filters .ghost{justify-self:end;min-width:100px}
+}
+@media(max-width:900px){
+ .deployments-page .responsive-table td{padding:0;overflow-wrap:anywhere}
+ .deployments-page .responsive-table .action-cell .details{width:100%}
+ .deployments-page .responsive-table .roster-status-cell{align-self:start}
+}
+@media(max-width:760px){
+ .deployments-page .filters,.deployments-page .filters.filters--dtr{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+ .deployments-page .filters label:first-child{grid-column:1 / -1}
+ .deployments-page .filters .ghost{width:100%;justify-self:stretch;grid-column:1 / -1}
+}
+@media(max-width:480px){
+ .deployments-page .filters,.deployments-page .filters.filters--dtr{grid-template-columns:minmax(0,1fr)}
+ .deployments-page .responsive-table tr:not(.message-row){grid-template-columns:minmax(0,1fr)}
+}
 </style>
