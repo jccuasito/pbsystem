@@ -17,7 +17,8 @@ function positiveId(value: unknown, label: string) {
 
 function date(value: unknown, label: string) {
   const result = typeof value === 'string' ? value.trim() : ''
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || Number.isNaN(new Date(`${result}T00:00:00Z`).getTime())) {
+  const parsed = new Date(`${result}T00:00:00Z`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== result) {
     throw createError({ statusCode: 400, statusMessage: `${label} must be a valid date.` })
   }
   return result
@@ -60,11 +61,11 @@ export async function attachPendingEmployeeStatuses(connection: any, batch: any,
 export async function listEmployeeStatus(event: any) {
   const session = requireSession(event)
   void session.sub
-  const [employeesResult, deploymentsResult, cutoffsResult, dtrCutoffsResult, historyResult] = await Promise.all([
+  const [employeesResult, deploymentsResult, cutoffsResult, dtrCutoffsResult, historyResult, yearsResult] = await Promise.all([
     pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, e.Status,
       CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
       a.AgencyName, p.PositionName,
-      ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName
+      ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM employee e
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN agency a ON a.AgencyID = ap.AgencyID
@@ -81,7 +82,7 @@ export async function listEmployeeStatus(event: any) {
       WHERE e.Status = 'Active'
       ORDER BY e.LastName, e.FirstName, e.MiddleName`),
     pool.execute<any[]>(`SELECT ed.DeploymentID, ed.EmployeeID, ed.DeploymentType, ed.StartDate, ed.EndDate,
-      a.AgencyName, c.ClientName, s.SiteName
+      a.AgencyName, c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM employee_deployment ed
       INNER JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
       INNER JOIN site s ON s.SiteID = ed.SiteID
@@ -92,7 +93,7 @@ export async function listEmployeeStatus(event: any) {
       WHERE ed.IsPermanentSite = 1
       ORDER BY ed.StartDate DESC, ed.DeploymentID DESC`),
     pool.execute<any[]>(`SELECT de.EmployeeID, d.BatchID, d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
-      ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName
+      ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM attendance_dtr_employee de
       INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
@@ -106,15 +107,15 @@ export async function listEmployeeStatus(event: any) {
     pool.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.BatchID, at.AttendanceDate, at.AttendanceStatus, at.Remarks,
       at.DeploymentID, ${recordAuditFields},
       d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
-      c.ClientName, s.SiteName
+      c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM attendance at
       LEFT JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
-      LEFT JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
-      LEFT JOIN site s ON s.SiteID = ed.SiteID
-      LEFT JOIN client c ON c.ClientID = s.ClientID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
+      LEFT JOIN site s ON s.SiteID = COALESCE(d.SiteID, ed.SiteID)
+      LEFT JOIN client c ON c.ClientID = COALESCE(d.ClientID, s.ClientID)
       LEFT JOIN \`user\` actor ON actor.UserID = COALESCE(at.UpdatedBy, at.CreatedBy)
       ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC LIMIT 1000`),
+    pool.execute<any[]>('SELECT DISTINCT YEAR(AttendanceDate) AS AttendanceYear FROM attendance ORDER BY AttendanceYear DESC'),
   ])
   return {
     employees: employeesResult[0],
@@ -122,8 +123,45 @@ export async function listEmployeeStatus(event: any) {
     cutoffs: cutoffsResult[0],
     dtrCutoffs: dtrCutoffsResult[0],
     history: historyResult[0],
+    availableYears: yearsResult[0].map((row: any) => Number(row.AttendanceYear)),
     attendanceStatuses,
   }
+}
+
+export async function getEmployeeStatusCutoff(event: any) {
+  const session = requireSession(event)
+  void session.sub
+  const query = getQuery(event)
+  const startDate = date(query.startDate, 'Cutoff start date')
+  const endDate = date(query.endDate, 'Cutoff end date')
+  if (endDate < startDate) throw createError({ statusCode: 400, statusMessage: 'Cutoff end date must be on or after the start date.' })
+  datesBetween(startDate, endDate)
+  // Bound the range, not the row count: every employee/date must reach the sheet.
+  const [historyResult, cutoffsResult] = await Promise.all([
+    pool.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.BatchID, at.AttendanceDate,
+      at.DeploymentID, at.AttendanceStatus, at.Remarks, ${recordAuditFields},
+      d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus, c.ClientName, s.SiteName, c.ClientID, s.SiteID
+      FROM attendance at
+      INNER JOIN employee e ON e.EmployeeID = at.EmployeeID AND e.Status = 'Active'
+      LEFT JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
+      LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
+      LEFT JOIN site s ON s.SiteID = COALESCE(d.SiteID, ed.SiteID)
+      LEFT JOIN client c ON c.ClientID = COALESCE(d.ClientID, s.ClientID)
+      LEFT JOIN \`user\` actor ON actor.UserID = COALESCE(at.UpdatedBy, at.CreatedBy)
+      WHERE at.AttendanceDate BETWEEN ? AND ?
+      ORDER BY at.AttendanceDate, at.EmployeeID, at.AttendanceID DESC`, [startDate, endDate]),
+    pool.execute<any[]>(`SELECT de.EmployeeID, d.BatchID, d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
+      ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName, c.ClientID, s.SiteID
+      FROM attendance_dtr_employee de
+      INNER JOIN employee e ON e.EmployeeID = de.EmployeeID AND e.Status = 'Active'
+      INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
+      INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
+      INNER JOIN client c ON c.ClientID = d.ClientID
+      INNER JOIN site s ON s.SiteID = d.SiteID
+      WHERE d.PeriodStart <= ? AND d.PeriodEnd >= ?
+      ORDER BY d.PeriodStart DESC, d.BatchID DESC`, [endDate, startDate]),
+  ])
+  return { startDate, endDate, history: historyResult[0], cutoffs: cutoffsResult[0] }
 }
 
 export async function getEmployeeStatusSummary(event: any) {
@@ -166,7 +204,7 @@ export async function getEmployeeStatusSummary(event: any) {
 
   const [cutoffsResult, historyResult] = await Promise.all([
     pool.execute<any[]>(`SELECT d.BatchID, d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
-      c.ClientName, s.SiteName
+      c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM attendance_dtr_employee de
       INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
       INNER JOIN client c ON c.ClientID = d.ClientID
@@ -176,12 +214,12 @@ export async function getEmployeeStatusSummary(event: any) {
     pool.execute<any[]>(`SELECT at.AttendanceID, at.EmployeeID, at.BatchID, at.AttendanceDate,
       at.DeploymentID, ${recordAuditFields},
       at.AttendanceStatus, at.Remarks, d.PeriodStart, d.PeriodEnd,
-      d.Status AS DtrStatus, c.ClientName, s.SiteName
+      d.Status AS DtrStatus, c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM attendance at
       LEFT JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
-      LEFT JOIN site s ON s.SiteID = ed.SiteID
-      LEFT JOIN client c ON c.ClientID = s.ClientID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
+      LEFT JOIN site s ON s.SiteID = COALESCE(d.SiteID, ed.SiteID)
+      LEFT JOIN client c ON c.ClientID = COALESCE(d.ClientID, s.ClientID)
       LEFT JOIN \`user\` actor ON actor.UserID = COALESCE(at.UpdatedBy, at.CreatedBy)
       WHERE at.EmployeeID = ? AND at.AttendanceDate BETWEEN ? AND ?
       ORDER BY at.AttendanceDate DESC, at.AttendanceID DESC`, [employeeId, yearStart, yearEnd]),

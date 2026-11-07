@@ -29,7 +29,7 @@ test('employee status leave sheet and DTR workspace compile with synchronized st
   assert.match(page, /EMPLOYEE STATUS HISTORY/)
   assert.match(page, /summaryPeriods/)
   assert.match(page, /groupStatusRanges/)
-  assert.match(page, /\/api\/employees\/status\/\$\{summaryEmployeeId\.value\}\/summary/)
+  assert.match(page, /\/api\/employees\/status\/\$\{employeeId\}\/summary/)
   assert.doesNotMatch(page, /â|Ã|Â/)
   assert.doesNotMatch(page, /Transfer to site|Site transfer/)
   const dtr = fs.readFileSync('app/components/DtrAttendanceWorkspace.vue', 'utf8')
@@ -190,6 +190,17 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal((await c.query('SELECT COUNT(*) count FROM employee_deployment WHERE EmployeeID IN (9,10)'))[0][0].count, 0)
     assert.equal((await c.query('SELECT COUNT(*) count FROM attendance_dtr_employee WHERE EmployeeID IN (9,10)'))[0][0].count, 0)
     assert.equal((await api.listEmployeeStatus({})).history.filter(row => row.DeploymentID === null).length, 2)
+    const pendingCutoff = await api.getEmployeeStatusCutoff({ query: { startDate: '2027-01-16', endDate: '2027-01-31' } })
+    assert.equal(pendingCutoff.history.length, 2)
+    assert.ok(pendingCutoff.history.every(row => row.DeploymentID === null && row.BatchID === null))
+    assert.equal(pendingCutoff.cutoffs.length, 0)
+    const lockedCutoff = await api.getEmployeeStatusCutoff({ query: { startDate: '2026-09-16', endDate: '2026-09-30' } })
+    assert.equal(lockedCutoff.history.length, 3)
+    assert.equal(lockedCutoff.cutoffs[0].DtrStatus, 'Computed to Payroll')
+    for (const query of [{}, { startDate: '2027-02-30', endDate: '2027-03-01' }, { startDate: '2027-02-02', endDate: '2027-02-01' }, { startDate: '2027-01-01', endDate: '2027-02-02' }]) {
+      await assert.rejects(() => api.getEmployeeStatusCutoff({ query }), error => error.statusCode === 400)
+    }
+
     const batch = { BatchID: 72, AgencyID: 3, ClientID: 41, SiteID: 51, PeriodStart: '2027-01-16', PeriodEnd: '2027-01-31', Status: 'Draft' }
     await c.query("INSERT INTO attendance_dtr VALUES (72,3,41,51,'2027-01-16','2027-01-31','Draft')")
     assert.equal(await api.attachPendingEmployeeStatuses(connection, batch, 14), 0, 'Never auto-enroll an unassigned employee')
@@ -212,6 +223,30 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     await c.query("UPDATE attendance_dtr SET Status='Computed to Payroll' WHERE BatchID=72")
     await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { EmployeeID: 9, AttendanceStatus: 'Present', StartDate: '2027-01-18' } }), /DTR covering/)
     assert.equal((await c.query("SELECT COUNT(*) count FROM attendance WHERE EmployeeID=9 AND AttendanceDate='2027-01-18'"))[0][0].count, 0)
+    // More than the old recent-history cap, all in TEMPORARY tables.
+    const manyEmployees = Array.from({ length: 70 }, (_, i) => [300 + i, null, 11, 'Cutoff', '', String(i), 'Active'])
+    await c.query('INSERT INTO employee VALUES ?', [manyEmployees])
+    const manyDays = manyEmployees.flatMap(employee => Array.from({ length: 15 }, (_, i) => [employee[0], null, null, `2028-02-${String(i + 1).padStart(2,'0')}`, 'Present', 14]))
+    await c.query('INSERT INTO attendance (EmployeeID,DeploymentID,BatchID,AttendanceDate,AttendanceStatus,CreatedBy) VALUES ?', [manyDays])
+    await c.query("INSERT INTO employee VALUES (400,NULL,11,'Inactive','','Employee','Inactive')")
+    await c.query("INSERT INTO attendance (EmployeeID,AttendanceDate,AttendanceStatus,CreatedBy) VALUES (400,'2028-02-01','Absent',14),(300,'2028-02-16','Absent',14)")
+    const fullCutoff = await api.getEmployeeStatusCutoff({ query: { startDate: '2028-02-01', endDate: '2028-02-15' } })
+    assert.equal(fullCutoff.history.length, 1050)
+    assert.ok(fullCutoff.history.every(row => row.EmployeeID !== 400 && row.AttendanceDate <= '2028-02-15'))
+    assert.ok((await api.listEmployeeStatus({})).availableYears.includes(2028))
+    await c.query("INSERT INTO client VALUES (42,'Historical client','Active')")
+    await c.query("INSERT INTO site VALUES (52,42,'Actual cutoff site','Active')")
+    await c.query("INSERT INTO attendance_dtr VALUES (73,3,42,52,'2027-01-16','2027-01-31','Draft')")
+    await c.query("INSERT INTO attendance (EmployeeID,DeploymentID,BatchID,AttendanceDate,AttendanceStatus,CreatedBy) SELECT 9,DeploymentID,73,'2027-01-19','Present',14 FROM employee_deployment WHERE EmployeeID=9 LIMIT 1")
+    const actualSite = await api.getEmployeeStatusCutoff({ query: { startDate: '2027-01-16', endDate: '2027-01-31' } })
+    const siteRecord = actualSite.history.find(row => row.BatchID === 73)
+    assert.equal(siteRecord.SiteID, 52)
+    assert.equal(siteRecord.SiteName, 'Actual cutoff site')
+    assert.equal(siteRecord.ClientName, 'Historical client')
+    const yearSites = await api.getEmployeeStatusSummary({ params: { id: '9' }, query: { year: '2027' } })
+    assert.equal(yearSites.history.find(row => row.BatchID === 73).SiteID, 52)
+
+
 
   } finally {
     await c.end()

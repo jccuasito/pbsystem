@@ -232,6 +232,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
+  - `shared/utils/employeeStatusExport.ts`
   - `shared/utils/employeeStatusSheet.ts`
   - `shared/utils/governmentIds.ts`
   - `shared/utils/issuanceCode.ts`
@@ -322,6 +323,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
   - `GET /api/employees/status/[param]/summary` → `server/api/employees/status/[id]/summary.get.ts`
   - `POST /api/employees/status/attendance` → `server/api/employees/status/attendance.post.ts`
+  - `GET /api/employees/status/cutoff` → `server/api/employees/status/cutoff.get.ts`
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
   - `POST /api/organization/[param]` → `server/api/organization/[resource].post.ts`
@@ -747,11 +749,13 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
   - `shared/utils/attendanceStatuses.ts`
+  - `shared/utils/employeeStatusExport.ts`
   - `shared/utils/employeeStatusSheet.ts`
 - API calls and handlers:
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
   - `GET /api/employees/status/[param]/summary` → `server/api/employees/status/[id]/summary.get.ts`
   - `POST /api/employees/status/attendance` → `server/api/employees/status/attendance.post.ts`
+  - `GET /api/employees/status/cutoff` → `server/api/employees/status/cutoff.get.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
