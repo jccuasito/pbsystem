@@ -153,7 +153,6 @@ function blurActions(event:FocusEvent){
                 <button type="button" @click="viewSummary(i)">View Summary DTR</button>
                 <button type="button" @click="adjustmentDtr=i">Payroll adjustments</button>
                 <button type="button" :disabled="!canCompute(i,'payroll')||!!computingKey" @click="openComputeConfirmation(i,'payroll')">Compute to payroll</button>
-                <button type="button" :disabled="!canCompute(i,'billing')||!!computingKey" @click="openComputeConfirmation(i,'billing')">Compute to billing</button>
                 <button type="button" class="delete-action" :disabled="!canEdit(i)" @click="remove(i)">Delete DTR</button>
               </div>
             </details>
@@ -171,7 +170,7 @@ function blurActions(event:FocusEvent){
     <button class="close" type="button" aria-label="Close confirmation" :disabled="!!computingKey" @click="closeComputeConfirmation">×</button>
     <p class="eyebrow">CONFIRM DTR COMPUTATION</p>
     <h2 id="compute-confirm-title">Compute DTR-{{String(computeConfirmation.item.BatchID).padStart(4,'0')}} to {{computeConfirmation.target}}?</h2>
-    <p>This will mark the DTR as <strong>{{computeNextStatus(computeConfirmation.item,computeConfirmation.target)}}</strong> and make attendance read-only. This does not finalize payroll or billing.</p>
+    <p>This will mark the DTR as <strong>{{computeNextStatus(computeConfirmation.item,computeConfirmation.target)}}</strong> and make attendance read-only. Finalize payroll in Payroll Processing before preparing client billing.</p>
     <div class="modal-actions"><button class="secondary" type="button" :disabled="!!computingKey" @click="closeComputeConfirmation">Cancel</button><button class="primary" type="button" :disabled="!!computingKey" @click="compute">{{computingKey?'Computing…':`Compute to ${computeConfirmation.target}`}}</button></div>
   </section>
 </div>

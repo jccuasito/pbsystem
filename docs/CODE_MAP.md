@@ -163,13 +163,16 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
   - `app/components/ClientBillingSetupModal.vue`
+  - `app/utils/printBillingInvoice.ts`
   - `shared/utils/billingDraft.ts`
+  - `shared/utils/billingInvoicePrint.ts`
   - `shared/utils/billingProfile.ts`
   - `shared/utils/payrollPreview.ts`
 - API calls and handlers:
   - `GET /api/billing/drafts` → `server/api/billing/drafts.get.ts`
   - `POST /api/billing/drafts` → `server/api/billing/drafts.post.ts`
   - `GET /api/billing/drafts/[param]` → `server/api/billing/drafts/[id].get.ts`
+  - `POST /api/billing/drafts/[param]/status` → `server/api/billing/drafts/[id]/status.post.ts`
   - `GET /api/billing/drafts/preview` → `server/api/billing/drafts/preview.get.ts`
   - `POST /api/billing/profiles` → `server/api/billing/profiles.post.ts`
 - Related backend utilities:
@@ -194,13 +197,16 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
   - `app/components/ClientBillingSetupModal.vue`
+  - `app/utils/printBillingInvoice.ts`
   - `shared/utils/billingDraft.ts`
+  - `shared/utils/billingInvoicePrint.ts`
   - `shared/utils/billingProfile.ts`
   - `shared/utils/payrollPreview.ts`
 - API calls and handlers:
   - `GET /api/billing/drafts` → `server/api/billing/drafts.get.ts`
   - `POST /api/billing/drafts` → `server/api/billing/drafts.post.ts`
   - `GET /api/billing/drafts/[param]` → `server/api/billing/drafts/[id].get.ts`
+  - `POST /api/billing/drafts/[param]/status` → `server/api/billing/drafts/[id]/status.post.ts`
   - `GET /api/billing/drafts/preview` → `server/api/billing/drafts/preview.get.ts`
   - `POST /api/billing/profiles` → `server/api/billing/profiles.post.ts`
 - Related backend utilities:
@@ -276,6 +282,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/philippineAddress.ts`
+  - `app/utils/printBillingInvoice.ts`
   - `assets/css/setup-directory.css`
   - `components/alertmessage/logoutalert.vue`
   - `components/alertmessage/messages.ts`
@@ -295,6 +302,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/attendanceFieldControls.ts`
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/billingDraft.ts`
+  - `shared/utils/billingInvoicePrint.ts`
   - `shared/utils/billingProfile.ts`
   - `shared/utils/deployment.ts`
   - `shared/utils/dtrActionMenu.ts`
@@ -342,6 +350,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/billing/drafts` → `server/api/billing/drafts.get.ts`
   - `POST /api/billing/drafts` → `server/api/billing/drafts.post.ts`
   - `GET /api/billing/drafts/[param]` → `server/api/billing/drafts/[id].get.ts`
+  - `POST /api/billing/drafts/[param]/status` → `server/api/billing/drafts/[id]/status.post.ts`
   - `GET /api/billing/drafts/preview` → `server/api/billing/drafts/preview.get.ts`
   - `POST /api/billing/profiles` → `server/api/billing/profiles.post.ts`
   - `GET /api/dashboard/payroll-progress` → `server/api/dashboard/payroll-progress.get.ts`

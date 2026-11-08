@@ -212,7 +212,7 @@ defineExpose({ openCreate })
           <button v-if="targetDtr && permissions.canCreate" class="primary" type="button" @click="openCreate()">+ Add adjustment</button>
         </header>
 
-        <p v-if="targetDtr" class="target-note"><strong>Adjust this cutoff:</strong> choose an employee, then add attendance pay from an earlier cutoff or a named manual amount. Saved adjustments follow the target DTR automatically when you choose Compute to payroll or Compute to billing. Review payroll amounts in Payroll Processing before finalizing.</p>
+        <p v-if="targetDtr" class="target-note"><strong>Adjust this cutoff:</strong> choose an employee, then add attendance pay from an earlier cutoff or a named manual amount. Saved adjustments follow the target DTR automatically when you choose Compute to payroll. Review payroll amounts in Payroll Processing before finalizing.</p>
         <p v-if="error" class="error-banner" role="alert">{{ error }}</p>
 
         <div class="adjustment-filters">
@@ -290,7 +290,7 @@ defineExpose({ openCreate })
             </div>
             <label class="reason-field"><span>{{ entryMode === 'amount' ? 'Reason (optional)' : 'Reason' }}</span><textarea v-model.trim="form.Reason" minlength="5" maxlength="500" :required="entryMode !== 'amount'" placeholder="Example: September 1 and 2 attendance was verified but was not included in the original payroll."></textarea></label>
             <p v-if="saveRequirement" class="save-requirement" role="status">{{ saveRequirement }}</p>
-            <p class="calculation-note">{{ entryMode === 'amount' ? 'The named amount is added to employee income.' : 'Attendance components are priced using the original deployment payroll rates.' }} Status updates automatically when the target DTR is computed to payroll or billing. Adjustments saved to an already-computed cutoff are included automatically. Payroll finalization posts the amount once.</p>
+            <p class="calculation-note">{{ entryMode === 'amount' ? 'The named amount is added to employee income.' : 'Attendance components are priced using the original deployment payroll rates.' }} Status updates automatically when the target DTR is computed to payroll. Adjustments saved to an already-computed cutoff are included automatically. Payroll finalization posts the amount once.</p>
             <p v-if="formError" class="error-banner" role="alert">{{ formError }}</p>
             <footer><button type="button" :disabled="busy" @click="closeCreate">Cancel</button><button class="primary" :disabled="busy || !canSave">{{ busy ? 'Saving…' : 'Save adjustment' }}</button></footer>
           </form>

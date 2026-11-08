@@ -64,6 +64,8 @@ test('read-only billing users cannot save profiles or drafts',async()=>{
   const api=backend({getConnection(){throw Error('Reached a write')}},{sub:1,userType:'Viewer'})
   await assert.rejects(api.saveBillingDraft({context:{}}),error=>error.statusCode===403)
   await assert.rejects(api.saveBillingProfile({context:{}}),error=>error.statusCode===403)
+  await assert.rejects(api.changeBillingStatus({context:{}}),error=>error.statusCode===403)
+  await assert.rejects(backend({}, {sub:1,userType:'Admin'}).changeBillingStatus({context:{moduleCanEdit:false}}),error=>error.statusCode===403)
 })
 
 test('finalized payroll billing integration uses only connection-local temporary tables',{skip:process.env.BILLING_DRAFT_TEST_DATABASE!=='1'},async()=>{
@@ -84,13 +86,14 @@ test('finalized payroll billing integration uses only connection-local temporary
       billing:'BillingID INT AUTO_INCREMENT PRIMARY KEY,ClientID INT,BillingPeriod VARCHAR(50),BillingDate DATE,TotalAmount DECIMAL(12,2),Status VARCHAR(30)',
       billing_draft:'BillingID INT PRIMARY KEY,AgencyID INT,ClientID INT,PeriodStart DATE,PeriodEnd DATE,Revision INT,SourceHash CHAR(64),SnapshotJson LONGTEXT,CreatedBy INT,UpdatedBy INT,UpdatedAt DATETIME',
       billing_draft_source:'BillingID INT,BatchID INT UNIQUE',billing_detail:'BillingID INT,EmployeeID INT NULL,SiteID INT NULL,Description VARCHAR(150),Quantity DECIMAL(10,2),Rate DECIMAL(10,2),Amount DECIMAL(10,2)',
-      billing_draft_revision:'BillingID INT,Revision INT,SnapshotJson LONGTEXT,ActorUserID INT,CreatedAt DATETIME,UNIQUE(BillingID,Revision)',
+      billing_draft_revision:'BillingID INT,Revision INT,SnapshotJson LONGTEXT,ActorUserID INT,CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,UNIQUE(BillingID,Revision)',
       user:'UserID INT,FirstName VARCHAR(100),LastName VARCHAR(100)',
     }
     for(const [name,columns] of Object.entries(tables))await db.query(`CREATE TEMPORARY TABLE \`${name}\`(${columns}) ENGINE=InnoDB`)
     await db.query("INSERT INTO agency VALUES(1,'Agency A','','','Active'),(2,'Agency B','','','Active')")
     await db.query("INSERT INTO client VALUES(1,'Client A','','Active'),(2,'Client B','','Active')")
     await db.query("INSERT INTO site VALUES(1,1,'Site A'),(2,1,'Site B'),(3,2,'Site C')")
+    await db.query("INSERT INTO `user` VALUES(1,'Billing','Officer')")
     await db.query('INSERT INTO site_agency VALUES(1,1),(2,1),(3,2)')
     await db.query("INSERT INTO attendance_dtr VALUES(1,1,1,1,'2026-09-16','2026-09-30','Computed to Payroll'),(2,1,1,2,'2026-09-16','2026-09-30','Computed to Both'),(3,2,2,3,'2026-09-16','2026-09-30','Computed to Payroll')")
     const snap=(batch,site,employee)=>({BatchID:batch,AgencyID:batch===3?2:1,ClientID:batch===3?2:1,SiteID:site,SiteName:'Site '+site,employees:[{EmployeeID:employee,EmployeeName:'Synthetic Employee',AttendanceType:'Reliever',PositionName:'Guard',SiteRateID:site,netPreview:1,deductions:[{amount:99999}],components:[{code:'RegularHours',hours:16},{code:'OTHours',hours:4},{code:'NightDiffHours',hours:2},{code:'OTExtHours',hours:3}]}]})
@@ -139,6 +142,39 @@ test('finalized payroll billing integration uses only connection-local temporary
     const updated=await api.saveBillingDraftData(db,{...input,billingId:first.billingId,revision:1,settings:{...input.settings,adminPercent:5}},1)
     assert.equal(updated.revision,2)
     assert.equal((await db.query('SELECT COUNT(*) n FROM billing_draft_revision'))[0][0].n,2)
+    const billId=first.billingId,action={action:'finalize',revision:2,sourceHash:source.sourceHash}
+    await assert.rejects(api.changeBillingStatusData(db,billId,{...action,action:'Paid'},1),e=>e.statusCode===400)
+    await assert.rejects(api.changeBillingStatusData(db,billId,{...action,revision:1},1),e=>e.statusCode===409)
+    await assert.rejects(api.changeBillingStatusData(db,billId,{...action,sourceHash:'stale'},1),e=>e.statusCode===409)
+    await db.query('UPDATE billing_client_profile SET Revision=Revision+1 WHERE AgencyID=1 AND ClientID=1')
+    await assert.rejects(api.changeBillingStatusData(db,billId,action,1),e=>e.statusCode===409)
+    await db.query('UPDATE billing_client_profile SET Revision=Revision-1 WHERE AgencyID=1 AND ClientID=1')
+    await db.execute('UPDATE billing SET TotalAmount=1 WHERE BillingID=?',[billId])
+    await assert.rejects(api.changeBillingStatusData(db,billId,action,1),e=>e.statusCode===409)
+    const beforeFinal=(await api.getBillingDraft({id:String(billId),context:{}})).draft.snapshot
+    await db.execute('UPDATE billing SET TotalAmount=? WHERE BillingID=?',[beforeFinal.totals.totalDue,billId])
+    const final=await api.changeBillingStatusData(db,billId,action,1)
+    assert.equal(final.status,'Finalized');assert.equal(final.revision,3)
+    await assert.rejects(api.changeBillingStatusData(db,billId,{...action,revision:3},1),e=>e.statusCode===409)
+    await assert.rejects(api.saveBillingDraftData(db,{...input,billingId:billId,revision:3},1),e=>e.statusCode===409)
+    await db.query("UPDATE payroll SET Status='Cancelled' WHERE PayrollID=1")
+    const frozen=await api.getBillingDraft({id:String(billId),context:{}})
+    assert.equal(frozen.source,null);assert.equal(frozen.sourceIssue,'');assert.equal(frozen.draft.status,'Finalized')
+    assert.equal(frozen.permissions.canEdit,false);assert.equal(frozen.permissions.canReopen,true)
+    assert.equal(frozen.history[0].action,'Finalized');assert.equal(frozen.history[0].ActorName,'Billing Officer');assert.ok(frozen.history[0].CreatedAt)
+    assert.deepEqual(frozen.draft.snapshot.lines,beforeFinal.lines);assert.deepEqual(frozen.draft.snapshot.totals,beforeFinal.totals)
+    await assert.rejects(api.changeBillingStatusData(db,billId,{action:'reopen',revision:3,reason:' '},1),e=>e.statusCode===400)
+    await assert.rejects(api.changeBillingStatusData(db,billId,{action:'reopen',revision:3,reason:'a'.repeat(501)},1),e=>e.statusCode===400)
+    const reopened=await api.changeBillingStatusData(db,billId,{action:'reopen',revision:3,reason:'Correct client contract rate'},1)
+    assert.equal(reopened.status,'Draft');assert.equal(reopened.revision,4)
+    const audit=await api.getBillingDraft({id:String(billId),context:{}})
+    assert.equal(audit.history[0].action,'Reopened');assert.equal(audit.history[0].reason,'Correct client contract rate')
+    assert.equal(audit.permissions.canEdit,false,'Reopening cannot bypass invalid payroll sources')
+    await db.query("UPDATE payroll SET Status='Approved' WHERE PayrollID=1")
+    assert.equal((await api.getBillingDraft({id:String(billId),context:{}})).permissions.canFinalize,true)
+    await assert.rejects(api.changeBillingStatusData(db,billId,{action:'reopen',revision:4,reason:'Duplicate click'},1),e=>e.statusCode===409)
+    const finalizedRevision=JSON.parse((await db.execute('SELECT SnapshotJson FROM billing_draft_revision WHERE BillingID=? AND Revision=3',[billId]))[0][0].SnapshotJson)
+    assert.equal(finalizedRevision.workflow.status,'Finalized','Reopening preserves the finalized version')
     await db.rollback()
     assert.equal((await db.query('SELECT COUNT(*) n FROM billing'))[0][0].n,0)
     // Separate site invoices and cancelled/missing finalized sources are rejected.
@@ -155,6 +191,11 @@ test('finalized payroll billing integration uses only connection-local temporary
     const wrapped={execute:async(sql,args)=>{if(sql.startsWith('INSERT INTO billing_detail'))throw Error('Injected detail failure');return db.execute(sql,args)},beginTransaction:()=>db.beginTransaction(),commit:()=>db.commit(),rollback:()=>db.rollback(),release(){}}
     await assert.rejects(backend(wrapped).saveBillingDraft({context:{},body:{...input,batchIds:[1],sourceHash:detail.sourceHash,lines:detail.lines,settings:detail.settings}}),/Injected detail failure/)
     assert.equal((await db.query('SELECT COUNT(*) n FROM billing'))[0][0].n,0)
+    const created=await api.saveBillingDraft({context:{},body:{...input,batchIds:[1],sourceHash:detail.sourceHash,lines:detail.lines,settings:detail.settings}})
+    const failingAudit={execute:async(sql,args)=>{if(sql.startsWith('INSERT INTO billing_draft_revision'))throw Error('Injected audit failure');return db.execute(sql,args)},beginTransaction:()=>db.beginTransaction(),commit:()=>db.commit(),rollback:()=>db.rollback()}
+    await assert.rejects(backend(failingAudit).changeBillingStatus({id:String(created.billingId),context:{},body:{action:'finalize',revision:1,sourceHash:detail.sourceHash}}),/Injected audit failure/)
+    const rolledBack=await api.getBillingDraft({id:String(created.billingId),context:{}})
+    assert.equal(rolledBack.draft.status,'Draft');assert.equal(rolledBack.draft.revision,1);assert.equal(rolledBack.history.length,1)
   } finally { await db.end() }
 })
 test('billing defaults have no unconfirmed administrative cost, tax or benefits',()=>{
@@ -194,4 +235,30 @@ test('invalid numbers, duplicate lines, invalid bases and negative totals cannot
   assert.throws(()=>normalizeBillingDraft([line(),line()],defaultBillingSettings()),/identifier/)
   assert.throws(()=>normalizeBillingDraft([line()],{...defaultBillingSettings(),vatBase:'guessed'}),/base/)
   assert.throws(()=>calculateBillingDraft([line({direction:'Credit'})],defaultBillingSettings()),/Credits/)
+})
+
+
+test('invoice print uses escaped business text, current quantities, credits and configured totals',()=>{
+  const {renderBillingInvoice}=jiti('../shared/utils/billingInvoicePrint.ts')
+  const settings={...defaultBillingSettings(10),adminPercent:20,vatPercent:12,withholdingPercent:2,retirementRate:20,uniformRate:5}
+  const lines=[line(),line({id:'credit',description:'UT / Tardiness',quantity:1,rate:200,direction:'Credit'})]
+  const html=renderBillingInvoice({metadata:{AgencyName:'Agency <script>alert(1)</script>',ClientName:'Client & Co.',ClientAddress:'Address',SiteName:'Site A',PeriodStart:'2026-09-16',PeriodEnd:'2026-09-30'},lines,settings,billingDate:'2026-10-03',reference:'BILL-0001',finalized:false})
+  assert.match(html,/Agency &lt;script&gt;alert\(1\)&lt;\/script&gt;/)
+  assert.match(html,/Client &amp; Co\./);assert.ok(!html.includes('<script>'))
+  assert.match(html,/DRAFT - FOR REVIEW/);assert.match(html,/October 3, 2026/)
+  assert.match(html,/September 16, 2026 - September 30, 2026/)
+  assert.match(html,/\(200\.00\)/,'Credits retain their negative amount')
+  const totals=calculateBillingDraft(lines,settings)
+  assert.ok(html.includes(new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(totals.totalDue)))
+  assert.match(html,/Retirement pay/);assert.match(html,/Uniform allowance/);assert.match(html,/Withholding \(2%\)/)
+  assert.ok(!html.includes('Zero Rated Sales'),'Do not invent tax classifications from the sample photo')
+})
+
+test('finalized invoice print labels its status and retains every line in long statements',()=>{
+  const {renderBillingInvoice}=jiti('../shared/utils/billingInvoicePrint.ts')
+  const lines=Array.from({length:75},(_,i)=>line({id:'line-'+i,description:'Service line '+(i+1)}))
+  const html=renderBillingInvoice({metadata:{AgencyName:'Agency A',ClientName:'Client A'},lines,settings:defaultBillingSettings(),billingDate:'2026-10-03',reference:'BILL-0001',finalized:true})
+  assert.match(html,/FINALIZED BILLING STATEMENT/);assert.ok(!html.includes('DRAFT ONLY'))
+  assert.match(html,/Service line 75/);assert.equal((html.match(/Service line /g)||[]).length,75)
+  assert.match(html,/display:table-header-group/,'Column headings repeat across pages')
 })

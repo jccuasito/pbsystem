@@ -152,14 +152,58 @@ export async function getBillingDraft(event: any) {
   if (!saved) fail(404, 'Billing draft not found.')
   const [sources] = await pool.execute<any[]>('SELECT BatchID FROM billing_draft_source WHERE BillingID=? ORDER BY BatchID', [billingId])
   let source: any = null, sourceIssue = ''
-  try { source = await billingSourceData(pool, sources.map(row => Number(row.BatchID))) } catch (error: any) {
+  try { if (saved.Status === 'Draft') source = await billingSourceData(pool, sources.map(row => Number(row.BatchID))) } catch (error: any) {
     if (![400, 404, 409].includes(error.statusCode)) throw error
     sourceIssue = error.statusMessage || error.message
   }
   const [history] = await pool.execute<any[]>(`SELECT revision.Revision,DATE_FORMAT(revision.CreatedAt,'%Y-%m-%d %H:%i:%s') AS CreatedAt,
+    JSON_UNQUOTE(JSON_EXTRACT(revision.SnapshotJson,'$.workflow.action')) AS Action,
+    JSON_UNQUOTE(JSON_EXTRACT(revision.SnapshotJson,'$.workflow.reason')) AS Reason,
     CONCAT_WS(' ',actor.FirstName,actor.LastName) AS ActorName FROM billing_draft_revision revision LEFT JOIN \`user\` actor ON actor.UserID=revision.ActorUserID WHERE revision.BillingID=? ORDER BY revision.Revision DESC`, [billingId])
-  return { source, sourceIssue, draft: { billingId, revision: Number(saved.Revision), status: saved.Status, snapshot: decode(saved.SnapshotJson), sourceHash: saved.SourceHash }, history,
-    permissions: { canEdit: canEdit(event, session) && !!source && saved.Status === 'Draft' } }
+  return { source, sourceIssue, draft: { billingId, revision: Number(saved.Revision), status: saved.Status, snapshot: decode(saved.SnapshotJson), sourceHash: saved.SourceHash },
+    history: history.map(({ Action, Reason, ...revision }) => ({ ...revision, action: Action || 'Saved', reason: Reason || '' })),
+    permissions: { canEdit: canEdit(event, session) && !!source && saved.Status === 'Draft',
+      canFinalize: canEdit(event, session) && !!source && saved.Status === 'Draft' && source.sourceHash === saved.SourceHash,
+      canReopen: canEdit(event, session) && saved.Status === 'Finalized' } }
+}
+
+// A status change always appends a revision; finalized statement values stay frozen.
+export async function changeBillingStatusData(connection: any, billingId: number, input: any, actorId: number) {
+  if (!input || !['finalize', 'reopen'].includes(input.action)) fail(400, 'Choose Finalize or Reopen billing.')
+  const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
+  if (input.action === 'reopen' && (reason.length < 5 || reason.length > 500)) fail(400, 'Enter a reason for reopening (5 to 500 characters).')
+  const [sources] = await connection.execute<any[]>('SELECT BatchID FROM billing_draft_source WHERE BillingID=? ORDER BY BatchID', [billingId])
+  const ids = sources.map(row => Number(row.BatchID))
+  if (ids.length) await connection.execute(`SELECT BatchID FROM attendance_dtr WHERE BatchID IN (${ids.map(() => '?').join(',')}) ORDER BY BatchID FOR UPDATE`, ids)
+  const [[saved]] = await connection.execute<any[]>(`SELECT d.*,b.Status,b.TotalAmount FROM billing_draft d INNER JOIN billing b ON b.BillingID=d.BillingID WHERE d.BillingID=? FOR UPDATE`, [billingId])
+  if (!saved) fail(404, 'Billing record not found.')
+  if (!Number.isSafeInteger(input.revision) || input.revision !== Number(saved.Revision)) fail(409, 'This bill changed. Close and reopen it before continuing.')
+  const finalize = input.action === 'finalize', status = finalize ? 'Finalized' : 'Draft'
+  if (saved.Status !== (finalize ? 'Draft' : 'Finalized')) fail(409, finalize ? 'Only a Draft bill can be finalized.' : 'Only a Finalized bill can be reopened.')
+  const snapshot = decode(saved.SnapshotJson)
+  if (finalize) {
+    const source = await billingSourceData(connection, ids)
+    if (input.sourceHash !== saved.SourceHash || source.sourceHash !== saved.SourceHash) fail(409, 'The payroll, rates or client setup changed. Reload source values and save the draft before finalizing.')
+    const normalized = normalizeBillingDraft(snapshot.lines, snapshot.settings)
+    const totals = calculateBillingDraft(normalized.lines, normalized.settings)
+    if (hash(totals) !== hash(snapshot.totals) || Number(saved.TotalAmount) !== totals.totalDue) fail(409, 'Saved billing totals do not match. Review and save this draft again.')
+  }
+  const revision = Number(saved.Revision) + 1
+  snapshot.workflow = { status, action: finalize ? 'Finalized' : 'Reopened', reason: finalize ? '' : reason }
+  const json = JSON.stringify(snapshot)
+  await connection.execute('UPDATE billing SET Status=? WHERE BillingID=?', [status, billingId])
+  await connection.execute('UPDATE billing_draft SET Revision=?,SnapshotJson=?,UpdatedBy=? WHERE BillingID=?', [revision, json, actorId, billingId])
+  await connection.execute('INSERT INTO billing_draft_revision(BillingID,Revision,SnapshotJson,ActorUserID) VALUES(?,?,?,?)', [billingId, revision, json, actorId])
+  return { success: true, billingId, revision, status }
+}
+
+export async function changeBillingStatus(event: any) {
+  const session = requireSession(event)
+  if (!canEdit(event, session)) fail(403, 'You do not have edit access to billing.')
+  const billingId = id(getRouterParam(event, 'id')), body = await readBody(event)
+  const connection = await pool.getConnection()
+  try { await connection.beginTransaction(); const result = await changeBillingStatusData(connection, billingId, body, Number(session.sub)); await connection.commit(); return result }
+  catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 
 export async function saveBillingDraftData(connection: any, input: any, actorId: number) {
