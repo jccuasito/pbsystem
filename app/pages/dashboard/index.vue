@@ -14,6 +14,8 @@ import SiteAccountsPage from '../organization/site-accounts/index.vue'
 import RegionPage from '../organization/region/index.vue'
 import PayrollRatePage from '../rates/payroll/index.vue'
 import BillingRatePage from '../rates/billing/index.vue'
+import GenerateBillingPage from '../billing/generate/index.vue'
+import BillingHistoryPage from '../billing/history/index.vue'
 import SiteRatePage from '../rates/site/index.vue'
 import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
 import DtrRelieverPage from '../attendance/dtr-reliever/index.vue'
@@ -290,6 +292,8 @@ const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
   'organization-region': RegionPage,
   'rates-payroll': PayrollRatePage,
   'rates-billing': BillingRatePage,
+  'billing-generate': GenerateBillingPage,
+  'billing-history': BillingHistoryPage,
   'rates-site': SiteRatePage,
   'attendance-dtr': DailyTimeRecordsPage,
   'attendance-dtr-reliever': DtrRelieverPage,

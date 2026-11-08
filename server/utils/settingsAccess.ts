@@ -51,6 +51,7 @@ export function moduleForPath(path: string): ModuleKey | null {
   if (matches('/api/organization')) return 'organization'
   if (matches('/api/attendance')) return 'attendance'
   if (matches('/api/rates')) return 'rates'
+  if (matches('/api/billing')) return 'billing'
   if (matches('/api/deductions-loans')) return 'deductions'
   // Legacy account/request aliases follow their new Employee Management owner.
   if (matches('/api/payroll/payslips/account') || matches('/api/payroll/payslips/requests')) return 'employees'
