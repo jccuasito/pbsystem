@@ -120,6 +120,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `components/ModernDateField.vue`
+  - `shared/utils/philippineLegalHolidays.ts`
 - API calls and handlers:
   - `DELETE /api/attendance/holidays` → `server/api/attendance/holidays/index.delete.ts`
   - `GET /api/attendance/holidays` → `server/api/attendance/holidays/index.get.ts`
@@ -316,6 +318,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
+  - `shared/utils/philippineLegalHolidays.ts`
   - `shared/utils/rateFields.ts`
   - `shared/utils/regionalRates.ts`
 - API calls and handlers:
