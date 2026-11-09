@@ -291,8 +291,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/ModernDateField.vue`
   - `components/ModernTimeField.vue`
   - `components/OrganizationCrud.vue`
-  - `components/PayrollRateGroups.vue`
   - `components/RateCrud.vue`
+  - `components/RateGroups.vue`
   - `components/RateMoneyFields.vue`
   - `components/RegionalPositionFields.vue`
   - `components/RegionalRateModal.vue`
@@ -1219,8 +1219,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
-  - `components/PayrollRateGroups.vue`
   - `components/RateCrud.vue`
+  - `components/RateGroups.vue`
   - `components/RateMoneyFields.vue`
   - `components/RegionalPositionFields.vue`
   - `components/RegionalRateModal.vue`
@@ -1257,8 +1257,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
-  - `components/PayrollRateGroups.vue`
   - `components/RateCrud.vue`
+  - `components/RateGroups.vue`
   - `components/RateMoneyFields.vue`
   - `components/RegionalPositionFields.vue`
   - `components/RegionalRateModal.vue`

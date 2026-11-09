@@ -5,7 +5,7 @@ import RegionalRateModal from './RegionalRateModal.vue'
 import RegionalPositionFields from './RegionalPositionFields.vue'
 import { regionalAtDate, regionalAmounts, regionalOverrides, rateDate } from '~~/shared/utils/regionalRates'
 import RateMoneyFields from './RateMoneyFields.vue'
-import PayrollRateGroups from '~~/components/PayrollRateGroups.vue'
+import RateGroups from './RateGroups.vue'
 import SearchableSelect from './SearchableSelect.vue'
 import ModernDateField from './ModernDateField.vue'
 import { rateFormFields as moneyFields } from '~~/shared/utils/rateFields'
@@ -150,8 +150,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open
 <template>
   <main class="rates-page">
     <header class="page-head">
-      <div><p>RATES</p><h1>{{ title }}</h1><small>{{resource==='payroll-rate'?'Manage regional base rates and effective updates, with custom amounts for individual positions.':'Manage billing rates by agency position and region.'}}</small></div>
-      <button v-if="resource!=='payroll-rate'||!regionalGroupOpen" class="primary" type="button" @click="resource==='payroll-rate'?openRegional('create'):startAdd()">{{resource==='payroll-rate'?'+ Add region rate':'+ Add rate'}}</button>
+      <div><p>RATES</p><h1>{{ title }}</h1><small>{{resource==='payroll-rate'?'Manage regional base rates and effective updates, with custom amounts for individual positions.':'Manage position billing rates by agency and region, including effective updates and history.'}}</small></div>
+      <button v-if="!regionalGroupOpen" class="primary" type="button" @click="resource==='payroll-rate'?openRegional('create'):startAdd()">{{resource==='payroll-rate'?'+ Add region rate':'+ Add rate'}}</button>
     </header>
 
     <section class="filters" :aria-label="title + ' filters'">
@@ -167,46 +167,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open
     </div>
     <p v-if="error && !open" class="error" role="alert">{{ error }}</p>
 
-    <PayrollRateGroups v-if="resource === 'payroll-rate'" :items="filteredItems" :all-items="items" :agency-positions="agencyPositions" :regional-rates="regionalRates" :filters="{search,agencyFilter,positionFilter,regionFilter,statusFilter}" :loading="loading" @regional="openRegional" @add="startAdd" @edit="openCurrentEdit" @update="openUpdate" @history="viewingHistory=$event" @deactivate="deactivate" @navigate="regionalGroupOpen=$event" />
-    <template v-else>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Agency position</th><th>Region</th><th>Regular rate</th><th>Effective date</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody>
-          <tr v-if="loading" class="table-message"><td colspan="6">Loading rates…</td></tr>
-          <tr v-else-if="!filteredItems.length" class="table-message"><td colspan="6">{{ items.length ? 'No rates match the current filters.' : 'No rates found.' }}</td></tr>
-          <tr v-for="item in loading ? [] : filteredItems" :key="item[idKey]">
-            <td><strong>{{ item.AgencyName }}</strong><small>{{ item.PositionName }}</small></td>
-            <td>{{ item.RegionName || 'All regions' }}</td>
-            <td class="rate-amount">{{ currency(item.CurrentRate?.RegularRate ?? item.RegularRate) }}</td>
-            <td>{{ formatDate(item.CurrentRate?.EffectiveDate ?? item.EffectiveDate) }}<small v-if="item.NextEffectiveDate">Next: {{ formatDate(item.NextEffectiveDate) }}</small></td>
-            <td><span class="status" :class="'status--' + String(item.Status || '').toLowerCase()">{{ item.Status }}</span></td>
-            <td><div class="row-actions">
-              <button class="rate-icon-action" type="button" title="Edit current rate" :aria-label="`Edit current ${item.AgencyName} ${item.PositionName} rate`" :disabled="item.Status === 'Inactive'" @click="openCurrentEdit(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4L16.5 3.5Z" /></svg></button>
-              <button class="rate-icon-action" type="button" title="Update rate with effective date" :aria-label="`Update ${item.AgencyName} ${item.PositionName} rate with effective date`" :disabled="item.Status === 'Inactive'" @click="openUpdate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 10h18M12 14v4M10 16h4" /></svg></button>
-              <button class="rate-icon-action" type="button" title="View rate history" :aria-label="`View ${item.AgencyName} ${item.PositionName} rate history`" @click="viewingHistory = item"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg></button>
-              <button class="rate-icon-action rate-icon-action--danger" type="button" title="Deactivate rate" :aria-label="`Deactivate ${item.AgencyName} ${item.PositionName} rate`" :disabled="item.Status === 'Inactive'" @click="deactivate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6 18.4 18.4" /></svg></button>
-            </div></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <section class="mobile-list" :aria-label="title">
-      <p v-if="loading" class="mobile-message">Loading rates…</p>
-      <p v-else-if="!filteredItems.length" class="mobile-message">{{ items.length ? 'No rates match the current filters.' : 'No rates found.' }}</p>
-      <article v-for="item in loading ? [] : filteredItems" :key="item[idKey]" class="rate-card">
-        <header><div><strong>{{ item.AgencyName }}</strong><span>{{ item.PositionName }}</span></div><span class="status" :class="'status--' + String(item.Status || '').toLowerCase()">{{ item.Status }}</span></header>
-        <dl><div><dt>Region</dt><dd>{{ item.RegionName || 'All regions' }}</dd></div><div><dt>Regular rate</dt><dd>{{ currency(item.CurrentRate?.RegularRate ?? item.RegularRate) }}</dd></div><div><dt>Effective</dt><dd>{{ formatDate(item.CurrentRate?.EffectiveDate ?? item.EffectiveDate) }}<small v-if="item.NextEffectiveDate">Next: {{ formatDate(item.NextEffectiveDate) }}</small></dd></div></dl>
-        <footer class="row-actions">
-          <button class="rate-icon-action" type="button" title="Edit current rate" :aria-label="`Edit current ${item.AgencyName} ${item.PositionName} rate`" :disabled="item.Status === 'Inactive'" @click="openCurrentEdit(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L9 17l-4 1 1-4L16.5 3.5Z" /></svg></button>
-          <button class="rate-icon-action" type="button" title="Update rate with effective date" :aria-label="`Update ${item.AgencyName} ${item.PositionName} rate with effective date`" :disabled="item.Status === 'Inactive'" @click="openUpdate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 10h18M12 14v4M10 16h4" /></svg></button>
-          <button class="rate-icon-action" type="button" title="View rate history" :aria-label="`View ${item.AgencyName} ${item.PositionName} rate history`" @click="viewingHistory = item"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg></button>
-          <button class="rate-icon-action rate-icon-action--danger" type="button" title="Deactivate rate" :aria-label="`Deactivate ${item.AgencyName} ${item.PositionName} rate`" :disabled="item.Status === 'Inactive'" @click="deactivate(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6 18.4 18.4" /></svg></button>
-        </footer>
-      </article>
-    </section>
-    </template>
+    <RateGroups :resource="resource" :items="filteredItems" :all-items="items" :agency-positions="agencyPositions" :regional-rates="regionalRates" :filters="{search,agencyFilter,positionFilter,regionFilter,statusFilter}" :loading="loading" @regional="openRegional" @add="startAdd" @edit="openCurrentEdit" @update="openUpdate" @history="viewingHistory=$event" @deactivate="deactivate" @navigate="regionalGroupOpen=$event" />
     <Teleport to="body">
       <div v-if="editingCurrent" class="backdrop" @click.self="!editBusy && (editingCurrent = null)">
         <form class="modal rate-form-modal" role="dialog" aria-modal="true" aria-labelledby="rate-edit-title" @submit.prevent="saveCurrentEdit">
