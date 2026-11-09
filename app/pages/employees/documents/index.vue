@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import SearchableSelect from '../../../../components/SearchableSelect.vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
-import { formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
+import { employeeCurrentDate, formatEmployeeAge, formatEmployeeId, formatEmployeeLabel, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 import { formatGovernmentNumber, governmentAttachmentMaxBytes, governmentIdRule, governmentIdType, governmentIdTypes, validateGovernmentId, type GovernmentIdType } from '~~/shared/utils/governmentIds'
 
 type SectionKey = 'profile' | 'government' | 'education' | 'license' | 'training' | 'clearance' | 'bank' | 'insurance'
@@ -28,6 +28,8 @@ const bundle = ref<any>({})
 const activeEmployeeId = ref('')
 const activeSection = ref<SectionKey>('profile')
 const search = ref('')
+const ageAsOf = ref(employeeCurrentDate())
+useRealtimeRefresh(() => { ageAsOf.value = employeeCurrentDate() }, { intervalMs: 60_000, immediate: true })
 const filters = ref({ agencyId: '', positionId: '' })
 const loading = ref(true)
 const saving = ref(false)
@@ -80,6 +82,7 @@ const profileGroups = computed(() => {
       { label: 'Last name', value: person.LastName },
       { label: 'Nickname', value: person.Nickname },
       { label: 'Birthday', value: profileDate(person.Birthday) },
+      { label: 'Age', value: formatEmployeeAge(person.Birthday, ageAsOf.value) },
       { label: 'Gender', value: person.Gender },
       { label: 'Civil status', value: person.CivilStatus },
       { label: 'Height', value: Number(payment.Height) > 0 ? `${Number(payment.Height)} cm` : null },

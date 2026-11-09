@@ -18,7 +18,7 @@ const selectDescriptor = parse(fs.readFileSync('components/SearchableSelect.vue'
 const selectComponent = evaluate(compileScript(selectDescriptor, { id: 'select-test', inlineTemplate: true }).content, () => vue).default
 function profile() {
   const scope = vue.effectScope()
-  const state = scope.run(() => evaluate(parse(source).descriptor.scriptSetup.content + '\nmodule.exports={employee,bundle,profileGroups,profilePhoto,profileInitials,profileBeneficiaries,documentSections,activeSection,formOpen,openAdd,openEdit,save,remove};', name => name === 'vue' ? { ...vue, onMounted() {} } : name.includes('governmentIds') ? rules : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : name.includes('utils/employee') ? identity : {}))
+  const state = scope.run(() => evaluate(parse(source).descriptor.scriptSetup.content + '\nmodule.exports={employee,bundle,profileGroups,profilePhoto,profileInitials,profileBeneficiaries,documentSections,activeSection,formOpen,openAdd,openEdit,save,remove,ageAsOf};', name => name === 'vue' ? { ...vue, onMounted() {} } : name.includes('governmentIds') ? rules : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : name.includes('utils/employee') ? identity : {}))
   return { state, close: () => scope.stop() }
 }
 
@@ -74,6 +74,11 @@ test('profile displays saved employee information even without a separate employ
     assert.equal(fields['Employee ID'], 'EMP-0011')
     assert.equal(fields['Employee number'], 'Not yet assigned')
     assert.equal(fields.Birthday, 'Mar 15, 1995')
+    h.state.ageAsOf.value = '2026-03-14'
+    const age = () => h.state.profileGroups.value.find(group => group.key === 'personal').fields.find(field => field.label === 'Age').value
+    assert.equal(age(), '30 years old')
+    h.state.ageAsOf.value = '2026-03-15'
+    assert.equal(age(), '31 years old', 'An open profile refreshes when the current day changes')
     assert.equal(fields['Date hired'], 'Jan 1, 2026')
     assert.equal(fields['First name'], 'MARIA')
     assert.equal(fields.Position, 'Supervisor')
@@ -89,6 +94,7 @@ test('profile displays saved employee information even without a separate employ
     assert.equal(next[0].value, 'Legacy address')
     assert.equal(next[1].value, '')
     assert.equal(h.state.profilePhoto.value, '')
+    assert.equal(age(), '\u2014', 'Switching to an employee without a birthday clears the age')
     assert.equal(h.state.profileBeneficiaries.value.length, 0, 'Switching employees does not retain previous beneficiary data')
   } finally { h.close() }
 })

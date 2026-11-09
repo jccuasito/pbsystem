@@ -6,7 +6,7 @@ import SearchableSelect from '~~/components/SearchableSelect.vue'
 import EmployeeAddressFields from '~/components/EmployeeAddressFields.vue'
 import { addressFromEmployee, addressToEmployee, type EmployeeAddress } from '~/utils/philippineAddress'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
-import { formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
+import { employeeCurrentDate, formatEmployeeAge, formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 import { alertMessages, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../../components/alertmessage/messages'
 
 const emit = defineEmits<{ (event: 'navigate', view: 'employees-documents'): void }>()
@@ -56,6 +56,8 @@ const shiftSetupError = ref('')
 const createNewShiftCode = ref(false)
 const filters = ref({ agencyId: '', positionId: '' })
 const search = ref('')
+const ageAsOf = ref(employeeCurrentDate())
+useRealtimeRefresh(() => { ageAsOf.value = employeeCurrentDate() }, { intervalMs: 60_000, immediate: true })
 const visibleEmployeeCount = ref(50)
 const loadMoreSentinel = ref<HTMLElement | null>(null)
 const isCompactView = ref(false)
@@ -895,7 +897,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
               <div class="employee-identity">
                 <img v-if="item.PhotoUrl" :src="item.PhotoUrl" :alt="`${displayEmployeeName(item)} photo`" />
                 <span v-else class="employee-avatar-fallback" aria-hidden="true">{{ employeeInitials(item) }}</span>
-                <span>{{ displayEmployeeName(item) }}</span>
+                <span>{{ displayEmployeeName(item) }}<small class="employee-age">Age: {{ formatEmployeeAge(item.Birthday, ageAsOf) }}</small></span>
               </div>
             </td>
             <td data-label="Agency">{{ format(item.AgencyName) }}</td>
@@ -932,6 +934,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
           <span v-else class="employee-card__photo employee-avatar-fallback" aria-hidden="true">{{ employeeInitials(item) }}</span>
           <div class="employee-card__identity">
             <strong>{{ displayEmployeeName(item) }}</strong>
+            <small class="employee-age">Age: {{ formatEmployeeAge(item.Birthday, ageAsOf) }}</small>
             <span>{{ formatEmployeeId(item.EmployeeID) }} · {{ formatEmployeeNumber(item.EmployeeNumber) }}</span>
           </div>
           <span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span>
@@ -1008,7 +1011,14 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             </div>
             <div class="grid"><label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label><label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label></div>
             <div class="grid"><label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label><label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label></div>
-            <div class="grid"><ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="today()" :initial-year="suggestedBirthYear" required /><ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" required /></div>
+            <div class="grid employee-dates">
+              <div class="employee-birthday">
+                <ModernDateField v-model="form.Birthday" label="Birthday" placeholder="Select birthday" :max="ageAsOf" :initial-year="suggestedBirthYear" required />
+                <label>Age<input :value="formatEmployeeAge(form.Birthday, ageAsOf)" readonly aria-describedby="employee-age-help" /></label>
+                <small id="employee-age-help">Calculated from birthday. Updates automatically.</small>
+              </div>
+              <ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" required />
+            </div>
             <div class="grid">
               <label>Gender<select v-model="form.Gender" required><option disabled value="">Select gender</option><option v-for="gender in genderOptions" :key="gender" :value="gender">{{ gender }}</option></select></label>
               <label>Civil status<select v-model="form.CivilStatus" required><option disabled value="">Select civil status</option><option v-for="civilStatus in civilStatusOptions" :key="civilStatus" :value="civilStatus">{{ civilStatus }}</option></select></label>
@@ -1324,6 +1334,45 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
 
 .employee-card__identity {
   flex: 1 1 auto;
+}
+
+.employee-age {
+  display: block;
+  margin-top: 4px;
+  color: #66758b;
+  font-size: .72rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.employee-dates {
+  align-items: start;
+}
+
+.employee-birthday {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 125px;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.employee-birthday input[readonly] {
+  background: #f1f5fb;
+  color: #315486;
+  cursor: default;
+}
+
+.employee-birthday > small {
+  grid-column: 1 / -1;
+  color: #66758b;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 480px) {
+  .employee-birthday {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .employee-card__photo {
