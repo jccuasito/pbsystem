@@ -277,6 +277,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/payroll/payslip/index.vue`
   - `app/pages/payroll/processing/index.vue`
   - `app/pages/payroll/summary/index.vue`
+  - `app/pages/payroll/thirteenth-month/index.vue`
   - `app/pages/rates/billing/index.vue`
   - `app/pages/rates/payroll/index.vue`
   - `app/pages/rates/site/index.vue`
@@ -285,6 +286,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/employee.ts`
   - `app/utils/philippineAddress.ts`
   - `app/utils/printBillingInvoice.ts`
+  - `app/utils/printThirteenthMonth.ts`
   - `assets/css/setup-directory.css`
   - `components/alertmessage/logoutalert.vue`
   - `components/alertmessage/messages.ts`
@@ -321,6 +323,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/philippineLegalHolidays.ts`
   - `shared/utils/rateFields.ts`
   - `shared/utils/regionalRates.ts`
+  - `shared/utils/thirteenthMonth.ts`
 - API calls and handlers:
   - `GET /api/attendance/dtr` → `server/api/attendance/dtr/index.get.ts`
   - `POST /api/attendance/dtr` → `server/api/attendance/dtr/index.post.ts`
@@ -437,6 +440,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
   - `POST /api/payroll/processing/[param]/deductions` → `server/api/payroll/processing/[id]/deductions.post.ts`
   - `GET /api/payroll/site-accounts` → `server/api/payroll/site-accounts.get.ts`
+  - `GET /api/payroll/thirteenth-month` → `server/api/payroll/thirteenth-month.get.ts`
+  - `POST /api/payroll/thirteenth-month` → `server/api/payroll/thirteenth-month.post.ts`
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
@@ -508,6 +513,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/regionalRateCrud.ts`
   - `server/utils/settingsAccess.ts`
   - `server/utils/siteAccountSummary.ts`
+  - `server/utils/thirteenthMonthCrud.ts`
   - `shared/utils/attendanceFieldControls.ts`
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/billingDraft.ts`
@@ -522,6 +528,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
   - `shared/utils/regionalRates.ts`
+  - `shared/utils/thirteenthMonth.ts`
 - Static assets:
   - None detected.
 - Links to: `/employee-portal`, `/loginscreen`, `/userprofile/viewprofile`
@@ -1211,6 +1218,29 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/jwt.ts`
   - `server/utils/siteAccountSummary.ts`
+- Static assets:
+  - None detected.
+- Links to: none detected.
+
+### `/payroll/thirteenth-month`
+
+- Page: `app/pages/payroll/thirteenth-month/index.vue`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Related frontend files:
+  - `app/composables/useRealtimeRefresh.ts`
+  - `app/utils/bodyScrollLock.ts`
+  - `app/utils/printThirteenthMonth.ts`
+  - `components/ModernDateField.vue`
+  - `shared/utils/thirteenthMonth.ts`
+- API calls and handlers:
+  - `GET /api/payroll/thirteenth-month` → `server/api/payroll/thirteenth-month.get.ts`
+  - `POST /api/payroll/thirteenth-month` → `server/api/payroll/thirteenth-month.post.ts`
+- Related backend utilities:
+  - `server/connection/dbconnect.ts`
+  - `server/utils/auth.ts`
+  - `server/utils/jwt.ts`
+  - `server/utils/thirteenthMonthCrud.ts`
+  - `shared/utils/thirteenthMonth.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.

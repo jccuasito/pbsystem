@@ -941,6 +941,10 @@ export async function permanentlyDeleteEmployee(event: any) {
     return { success: true, deletedEmployeeId: employeeId, deletedBtrRows: Number(btrResult.affectedRows || 0) }
   } catch (error) {
     await connection.rollback()
+    const databaseError = error as { code?: string; sqlMessage?: string }
+    if (databaseError.code === 'ER_ROW_IS_REFERENCED_2' && /thirteenth/i.test(databaseError.sqlMessage || '')) {
+      throw createError({ statusCode: 409, statusMessage: 'This employee has retained 13th-month earnings or payment history. Deactivate the employee to preserve these records.' })
+    }
     throw error
   } finally {
     connection.release()

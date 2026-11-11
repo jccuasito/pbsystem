@@ -15,7 +15,7 @@ function evaluate(source, globals = {}) {
 const alertMessages = evaluate(fs.readFileSync('components/alertmessage/messages.ts', 'utf8'))
 const employeeHelpers = evaluate(fs.readFileSync('app/utils/employee.ts', 'utf8'))
 
-function backend({ found = true, failEmployeeDelete = false } = {}) {
+function backend({ found = true, failEmployeeDelete = false, retainedAnnualHistory = false } = {}) {
   const calls = []
   const connection = {
     async beginTransaction() { calls.push('begin') },
@@ -27,6 +27,7 @@ function backend({ found = true, failEmployeeDelete = false } = {}) {
       if (sql.startsWith('SELECT EmployeeID, PhotoPath FROM employee')) return [found ? [{ EmployeeID: args[0], PhotoPath: null }] : []]
       if (sql.startsWith('DELETE FROM attendance_dtr_btr')) return [{ affectedRows: 3 }]
       if (sql.startsWith('DELETE FROM employee')) {
+        if (retainedAnnualHistory) throw Object.assign(new Error('Referenced financial record'), { code: 'ER_ROW_IS_REFERENCED_2', sqlMessage: 'CONSTRAINT fk_thirteenth_release_header' })
         if (failEmployeeDelete) throw new Error('delete failed')
         return [{ affectedRows: 1 }]
       }
@@ -75,6 +76,13 @@ test('missing employee and delete failures roll back the whole transaction', asy
   await assert.rejects(failed.api.permanentlyDeleteEmployee({ id: '7' }), /delete failed/)
   assert.deepEqual(failed.calls.slice(-2), ['rollback', 'release'])
   assert.ok(!failed.calls.includes('commit'))
+})
+
+test('retained annual benefit history returns a clear conflict and rolls back employee deletion', async () => {
+  const harness = backend({ retainedAnnualHistory: true })
+  await assert.rejects(harness.api.permanentlyDeleteEmployee({ id: '7' }), error => error.statusCode === 409 && /Deactivate/.test(error.statusMessage))
+  assert.deepEqual(harness.calls.slice(-2), ['rollback', 'release'])
+  assert.ok(!harness.calls.includes('commit'))
 })
 
 function frontend(fetch) {
