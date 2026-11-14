@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import {computed,onMounted,onBeforeUnmount,ref,watch,nextTick} from 'vue'
 const props=defineProps<{employeeId?:number;compact?:boolean;hideEmpty?:boolean}>()
 const emit=defineEmits<{(event:'changed'):void}>()
@@ -10,11 +12,11 @@ const filteredAccounts=computed(()=>data.value.accounts.filter((a:any)=>[a.Emplo
 const totals=computed(()=>filteredAccounts.value.reduce((t:any,a:any)=>({collected:t.collected+Number(a.TotalCollected),refunded:t.refunded+Number(a.TotalRefunded),balance:t.balance+Number(a.Balance)}),{collected:0,refunded:0,balance:0}))
 const selected=computed(()=>data.value.accounts.find((a:any)=>Number(a.AccountID)===historyId.value))
 const entries=computed(()=>data.value.entries.filter((entry:any)=>Number(entry.AccountID)===historyId.value))
-async function load(historyEmployeeId?:number){try{data.value=await $fetch('/api/deductions-loans/cash-bonds',{query:{...(props.employeeId?{employeeId:props.employeeId}:{}),...(historyEmployeeId?{historyEmployeeId}:{})}})}catch(e:any){error.value=e.data?.statusMessage||'Unable to load refundable deductions.'}}
+async function load(historyEmployeeId?:number){try{data.value=await $fetch('/api/deductions-loans/cash-bonds',{query:{...(props.employeeId?{employeeId:props.employeeId}:{}),...(historyEmployeeId?{historyEmployeeId}:{})}})}catch(e:any){error.value=requestErrorMessage(e, 'Unable to load refundable deductions.')}}
 async function history(a:any){historyId.value=Number(a.AccountID);error.value='';await load(Number(a.EmployeeID))}
 function newRequestKey(){return typeof crypto.randomUUID==='function'?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),value=>value.toString(16).padStart(2,'0')).join('')}
 function startRefund(entry?:any){error.value='';review.value=false;refund.value={Action:entry?'reverse-refund':'refund',AccountID:selected.value.AccountID,Revision:selected.value.Revision,SourceRefundID:entry?.EntryID,Amount:entry?Number(entry.Amount):'',TransactionDate:today(),Reference:'',Reason:'',RequestKey:newRequestKey(),confirmed:false}}
-async function saveRefund(){busy.value=true;error.value='';try{await $fetch('/api/deductions-loans/cash-bonds/refund',{method:'POST',body:refund.value});refund.value=null;review.value=false;await load(Number(selected.value.EmployeeID));emit('changed')}catch(e:any){error.value=e.data?.statusMessage||'Unable to record this transaction.';review.value=false}finally{busy.value=false}}
+async function saveRefund(){busy.value=true;error.value='';try{await $fetch('/api/deductions-loans/cash-bonds/refund',{method:'POST',body:refund.value});refund.value=null;review.value=false;await load(Number(selected.value.EmployeeID));emit('changed')}catch(e:any){error.value=requestErrorMessage(e, 'Unable to record this transaction.');review.value=false}finally{busy.value=false}}
 let oldOverflow='',focusBefore:HTMLElement|null=null
 const anyModal=computed(()=>historyId.value!==null||!!refund.value)
 watch(anyModal,async opened=>{if(opened){oldOverflow=document.body.style.overflow;focusBefore=document.activeElement as HTMLElement;document.body.style.overflow='hidden';await nextTick();document.querySelector<HTMLElement>('.bond-backdrop:last-of-type button')?.focus()}else{document.body.style.overflow=oldOverflow;focusBefore?.focus()}})

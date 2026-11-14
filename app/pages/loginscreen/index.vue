@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { useAppTheme } from '~/composables/useAppTheme'
 import { ref, onMounted } from 'vue'
 
@@ -11,13 +13,13 @@ const googleCodeClient = ref<any>(null)
 async function login() {
   error.value = ''; busy.value = true
   try { await $fetch('/api/auth/login', { method: 'POST', body: { email: email.value, password: password.value } }); await navigateTo('/dashboard') }
-  catch (e: any) { error.value = e.data?.statusMessage || 'Unable to log in.' } finally { busy.value = false }
+  catch (e: any) { error.value = requestErrorMessage(e, 'Unable to log in.') } finally { busy.value = false }
 }
 async function googleLogin(response: { code?: string; error?: string }) {
   if (!response.code) { error.value = response.error || 'Google sign-in was cancelled.'; return }
   error.value = ''; busy.value = true
   try { await $fetch('/api/auth/google-code', { method: 'POST', body: { code: response.code } }); await navigateTo('/dashboard') }
-  catch (e: any) { error.value = e.data?.statusMessage || 'Google sign-in failed.' } finally { busy.value = false }
+  catch (e: any) { error.value = requestErrorMessage(e, 'Google sign-in failed.') } finally { busy.value = false }
 }
 function startGoogle() {
   error.value = ''

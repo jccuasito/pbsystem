@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import ArchivedPayslipsPanel from './ArchivedPayslipsPanel.vue'
 import PortalRequestsAdmin from './PortalRequestsAdmin.vue'
@@ -45,13 +47,13 @@ function clearRecovery(){recoveryCode.value='';recoveryExpiresAt.value='';copyNo
 async function load(){
  const request=++listRequest;listAbort?.abort();listAbort=new AbortController();loading.value=true;error.value=''
  try{const result=await $fetch<List>(isAccounts.value?'/api/employees/portal-accounts':'/api/payroll/payslips',{query:{search:search.value.trim(),agencyId:agencyId.value||undefined,...(isAccounts.value?{accountStatus:accountStatus.value||undefined}:{postingStatus:postingStatus.value||undefined}),page:page.value},signal:listAbort.signal,timeout:15000,retry:0});if(request===listRequest){list.value=result;page.value=result.pagination.page}}
- catch(cause:any){if(request===listRequest)error.value=cause?.data?.statusMessage||'Unable to load employee accounts. Please try again.'}
+ catch(cause:any){if(request===listRequest)error.value=requestErrorMessage(cause, 'Unable to load employee accounts. Please try again.')}
  finally{if(request===listRequest)loading.value=false}
 }
 async function loadAccount(employeeId:number,activityPage=1){
  const request=++accountRequest,owner=profileRequest;accountLoading.value=true;accountError.value=''
  try{const result=await $fetch<AccountData>('/api/employees/portal-accounts/account',{query:{employeeId,activityPage},signal:profileAbort?.signal,timeout:15000,retry:0});if(request===accountRequest&&owner===profileRequest)portalAccount.value=result}
- catch(cause:any){if(request===accountRequest&&owner===profileRequest)accountError.value=cause?.data?.statusMessage||'Unable to load this portal account.'}
+ catch(cause:any){if(request===accountRequest&&owner===profileRequest)accountError.value=requestErrorMessage(cause, 'Unable to load this portal account.')}
  finally{if(request===accountRequest&&owner===profileRequest)accountLoading.value=false}
 }
 async function openProfile(employee:Employee,tab=isAccounts.value?'account':'history'){
@@ -59,7 +61,7 @@ async function openProfile(employee:Employee,tab=isAccounts.value?'account':'his
  historySearch.value='';historyYear.value='';historyStatus.value='';historyPage.value=1;selectedPayslipKey.value='';historyError.value='';accountError.value='';actionError.value='';actionNotice.value='';clearRecovery();historyLoading.value=!isAccounts.value;accountLoading.value=isAccounts.value
  await nextTick();if(request!==profileRequest)return;profileDialog.value?.focus()
  if(isAccounts.value){await loadAccount(employee.EmployeeID);return}
- const history=(async()=>{try{const result=await $fetch<Profile>('/api/payroll/payslips',{query:{employeeId:employee.EmployeeID},signal:controller.signal,timeout:15000,retry:0});if(request===profileRequest)profile.value=result}catch(cause:any){if(request===profileRequest)historyError.value=cause?.data?.statusMessage||'Unable to load payslip history.'}finally{if(request===profileRequest)historyLoading.value=false}})()
+ const history=(async()=>{try{const result=await $fetch<Profile>('/api/payroll/payslips',{query:{employeeId:employee.EmployeeID},signal:controller.signal,timeout:15000,retry:0});if(request===profileRequest)profile.value=result}catch(cause:any){if(request===profileRequest)historyError.value=requestErrorMessage(cause, 'Unable to load payslip history.')}finally{if(request===profileRequest)historyLoading.value=false}})()
  await history
 }
 function closeProfile(force=false){if((accountBusy.value||serviceBusy.value)&&!force)return;if(archiveDirty.value&&!force){discardSection.value='close';discardOpen.value=true;return}discardOpen.value=false;archiveDirty.value=false;profileRequest++;accountRequest++;profileAbort?.abort();clearRecovery();profile.value=null;portalAccount.value=null;selectedPayslipKey.value=''}
@@ -76,7 +78,7 @@ async function manageAccount(action:'activate'|'deactivate'|'recovery'){
   actionNotice.value=action==='recovery'?'A new private recovery code is ready.':action==='activate'?'Portal access activated.':'Portal access deactivated.'
   await loadAccount(employeeId)
   if(!props.embedded)await load()
- }catch(cause:any){if(owner===profileRequest)actionError.value=cause?.data?.statusMessage||'Unable to update this portal account.'}
+ }catch(cause:any){if(owner===profileRequest)actionError.value=requestErrorMessage(cause, 'Unable to update this portal account.')}
  finally{accountBusy.value=false}
 }
 async function copy(value:string){try{if(!navigator.clipboard?.writeText)throw new Error();await navigator.clipboard.writeText(value);copyNotice.value='Copied.'}catch{copyNotice.value='Select the text to copy it on this browser.'}}

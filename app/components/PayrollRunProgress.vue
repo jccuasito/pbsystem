@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '../composables/useRealtimeRefresh'
 const report=ref<any>({companies:[],totals:{ExpectedSites:0,CompletedSites:0,PendingSites:0,MissingDtrSites:0,Percent:null,UnconfiguredSites:0},cutoffs:[],period:null})
@@ -18,7 +20,7 @@ async function load(silent=false){
     const result=await $fetch<any>('/api/dashboard/payroll-progress',{query:periodStart?{periodStart,periodEnd}:{},signal:controller.signal,timeout:15000,retry:0})
     if(current!==request)return
     report.value=result;cutoff.value=`${result.period.PeriodStart}:${result.period.PeriodEnd}`
-  }catch(cause:any){if(current===request){error.value=cause?.data?.statusMessage||'Payroll progress could not be refreshed.';if(report.value.period)cutoff.value=`${report.value.period.PeriodStart}:${report.value.period.PeriodEnd}`}}
+  }catch(cause:any){if(current===request){error.value=requestErrorMessage(cause, 'Payroll progress could not be refreshed.');if(report.value.period)cutoff.value=`${report.value.period.PeriodStart}:${report.value.period.PeriodEnd}`}}
   finally{if(current===request){loading.value=false;refreshing.value=false}}
 }
 function changeCutoff(){expanded.value=null;void load()}

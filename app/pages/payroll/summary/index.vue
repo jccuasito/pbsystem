@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 const loading=ref(true),error=ref(''),restricted=ref(false),cutoff=ref(''),search=ref(''),expanded=ref<number|null>(null)
@@ -25,7 +27,7 @@ async function loadSummary(silent=false){
   if(current!==request)return
   report.value={...report.value,accounts:[],totals:{}}
   if(cause?.status===403||cause?.statusCode===403||cause?.data?.statusCode===403)restricted.value=true
-  else error.value=cause?.data?.statusMessage||'Unable to load Site Account payroll totals.'
+  else error.value=requestErrorMessage(cause, 'Unable to load Site Account payroll totals.')
  }finally{if(current===request){loading.value=false;refreshing.value=false}}
 }
 useRealtimeRefresh(()=>loadSummary(true),{immediate:true,shouldRefresh:()=>!refreshing.value})

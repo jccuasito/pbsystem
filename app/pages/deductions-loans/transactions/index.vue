@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import ModernDateField from '~~/components/ModernDateField.vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 
@@ -66,7 +68,7 @@ async function load(quiet = false) {
     Object.assign(summary, response.summary || {})
     Object.assign(pagination, response.pagination || {})
   } catch (cause: any) {
-    error.value = cause?.data?.statusMessage || cause?.message || 'Unable to load transaction receipts.'
+    error.value = requestErrorMessage(cause, 'Unable to load transaction receipts.')
   } finally {
     if (!quiet) loading.value = false
   }

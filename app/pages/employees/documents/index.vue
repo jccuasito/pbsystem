@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import SearchableSelect from '../../../../components/SearchableSelect.vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
@@ -260,7 +262,7 @@ async function recognizeScan() {
     if (!useDetectedDetails()) scanReadMessage.value = result.number ? 'Details were detected. Your current entries were kept; use the detected details only if they match this ID.' : result.message
   } catch (cause: any) {
     if (selection === scanSelection && !controller.signal.aborted) {
-      const message = cause?.data?.statusMessage || 'Automatic reading is unavailable. Enter the ID details manually.'
+      const message = requestErrorMessage(cause, 'Automatic reading is unavailable. Enter the ID details manually.')
       if (cause?.status === 409 || cause?.statusCode === 409 || cause?.data?.statusCode === 409) scanError.value = message
       else scanReadMessage.value = message
     }
@@ -303,7 +305,7 @@ async function load(employeeId?: string, silent = false) {
     bundle.value = response
     if (!activeEmployeeId.value && employees.value.length) activeEmployeeId.value = String(employees.value[0].EmployeeID)
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to load employee documents.'
+    error.value = requestErrorMessage(cause, 'Unable to load employee documents.')
   } finally {
     if (!silent) loading.value = false
   }
@@ -389,7 +391,7 @@ async function save(section: SectionKey) {
     await load(activeEmployeeId.value)
     detailOpen.value = true
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to save record.'
+    error.value = requestErrorMessage(cause, 'Unable to save record.')
   } finally {
     saving.value = false
   }
@@ -403,7 +405,7 @@ async function remove(section: SectionKey, item: any) {
     await $fetch('/api/employees/documents', { method: 'DELETE', body: { section, employeeId: activeEmployeeId.value, id: item[definition.idKey] } })
     await load(activeEmployeeId.value)
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to delete record.'
+    error.value = requestErrorMessage(cause, 'Unable to delete record.')
   }
 }
 

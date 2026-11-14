@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import RefundableDeductionBalances from '../../../components/RefundableDeductionBalances.vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import { generatedIssuanceCode, issuanceCodePrefix } from '~~/shared/utils/issuanceCode'
@@ -301,7 +303,7 @@ async function load() {
     catalogItems.value = response.catalogItems || []
     Object.assign(pagination, response.pagination || {})
   } catch (cause: any) {
-    error.value = cause?.data?.statusMessage || cause?.message || 'Unable to load employee loan and deduction records.'
+    error.value = requestErrorMessage(cause, 'Unable to load employee loan and deduction records.')
   } finally {
     loading.value = false
   }
@@ -320,7 +322,7 @@ async function loadProfile(employee: EmployeeRow | { EmployeeID: number }) {
     contributionReceipts.value = contributionResponse.items || []
     catalogItems.value = response.catalogItems || catalogItems.value
   } catch (cause: any) {
-    profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to load this employee history.'
+    profileError.value = requestErrorMessage(cause, 'Unable to load this employee history.')
   } finally {
     profileLoading.value = false
   }
@@ -369,7 +371,7 @@ async function saveIssuance() {
     issuanceOpen.value = false
     await Promise.all([load(), profileOpen.value ? loadProfile(selectedEmployee.value) : Promise.resolve()])
   } catch (cause: any) {
-    profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to save this issuance.'
+    profileError.value = requestErrorMessage(cause, 'Unable to save this issuance.')
   } finally {
     saving.value = false
   }
@@ -382,7 +384,7 @@ async function changeStatus(item: RecordItem, status: string, askForConfirmation
     await $fetch('/api/deductions-loans/employee-records', { method: 'PUT', body: { EntryType: item.EntryType, RecordID: item.RecordID, Status: status } })
     if (selectedEmployee.value) await Promise.all([loadProfile(selectedEmployee.value), load()])
   } catch (cause: any) {
-    profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to update this record.'
+    profileError.value = requestErrorMessage(cause, 'Unable to update this record.')
   }
 }
 
@@ -434,7 +436,7 @@ async function savePause() {
     pauseOpen.value = false
     if (selectedEmployee.value) await loadProfile(selectedEmployee.value)
   } catch (cause: any) {
-    profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to pause this repayment plan.'
+    profileError.value = requestErrorMessage(cause, 'Unable to pause this repayment plan.')
   } finally {
     saving.value = false
   }
@@ -447,7 +449,7 @@ async function resumePlan(item: RecordItem) {
     await $fetch('/api/deductions-loans/employee-records', { method: 'PUT', body: { EntryType: item.EntryType, RecordID: item.RecordID, PlanAction: 'resume' } })
     if (selectedEmployee.value) await loadProfile(selectedEmployee.value)
   } catch (cause: any) {
-    profileError.value = cause?.data?.statusMessage || cause?.message || 'Unable to resume this repayment plan.'
+    profileError.value = requestErrorMessage(cause, 'Unable to resume this repayment plan.')
   }
 }
 

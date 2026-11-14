@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
 import { useAppTheme } from '~/composables/useAppTheme'
 import { ref } from 'vue'
 
 const isDark = useAppTheme()
 const email = ref(''); const message = ref(''); const busy = ref(false)
-async function submit() { busy.value = true; try { message.value = (await $fetch<any>('/api/auth/forgot-password', { method: 'POST', body: { email: email.value } })).message } finally { busy.value = false } }
+async function submit() { busy.value = true; try { message.value = (await $fetch<any>('/api/auth/forgot-password', { method: 'POST', body: { email: email.value } })).message } catch (cause) { message.value = requestErrorMessage(cause, 'Unable to request a password reset. Please try again.') } finally { busy.value = false } }
 
 
 </script>

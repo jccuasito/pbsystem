@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { btrAttendanceWarning, btrDate, resolveBtrEmployee, summarizeBtr } from '~~/shared/utils/dtrBtr'
 import type { BtrAttendanceDay, BtrEmployee, BtrEntry } from '~~/shared/utils/dtrBtr'
 import { btrSheetHeaders, parseBtrSheet } from '~~/shared/utils/dtrBtrSheet'
@@ -158,7 +160,7 @@ function rowError(row:Draft){
 }
 const ready=computed(()=>editable.value&&!loading.value&&!saving.value&&!reading.value&&drafts.value.length>0&&drafts.value.every(row=>!rowError(row)))
 const draftTotal=computed(()=>drafts.value.reduce((sum,row)=>sum+(Number.isFinite(Number(row.Hours))?Math.round(Number(row.Hours)*100):0),0)/100)
-const message=(e:any)=>e?.data?.statusMessage||e?.message||'Unable to load BTR.'
+const message=(e:any)=>requestErrorMessage(e, 'Unable to load BTR.')
 async function load(){
   loading.value=true;error.value=''
   try{data.value=await $fetch<Response>('/api/attendance/dtr/'+props.dtr.BatchID+'/btr')}

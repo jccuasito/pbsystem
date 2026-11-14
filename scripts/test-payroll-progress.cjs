@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 function evaluate(source,globals={}){const module={exports:{}};vm.runInNewContext(transformSync(source,{loader:'ts',format:'cjs'}).code,{module,...globals});return module.exports}
 const h3={createError:d=>Object.assign(new Error(d.statusMessage),d),getQuery:e=>e.query||{}}
 const auth={requireSession:e=>{if(e.anonymous)throw h3.createError({statusCode:401});return{sub:1}}}
-function api(db={execute:async()=>[[]]}){return evaluate(fs.readFileSync('server/utils/payrollProgress.ts','utf8'),{require:name=>name==='h3'?h3:name.includes('dbconnect')?db:name.endsWith('/auth')?auth:{}})}
+function api(db={execute:async()=>[[]]}){return evaluate(fs.readFileSync('server/utils/payrollProgress.ts','utf8'),{require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name==='h3'?h3:name.includes('dbconnect')?db:name.endsWith('/auth')?auth:{}})}
 test('progress counts distinct company/site runs, includes missing DTRs and never rounds partial completion to 100%',()=>{
  const source=api(),rows=[]
  for(let i=0;i<5;i++)rows.push({AgencyID:1,AgencyName:'Company A',SiteID:i+1,SiteName:'Site '+i,SiteAccountID:1,SiteAccountName:'SM Account',DtrCount:i===4?0:1,FinalizedDtrCount:i<3?1:0})
@@ -19,7 +19,7 @@ test('progress endpoint rejects anonymous and invalid cutoff requests before SQL
  await assert.rejects(()=>source.listPayrollProgress({anonymous:true}),e=>e.statusCode===401)
  for(const query of [{periodStart:'2026-02-30',periodEnd:'2026-03-15'},{periodStart:'2026-10-01'},{periodStart:'2026-10-16',periodEnd:'2026-10-01'},{periodStart:['2026-10-01'],periodEnd:'2026-10-15'}])await assert.rejects(()=>source.listPayrollProgress({query}),e=>e.statusCode===400)
  assert.equal(reads,0)
- const permissions=evaluate(fs.readFileSync('server/utils/settingsAccess.ts','utf8'),{require:name=>name==='h3'?h3:name.endsWith('/auth')?auth:{}})
+ const permissions=evaluate(fs.readFileSync('server/utils/settingsAccess.ts','utf8'),{require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name==='h3'?h3:name.endsWith('/auth')?auth:{}})
  assert.equal(permissions.moduleForPath('/api/dashboard/payroll-progress'),'dashboard')
 })
 test('progress view compiles and displays the company/group layout without financial amounts',async()=>{
@@ -30,7 +30,7 @@ test('progress view compiles and displays the company/group layout without finan
  const dataset=api().groupPayrollProgress([{AgencyID:1,AgencyName:'Company A',SiteID:1,SiteName:'Site A',SiteAccountID:1,SiteAccountName:'SM Account',DtrCount:1,FinalizedDtrCount:1},{AgencyID:1,AgencyName:'Company A',SiteID:2,SiteName:'Site B',SiteAccountID:1,SiteAccountName:'SM Account',DtrCount:0,FinalizedDtrCount:0}])
  const prepared=source.replace(/const report=ref<any>\([^\n]+\)/,`const report=ref<any>(${JSON.stringify({...dataset,cutoffs:[],period:null})})`).replace('loading=ref(true)','loading=ref(false)')
  const compiled=sfc.compileScript(sfc.parse(prepared,{filename:file}).descriptor,{id:file,inlineTemplate:true})
- const component=evaluate(compiled.content,{require:name=>name==='vue'?vue:{useRealtimeRefresh(){}}}).default
+ const component=evaluate(compiled.content,{require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name==='vue'?vue:{useRealtimeRefresh(){}}}).default
  const html=await require('@vue/server-renderer').renderToString(vue.createSSRApp(component))
  assert.ok(html.includes('Company A'));assert.ok(html.includes('SM Account'));assert.ok(html.includes('50%'));assert.ok(html.includes('aria-valuenow="50"'));assert.ok(html.includes('Without DTR'));assert.ok(!/GrossPay|TotalDeduction|NetPay/.test(html))
  assert.match(fs.readFileSync('app/pages/dashboard/index.vue','utf8'),/<PayrollRunProgress \/>/)
@@ -38,7 +38,7 @@ test('progress view compiles and displays the company/group layout without finan
 test('late responses and failed cutoff changes keep progress tied to its displayed period',async()=>{
  const scope=vue.effectScope(),pending=[]
  const source=sfc.parse(fs.readFileSync('app/components/PayrollRunProgress.vue','utf8')).descriptor.scriptSetup.content
- const state=scope.run(()=>evaluate(source+'\nmodule.exports={load,report,cutoff};',{AbortController,require:name=>name==='vue'?{...vue,onMounted(){},onBeforeUnmount(){}}:{useRealtimeRefresh(){}},$fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject}))}))
+ const state=scope.run(()=>evaluate(source+'\nmodule.exports={load,report,cutoff};',{AbortController,require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name==='vue'?{...vue,onMounted(){},onBeforeUnmount(){}}:{useRealtimeRefresh(){}},$fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject}))}))
  try{
   const first=state.load();state.cutoff.value='2026-10-01:2026-10-15';const next=state.load()
   const result={companies:[],totals:{Percent:60},cutoffs:[],period:{PeriodStart:'2026-10-01',PeriodEnd:'2026-10-15'}}

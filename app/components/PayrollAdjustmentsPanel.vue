@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref, watch } from 'vue'
 
 type Dtr = { BatchID: number; AgencyName?: string; ClientName?: string; SiteName?: string; PeriodStart?: string; PeriodEnd?: string; Status?: string }
@@ -86,7 +88,7 @@ async function load(silent = false) {
     targetEmployees.value = response.targetEmployees?.length ? response.targetEmployees : [...props.employees]
     permissions.value = response.permissions || permissions.value
   } catch (cause: any) {
-    error.value = cause?.data?.statusMessage || 'Unable to load payroll adjustments.'
+    error.value = requestErrorMessage(cause, 'Unable to load payroll adjustments.')
   } finally { if (!silent) loading.value = false }
 }
 
@@ -105,7 +107,7 @@ async function loadSourceOptions() {
     const response = await $fetch<any>('/api/payroll/adjustments', { query })
     permissions.value = response.permissions || permissions.value
     sourceBatches.value = response.sourceBatches || []
-  } catch (cause: any) { formError.value = cause?.data?.statusMessage || 'Unable to load previous payroll cutoffs.' }
+  } catch (cause: any) { formError.value = requestErrorMessage(cause, 'Unable to load previous payroll cutoffs.') }
 }
 
 function changeEmployee() {
@@ -128,7 +130,7 @@ async function loadDates() {
     }))
     missedDates.value = response.missedDates || []
     shiftCodes.value = response.shiftCodes || []
-  } catch (cause: any) { formError.value = cause?.data?.statusMessage || 'Unable to load eligible attendance dates.' }
+  } catch (cause: any) { formError.value = requestErrorMessage(cause, 'Unable to load eligible attendance dates.') }
 }
 
 function openCreate(employeeId?: number) {
@@ -172,7 +174,7 @@ async function save() {
     creating.value = false
     await load(true)
     emit('changed')
-  } catch (cause: any) { formError.value = cause?.data?.statusMessage || 'Unable to save the payroll adjustment.' }
+  } catch (cause: any) { formError.value = requestErrorMessage(cause, 'Unable to save the payroll adjustment.') }
   finally { busy.value = false }
 }
 
@@ -183,7 +185,7 @@ async function act(item: any, action: string) {
   try {
     await $fetch('/api/payroll/adjustments', { method: 'PUT', body: { AdjustmentID: item.AdjustmentID, Action: action } })
     await load(true); emit('changed')
-  } catch (cause: any) { error.value = cause?.data?.statusMessage || 'Unable to update the payroll adjustment.' }
+  } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to update the payroll adjustment.') }
   finally { busy.value = false }
 }
 

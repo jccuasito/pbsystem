@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import ModernDateField from '~~/components/ModernDateField.vue'
@@ -60,7 +62,7 @@ async function load(silent = false) {
     const response: any = await $fetch('/api/attendance/holidays')
     items.value = response.items || []
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to load holidays.'
+    error.value = requestErrorMessage(cause, 'Unable to load holidays.')
   } finally {
     if (!silent) loading.value = false
   }
@@ -75,7 +77,7 @@ async function save() {
     modalOpen.value = false
     await load()
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to save holiday.'
+    error.value = requestErrorMessage(cause, 'Unable to save holiday.')
   } finally {
     busy.value = false
   }
@@ -88,7 +90,7 @@ async function deactivate(item: any) {
     await $fetch('/api/attendance/holidays', { method: 'DELETE', body: { id: item.HolidayID } })
     await load()
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to deactivate holiday.'
+    error.value = requestErrorMessage(cause, 'Unable to deactivate holiday.')
   }
 }
 

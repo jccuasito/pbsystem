@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import RateMoneyFields from './RateMoneyFields.vue'
@@ -96,7 +98,7 @@ async function load(silent = false) {
     agencyPositions.value = response.agencyPositions || []
     payrollRates.value = response.payrollRates || []
     billingRates.value = response.billingRates || []
-  } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to load site rates.' }
+  } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to load site rates.') }
   finally { if (!silent) loading.value = false }
 }
 async function save() {
@@ -122,13 +124,13 @@ async function save() {
     await $fetch('/api/rates/site-rate', { method: editing.value ? 'PUT' : 'POST', body: editing.value ? { id: editing.value.SiteRateID, ...body } : body })
     open.value = false
     await load()
-  } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to save site rate.' }
+  } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to save site rate.') }
   finally { busy.value = false }
 }
 async function deactivate(item: any) {
   if (!confirm('Mark this site rate as inactive?')) return
   try { await $fetch('/api/rates/site-rate', { method: 'DELETE', body: { id: item.SiteRateID } }); await load() }
-  catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to deactivate site rate.' }
+  catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to deactivate site rate.') }
 }
 
 onMounted(load)

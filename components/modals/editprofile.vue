@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { ref, watch } from 'vue'
 
 const props = defineProps({
@@ -61,7 +63,7 @@ async function onPhotoSelected(event: Event) {
     const refreshed: any = await $fetch('/api/auth/me')
     emit('saved', refreshed.user)
   } catch (e: any) {
-    photoError.value = e.data?.statusMessage || 'Unable to upload photo.'
+    photoError.value = requestErrorMessage(e, 'Unable to upload photo.')
   } finally {
     photoBusy.value = false
     if (fileInput.value) fileInput.value.value = ''
@@ -80,7 +82,7 @@ async function save() {
     emit('saved', result.user)
     emit('update:modelValue', false)
   } catch (e: any) {
-    error.value = e.data?.statusMessage || 'Unable to update profile.'
+    error.value = requestErrorMessage(e, 'Unable to update profile.')
   } finally {
     busy.value = false
   }

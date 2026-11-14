@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { useAppTheme } from '~/composables/useAppTheme'
 import { ref, onMounted } from 'vue'
 import EmailVerification from '../../../components/modals/emailverification.vue'
@@ -18,11 +20,11 @@ async function register() {
   if (form.value.password !== form.value.confirmPassword) { error.value = 'Passwords do not match.'; return }
   busy.value = true
   try { const result: any = await $fetch('/api/auth/register', { method: 'POST', body: form.value }); message.value = result.message; showVerification.value = Boolean(result.requiresVerification) }
-  catch (e: any) { console.error('Signup failed:', e); error.value = e.data?.statusMessage || e.data?.message || e.message || 'Unable to create account.' }
+  catch (e: any) { console.error('Signup failed:', e); error.value = requestErrorMessage(e, 'Unable to create account.') }
   finally { busy.value = false }
 }
-async function googleSignup(response: { code?: string; error?: string }) { if (!response.code) { error.value = response.error || 'Google sign-up was cancelled.'; return }; error.value = ''; busy.value = true; try { const result: any = await $fetch('/api/auth/google-code', { method: 'POST', body: { code: response.code, intent: 'signup' } }); form.value.firstName = result.profile.firstName; form.value.lastName = result.profile.lastName; form.value.email = result.profile.email; googleSelected.value = true; message.value = 'Google account selected. Complete the remaining fields, then create your account.' } catch (e: any) { error.value = e.data?.statusMessage || 'Google sign-up failed.' } finally { busy.value = false } }
-async function verifyEmail(code: string) { verificationMessage.value = ''; verifyingCode.value = true; try { verificationMessage.value = (await $fetch<any>('/api/auth/verify-email', { method: 'POST', body: { email: form.value.email, code } })).message; setTimeout(() => navigateTo('/loginscreen'), 900) } catch (e: any) { verificationMessage.value = e.data?.statusMessage || e.data?.message || 'Unable to verify code.' } finally { verifyingCode.value = false } }
+async function googleSignup(response: { code?: string; error?: string }) { if (!response.code) { error.value = response.error || 'Google sign-up was cancelled.'; return }; error.value = ''; busy.value = true; try { const result: any = await $fetch('/api/auth/google-code', { method: 'POST', body: { code: response.code, intent: 'signup' } }); form.value.firstName = result.profile.firstName; form.value.lastName = result.profile.lastName; form.value.email = result.profile.email; googleSelected.value = true; message.value = 'Google account selected. Complete the remaining fields, then create your account.' } catch (e: any) { error.value = requestErrorMessage(e, 'Google sign-up failed.') } finally { busy.value = false } }
+async function verifyEmail(code: string) { verificationMessage.value = ''; verifyingCode.value = true; try { verificationMessage.value = (await $fetch<any>('/api/auth/verify-email', { method: 'POST', body: { email: form.value.email, code } })).message; setTimeout(() => navigateTo('/loginscreen'), 900) } catch (e: any) { verificationMessage.value = requestErrorMessage(e, 'Unable to verify code.') } finally { verifyingCode.value = false } }
 function openVerification() { if (!form.value.email.trim()) { error.value = 'Enter the email address where the verification code was sent.'; return }; verificationMessage.value = ''; showVerification.value = true }
 function startGoogle() { error.value = ''; if (!googleReady.value || !googleCodeClient.value) { error.value = 'Google sign-in is still loading. Please try again.'; return }; googleCodeClient.value.requestCode() }
 

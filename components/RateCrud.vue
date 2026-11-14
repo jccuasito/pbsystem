@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import RegionalRateModal from './RegionalRateModal.vue'
@@ -106,7 +108,7 @@ async function saveCurrentEdit() {
     await $fetch(`/api/rates/${props.resource}`, { method: 'PUT', body: { id: editingCurrent.value[idKey.value], mode: 'current', ...editForm.value, ...regionalPayload(editParent.value,editOverrides.value) } })
     editingCurrent.value = null
     await load()
-  } catch (e: any) { editError.value = e.data?.statusMessage || 'Unable to edit the current rate.' }
+  } catch (e: any) { editError.value = requestErrorMessage(e, 'Unable to edit the current rate.') }
   finally { editBusy.value = false }
 }
 function openUpdate(item: any) {
@@ -132,17 +134,17 @@ async function saveUpdate() {
     await $fetch('/api/rates/versions', { method: 'POST', body: { resource: props.resource, id: updating.value[idKey.value], ...updateForm.value, ...regionalPayload(updateParent.value,updateOverrides.value) } })
     updating.value = null
     await load()
-  } catch (e: any) { updateError.value = e.data?.statusMessage || 'Unable to update rate.' }
+  } catch (e: any) { updateError.value = requestErrorMessage(e, 'Unable to update rate.') }
   finally { updateBusy.value = false }
 }
 function reset() { addOverrides.value={};addContext.value=null;clearCopy();selectedAgencyId.value = ''; form.value = { AgencyPositionID: '', RegionID: '', EffectiveDate: '', Status: 'Active', ...Object.fromEntries(moneyFields.map(({ key }) => [key, 0])) }; error.value = '' }
 async function load(silent = false) {
  if(!silent)loading.value=true
  try{const [r,regional]:any[]=await Promise.all([$fetch(`/api/rates/${props.resource}`),props.resource==='payroll-rate'?$fetch('/api/rates/regional'):Promise.resolve({items:[],agencies:[]})]);items.value=r.items||[];agencyPositions.value=r.agencyPositions||[];regions.value=r.regions||[];regionalRates.value=regional.items||[];regionalAgencies.value=regional.agencies||[];if(viewingHistory.value)viewingHistory.value=items.value.find(item=>item[idKey.value]===viewingHistory.value[idKey.value])||null}
- catch(e:any){error.value=e.data?.statusMessage||'Unable to load rates.'}finally{if(!silent)loading.value=false}
+ catch(e:any){error.value=requestErrorMessage(e, 'Unable to load rates.')}finally{if(!silent)loading.value=false}
 }
-async function save() { busy.value = true; error.value = ''; try { await $fetch(`/api/rates/${props.resource}`, { method: 'POST', body: {...form.value,...regionalPayload(addParent.value,addOverrides.value)} }); open.value = false; await load() } catch (e: any) { error.value = e.data?.statusMessage || 'Unable to save rate.' } finally { busy.value = false } }
-async function deactivate(item: any) { if (!confirm('Mark this rate as inactive?')) return; try { await $fetch(`/api/rates/${props.resource}`, { method: 'DELETE', body: { id: item[idKey.value] } }); await load() } catch (e: any) { error.value = e.data?.statusMessage || 'Unable to deactivate rate.' } }
+async function save() { busy.value = true; error.value = ''; try { await $fetch(`/api/rates/${props.resource}`, { method: 'POST', body: {...form.value,...regionalPayload(addParent.value,addOverrides.value)} }); open.value = false; await load() } catch (e: any) { error.value = requestErrorMessage(e, 'Unable to save rate.') } finally { busy.value = false } }
+async function deactivate(item: any) { if (!confirm('Mark this rate as inactive?')) return; try { await $fetch(`/api/rates/${props.resource}`, { method: 'DELETE', body: { id: item[idKey.value] } }); await load() } catch (e: any) { error.value = requestErrorMessage(e, 'Unable to deactivate rate.') } }
 const currency = (value: any) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value) || 0)
 onMounted(load)
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open.value && !editingCurrent.value && !updating.value && !regionalModal.value })

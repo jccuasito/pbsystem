@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { defaultBillingProfile, normalizeBillingProfile } from '~~/shared/utils/billingProfile'
 
@@ -10,7 +11,7 @@ const validation = ref('')
 function save() {
   if (props.busy || !props.editable) return
   try { const config = normalizeBillingProfile(form.value); validation.value = ''; emit('save', { agencyId: props.account.AgencyID, clientId: props.account.ClientID, revision: props.account.profile?.revision || 0, config }) }
-  catch (error: any) { validation.value = error.message }
+  catch (error: any) { validation.value = requestErrorMessage(error, 'Please review the billing setup fields.') }
 }
 let overflow = ''
 const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !props.busy) emit('close') }

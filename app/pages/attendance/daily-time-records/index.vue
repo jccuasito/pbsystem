@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import DtrAttendanceWorkspace from '~/components/DtrAttendanceWorkspace.vue'
 import DtrBtrModal from '~/components/DtrBtrModal.vue'
@@ -20,10 +22,10 @@ function cutoffOptions(year:number){return Array.from({length:12},(_,m)=>{const 
 const yearOptions=computed(()=>Array.from({length:5},(_,i)=>String(now.getFullYear()-2+i))), cutoffs=computed(()=>cutoffOptions(Number(selectedYear.value))), cutoffLabel=computed(()=>cutoffs.value.find(c=>c.value===selectedCutoff.value)?.label||'Choose a cutoff'), period=computed(()=>selectedCutoff.value.split(':'))
 const availableClients=computed(()=>clients.value.filter(c=>!agencyId.value||String(c.AgencyID)===agencyId.value)), availableSites=computed(()=>sites.value.filter(s=>(!clientId.value||String(s.ClientID)===clientId.value)&&(!agencyId.value||String(s.AgencyID)===agencyId.value))), formClients=computed(()=>clients.value.filter(c=>String(c.AgencyID)===form.AgencyID)), formSites=computed(()=>sites.value.filter(s=>String(s.ClientID)===form.ClientID&&String(s.AgencyID)===form.AgencyID))
 function currentCutoff(){const y=now.getFullYear(),m=now.getMonth()+1,start=now.getDate()<=15?1:16,end=start===1?15:new Date(y,m,0).getDate(),p=`${y}-${String(m).padStart(2,'0')}`;return `${p}-${String(start).padStart(2,'0')}:${p}-${end}`}
-async function load(){loading.value=true;error.value='';try{const query:Record<string,string>={};if(search.value)query.search=search.value;if(agencyId.value)query.agencyId=agencyId.value;if(clientId.value)query.clientId=clientId.value;if(siteId.value)query.siteId=siteId.value;if(period.value[0])query.periodStart=period.value[0];if(period.value[1])query.periodEnd=period.value[1];const r=await $fetch<any>('/api/attendance/dtr',{query});items.value=r.items||[];agencies.value=r.agencies||[];clients.value=r.clients||[];sites.value=r.sites||[]}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load Daily Time Records.'}finally{loading.value=false}}
+async function load(){loading.value=true;error.value='';try{const query:Record<string,string>={};if(search.value)query.search=search.value;if(agencyId.value)query.agencyId=agencyId.value;if(clientId.value)query.clientId=clientId.value;if(siteId.value)query.siteId=siteId.value;if(period.value[0])query.periodStart=period.value[0];if(period.value[1])query.periodEnd=period.value[1];const r=await $fetch<any>('/api/attendance/dtr',{query});items.value=r.items||[];agencies.value=r.agencies||[];clients.value=r.clients||[];sites.value=r.sites||[]}catch(e:any){error.value=requestErrorMessage(e, 'Unable to load Daily Time Records.')}finally{loading.value=false}}
 function openCreate(){editing.value=null;Object.assign(form,{AgencyID:agencyId.value,ClientID:clientId.value,SiteID:siteId.value,PeriodStart:period.value[0]||'',PeriodEnd:period.value[1]||''});error.value='';formOpen.value=true}function openEdit(i:Dtr){workspace.value=i}
-async function save(){saving.value=true;error.value='';try{const body={AgencyID:Number(form.AgencyID),ClientID:Number(form.ClientID),SiteID:Number(form.SiteID),PeriodStart:form.PeriodStart,PeriodEnd:form.PeriodEnd};if(editing.value)await $fetch(`/api/attendance/dtr/${editing.value.BatchID}`,{method:'PUT',body});else await $fetch('/api/attendance/dtr',{method:'POST',body});formOpen.value=false;await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to save DTR.'}finally{saving.value=false}}
-async function remove(i:Dtr){if(!confirm(`Delete DTR-${i.BatchID}? This cannot be undone.`))return;try{await $fetch(`/api/attendance/dtr/${i.BatchID}`,{method:'DELETE'});await load()}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to delete DTR.'}}
+async function save(){saving.value=true;error.value='';try{const body={AgencyID:Number(form.AgencyID),ClientID:Number(form.ClientID),SiteID:Number(form.SiteID),PeriodStart:form.PeriodStart,PeriodEnd:form.PeriodEnd};if(editing.value)await $fetch(`/api/attendance/dtr/${editing.value.BatchID}`,{method:'PUT',body});else await $fetch('/api/attendance/dtr',{method:'POST',body});formOpen.value=false;await load()}catch(e:any){error.value=requestErrorMessage(e, 'Unable to save DTR.')}finally{saving.value=false}}
+async function remove(i:Dtr){if(!confirm(`Delete DTR-${i.BatchID}? This cannot be undone.`))return;try{await $fetch(`/api/attendance/dtr/${i.BatchID}`,{method:'DELETE'});await load()}catch(e:any){error.value=requestErrorMessage(e, 'Unable to delete DTR.')}}
 function isComputedFor(i:Dtr,target:'payroll'|'billing'){
   return i.Status==='Computed to Both'||i.Status===(target==='payroll'?'Computed to Payroll':'Computed to Billing')
 }
@@ -50,15 +52,15 @@ async function compute(){
     await $fetch(`/api/attendance/dtr/${item.BatchID}/compute`,{method:'POST',body:{target}})
     computeConfirmation.value=null
     await load()
-  }catch(e:any){computeConfirmation.value=null;error.value=e?.data?.statusMessage||e?.message||'Unable to compute DTR.'}
+  }catch(e:any){computeConfirmation.value=null;error.value=requestErrorMessage(e, 'Unable to compute DTR.')}
   finally{computingKey.value=''}
 }
-async function viewSummary(i:Dtr){try{summary.value={item:i,...(await $fetch<any>(`/api/attendance/dtr/${i.BatchID}/summary`))};compactOpen.value=false;summaryOpen.value=true}catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load DTR summary.'}}
+async function viewSummary(i:Dtr){try{summary.value={item:i,...(await $fetch<any>(`/api/attendance/dtr/${i.BatchID}/summary`))};compactOpen.value=false;summaryOpen.value=true}catch(e:any){error.value=requestErrorMessage(e, 'Unable to load DTR summary.')}}
 async function viewDetails(i:Dtr){
   detailsLoadingId.value=i.BatchID
   error.value=''
   try{detailsData.value={item:i,...(await $fetch<any>(`/api/attendance/dtr/${i.BatchID}/summary`))}}
-  catch(e:any){error.value=e?.data?.statusMessage||e?.message||'Unable to load employee attendance details.'}
+  catch(e:any){error.value=requestErrorMessage(e, 'Unable to load employee attendance details.')}
   finally{detailsLoadingId.value=null}
 }
 function formatDate(v:string){return new Date(v).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}function canEdit(i:Dtr){return !['Approved','Locked'].includes(i.Status)&&!i.Status.startsWith('Computed')}

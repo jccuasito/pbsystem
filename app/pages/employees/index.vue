@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import EmployeePositionChangeModal from '~/components/EmployeePositionChangeModal.vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
@@ -247,7 +249,7 @@ async function load(silent = false) {
       if (error.value === employeeLoadError) error.value = ''
       employeeLoadError = ''
     } catch (cause: any) {
-      employeeLoadError = cause.data?.statusMessage || 'Unable to load employees. Please try again.'
+      employeeLoadError = requestErrorMessage(cause, 'Unable to load employees. Please try again.')
       error.value = employeeLoadError
     } finally {
       loading.value = false
@@ -304,7 +306,7 @@ async function save(confirmPossibleDuplicate = false) {
       duplicateMatches.value = duplicateData.matches
       duplicateReviewOpen.value = true
     } else {
-      formError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to save employee.'
+      formError.value = requestErrorMessage(cause, 'Unable to save employee.')
     }
   } finally {
     busy.value = false
@@ -326,7 +328,7 @@ async function deactivate(item: any) {
     await $fetch(`/api/employees/${item.EmployeeID}`, { method: 'DELETE', body: { id: item.EmployeeID } })
     await load()
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to deactivate employee.'
+    error.value = requestErrorMessage(cause, 'Unable to deactivate employee.')
   }
 }
 
@@ -353,7 +355,7 @@ async function confirmDelete() {
     deleting.value = null
     await load()
   } catch (cause: any) {
-    deleteError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to permanently delete employee.'
+    deleteError.value = requestErrorMessage(cause, 'Unable to permanently delete employee.')
   } finally {
     deleteBusy.value = false
   }
@@ -750,7 +752,7 @@ async function openTransfer(item: any) {
     transferShiftCodes.value = response.shiftCodes || []
     transferOpen.value = true
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to load transfer options.'
+    error.value = requestErrorMessage(cause, 'Unable to load transfer options.')
   }
 }
 
@@ -765,7 +767,7 @@ async function openShiftSetup() {
     siteShiftForm.value = { ShiftCodeID: '', ShiftCode: '', ShiftName: '', ShiftType: 'Day', TimeIn: '08:00', TimeOut: '17:00', RegularHours: '8', RegularOTCap: '4' }
     shiftSetupOpen.value = true
   } catch (cause: any) {
-    transferError.value = cause.data?.statusMessage || 'Unable to load shift setup options.'
+    transferError.value = requestErrorMessage(cause, 'Unable to load shift setup options.')
   } finally {
     shiftSetupBusy.value = false
   }
@@ -784,7 +786,7 @@ async function saveSiteShift() {
     transferForm.value.SiteShiftID = String(response.id)
     shiftSetupOpen.value = false
   } catch (cause: any) {
-    shiftSetupError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to set up this site shift.'
+    shiftSetupError.value = requestErrorMessage(cause, 'Unable to set up this site shift.')
   } finally {
     shiftSetupBusy.value = false
   }
@@ -800,7 +802,7 @@ async function saveTransfer() {
     transferring.value = null
     await load()
   } catch (cause: any) {
-    transferError.value = cause.data?.statusMessage || cause.data?.message || 'Unable to transfer employee.'
+    transferError.value = requestErrorMessage(cause, 'Unable to transfer employee.')
   } finally {
     transferBusy.value = false
   }

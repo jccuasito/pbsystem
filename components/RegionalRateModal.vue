@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import RateMoneyFields from './RateMoneyFields.vue'
 import ModernDateField from './ModernDateField.vue'
@@ -21,7 +23,7 @@ const history=computed(()=>{const record=props.record;if(!record)return [];const
 const minimum=computed(()=>{if(props.mode!=='version')return undefined;const d=new Date(rateDate(initial.EffectiveDate)+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10)})
 function selectSource(){if(!source.value)return;form.value={...form.value,EffectiveDate:rateDate(source.value.EffectiveDate),...Object.fromEntries(rateFormFields.map(({key})=>[key,source.value[key]??0]))}}
 function close(){if(!busy.value)emit('close')}
-async function save(){if(busy.value)return;busy.value=true;error.value='';try{await $fetch('/api/rates/regional',{method:props.mode==='create'?'POST':'PUT',body:{...form.value,id:props.record?.RegionRateID,mode:props.mode,Revision:props.record?.Revision,SourcePayrollRateID:sourceId.value||undefined}});emit('saved')}catch(e:any){error.value=e.data?.statusMessage||'Unable to save region rate.';review.value=false}finally{busy.value=false}}
+async function save(){if(busy.value)return;busy.value=true;error.value='';try{await $fetch('/api/rates/regional',{method:props.mode==='create'?'POST':'PUT',body:{...form.value,id:props.record?.RegionRateID,mode:props.mode,Revision:props.record?.Revision,SourcePayrollRateID:sourceId.value||undefined}});emit('saved')}catch(e:any){error.value=requestErrorMessage(e, 'Unable to save region rate.');review.value=false}finally{busy.value=false}}
 let previous:HTMLElement|null=null,overflow=''
 function keyboard(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();close()}if(event.key!=='Tab')return;const nodes=dialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]');if(!nodes?.length)return;const first=nodes[0]!,last=nodes[nodes.length-1]!;if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}}
 onMounted(async()=>{previous=document.activeElement as HTMLElement;overflow=document.body.style.overflow;document.body.style.overflow='hidden';document.addEventListener('keydown',keyboard);await nextTick();dialog.value?.focus()})

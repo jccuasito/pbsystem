@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import SystemAlert from '../../../../components/alertmessage/SystemAlert.vue'
 import type { AlertMessage } from '../../../../components/alertmessage/messages'
@@ -296,7 +298,7 @@ async function load(silent = false) {
       attendanceStatuses.value = result.attendanceStatuses || attendanceStatuses.value
       await loadCutoffHistory({ background: silent }); dataReady.value = true
     } catch (cause: any) {
-      const detail = cause.data?.statusMessage || 'Unable to load employee status records.'
+      const detail = requestErrorMessage(cause, 'Unable to load employee status records.')
       if (silent && dataReady.value) refreshError.value = `Unable to refresh. ${detail}`
       else error.value = detail
     } finally { if (!silent) loading.value = false }
@@ -323,7 +325,7 @@ async function loadCutoffHistory({ background = false } = {}) {
       }
     } catch (cause: any) {
       if (request === cutoffRequest && selectedCutoffKey.value === key) {
-        const detail = cause.data?.statusMessage || 'Unable to load the selected cutoff. Please retry.'
+        const detail = requestErrorMessage(cause, 'Unable to load the selected cutoff. Please retry.')
         if (keepVisible) refreshError.value = `Unable to refresh. Showing the last loaded records. ${detail}`
         else cutoffError.value = detail
       }
@@ -378,7 +380,7 @@ async function loadSummary() {
     summaryHistoryRows.value = result.history || []
     expandedSummaryPeriod.value = summaryPeriods.value[0]?.key || ''
   } catch (cause: any) {
-    if (request === summaryRequest) summaryError.value = cause.data?.statusMessage || 'Unable to load this employee history.'
+    if (request === summaryRequest) summaryError.value = requestErrorMessage(cause, 'Unable to load this employee history.')
   } finally {
     if (request === summaryRequest) summaryLoading.value = false
   }
@@ -403,7 +405,7 @@ async function exportStatusExcel() {
     link.href = url; link.download = `Employee_Status_${dates[0]}_to_${dates[dates.length - 1]}.xlsx`
     document.body.appendChild(link); link.click(); link.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch (cause: any) { alert.value = message('Excel export failed', cause?.message || 'Unable to export the selected cutoff.', 'error') }
+  } catch (cause: any) { alert.value = message('Excel export failed', requestErrorMessage(cause, 'Unable to export the selected cutoff.'), 'error') }
   finally { exporting.value = false }
 }
 
@@ -419,7 +421,7 @@ async function saveStatus() {
     await loadCutoffHistory({ background: true })
     const detail = result.pending ? 'It will appear in the matching Draft DTR once the employee is assigned to its roster.' : 'The matching Draft DTR was updated immediately.'
     alert.value = message('Employee status updated', `${employeeName} was updated for ${formatDate(statusForm.value.StartDate)}. ${detail}`, 'success')
-  } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to update employee status.' }
+  } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to update employee status.') }
   finally { saving.value = false }
 }
 

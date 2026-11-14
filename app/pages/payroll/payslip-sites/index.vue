@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import EmployeePayslipSheet from '../../../components/EmployeePayslipSheet.vue'
 import PayslipPage from '../payslip/index.vue'
@@ -63,7 +65,7 @@ async function load(append=false){
   const key=(item:SitePayroll)=>[item.SiteAccountID,item.AgencyID,item.PeriodStart,item.PeriodEnd].join(':')
   const items=append?[...new Map([...list.value.items,...result.items].map(item=>[key(item),item])).values()]:result.items
   list.value={...result,items}
- }catch(cause:any){if(request===listRequest){retryAppend.value=append;error.value=cause?.data?.statusMessage||'Unable to load finalized account payrolls.'}}
+ }catch(cause:any){if(request===listRequest){retryAppend.value=append;error.value=requestErrorMessage(cause, 'Unable to load finalized account payrolls.')}}
  finally{if(request===listRequest){loading.value=false;void observeLists()}}
 }
 function applyFilters(){void load()}
@@ -79,7 +81,7 @@ async function openRoster(scope:PostingScope,refresh=false){
   if(!refresh){rosterSearch.value='';rosterStatus.value='';rosterLimit.value=50;notice.value=''}
   await nextTick();if(rosterBody.value)rosterBody.value.scrollTop=scrollTop;if(!refresh)dialog.value?.focus()
   return true
- }catch(cause:any){if(request===rosterRequest){const message=cause?.data?.statusMessage||'Unable to load this account payroll.';if(roster.value)rosterError.value=message;else error.value=message}}
+ }catch(cause:any){if(request===rosterRequest){const message=requestErrorMessage(cause, 'Unable to load this account payroll.');if(roster.value)rosterError.value=message;else error.value=message}}
  finally{if(request===rosterRequest){rosterLoading.value=false;void observeLists()}}
 }
 function closeRoster(force=false){if(force!==true&&(busy.value||rosterLoading.value))return;roster.value=null;preview.value=null;managedEmployee.value=null;notice.value=''}
@@ -98,7 +100,7 @@ async function publish(action:'post'|'withdraw'){
   if(!active||owner!==rosterRequest)return
   notice.value=result.changed+' payslip(s) '+(action==='post'?'posted.':'withdrawn.')+(result.unchanged?' '+result.unchanged+' already had this status.':'')
   await openRoster(roster.value.header.Scope,true);await load()
- }catch(cause:any){if(!active||owner!==rosterRequest)return;const message=cause?.data?.statusMessage||'Unable to change payslip posting status. Please try again.';if(Number(cause?.statusCode||cause?.status||cause?.response?.status)===409&&roster.value){const reloaded=await openRoster(roster.value.header.Scope,true);if(reloaded)rosterError.value=message+' The current review has been reloaded. Review and select employees again.'}else rosterError.value=message}
+ }catch(cause:any){if(!active||owner!==rosterRequest)return;const message=requestErrorMessage(cause, 'Unable to change payslip posting status. Please try again.');if(Number(cause?.statusCode||cause?.status||cause?.response?.status)===409&&roster.value){const reloaded=await openRoster(roster.value.header.Scope,true);if(reloaded)rosterError.value=message+' The current review has been reloaded. Review and select employees again.'}else rosterError.value=message}
  finally{busy.value=false}
 }
 async function closeEmployee(){managedEmployee.value=null;if(roster.value)await openRoster(roster.value.header.Scope,true);await load()}

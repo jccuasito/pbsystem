@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onActivated, onDeactivated, onMounted, ref } from 'vue'
 
 type Cutoff = { PeriodStart: string; PeriodEnd: string }
@@ -68,7 +70,7 @@ async function load() {
       periodStart: periodStart || undefined, periodEnd: periodEnd || undefined, page: page.value,
     } })
   } catch (caught: any) {
-    error.value = caught?.data?.statusMessage || caught?.message || 'Unable to load payroll history.'
+    error.value = requestErrorMessage(caught, 'Unable to load payroll history.')
   } finally { loading.value = false }
 }
 
@@ -85,7 +87,7 @@ async function openDetail(batchId: number) {
       if (!result.payrolls.some(row => row.PostingStatus === 'Active' && ['Approved', 'Released'].includes(row.PayrollStatus))) detailTab.value = 'audit'
     }
   } catch (caught: any) {
-    if (selectedBatchId.value === batchId) detailError.value = caught?.data?.statusMessage || caught?.message || 'Unable to load payroll details.'
+    if (selectedBatchId.value === batchId) detailError.value = requestErrorMessage(caught, 'Unable to load payroll details.')
   } finally { if (selectedBatchId.value === batchId) detailLoading.value = false }
 }
 function closeDetail() { selectedBatchId.value = null; detail.value = null; detailError.value = ''; detailTab.value = 'current' }

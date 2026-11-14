@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed,nextTick,onMounted,onBeforeUnmount,ref,watch } from 'vue'
 import InformationRequestThread from './InformationRequestThread.vue'
 import RequestChatWindow from './RequestChatWindow.vue'
@@ -21,7 +23,7 @@ function closeConversation(){if(busy.value)return;opened.value=null;if(pending.v
 function display(field:any){if(!field.value)return 'Not recorded';if(['Birthday','DateHired'].includes(field.key)&&/^\d{4}-\d{2}-\d{2}$/.test(field.value)){const date=new Date(field.value+'T00:00:00Z');if(Number.isFinite(date.getTime()))return date.toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric',timeZone:'Asia/Singapore'})}return field.value}
 const hasDraft=computed(()=>Boolean(proposedValue.value||message.value||Object.values(replies.value).some(Boolean)))
 watch(busy,value=>emit('processing',value));watch(hasDraft,value=>emit('dirty',value))
-async function load(page=1){const current=++owner;controller?.abort();controller=new AbortController();loading.value=true;error.value='';try{const result:any=await $fetch('/api/employee-portal/information',{query:{page},signal:controller.signal,retry:0,timeout:15000});if(current===owner){fields.value=result.fields;choices.value=result.requestFields;requests.value=[...result.requests.items];pagination.value=result.requests.pagination}}catch(cause:any){if(current===owner)error.value=cause?.data?.statusMessage||'Unable to load your employee information.'}finally{if(current===owner)loading.value=false}}
+async function load(page=1){const current=++owner;controller?.abort();controller=new AbortController();loading.value=true;error.value='';try{const result:any=await $fetch('/api/employee-portal/information',{query:{page},signal:controller.signal,retry:0,timeout:15000});if(current===owner){fields.value=result.fields;choices.value=result.requestFields;requests.value=[...result.requests.items];pagination.value=result.requests.pagination}}catch(cause:any){if(current===owner)error.value=requestErrorMessage(cause, 'Unable to load your employee information.')}finally{if(current===owner)loading.value=false}}
 async function startRequest(){showForm.value=true;await nextTick();requestForm.value?.scrollIntoView({block:'start',behavior:'smooth'});requestForm.value?.querySelector('select')?.focus({preventScroll:true})}
 async function reviewRequest(){pending.value={action:'create',fieldKey:fieldKey.value,proposedValue:proposedValue.value.trim(),message:message.value.trim()};await focusReview()}
 async function focusReview(){await nextTick();reviewPanel.value?.scrollIntoView({block:'center',behavior:'smooth'});reviewPanel.value?.focus({preventScroll:true})}
@@ -34,7 +36,7 @@ async function send(){
   pending.value=null
   if(body.action==='create'){proposedValue.value='';message.value='';fieldKey.value='';showForm.value=false;tab.value='requests';opened.value=result.requestId||null}else{delete replies.value[body.requestId]}
   notice.value=body.action==='create'?'Your request was sent to HR. Your employee record has not been changed.':'Request updated.';await load()
- }catch(cause:any){if(current===owner)error.value=cause?.data?.statusMessage||'Unable to send this request.'}finally{busy.value=false}
+ }catch(cause:any){if(current===owner)error.value=requestErrorMessage(cause, 'Unable to send this request.')}finally{busy.value=false}
 }
 onMounted(()=>void load());onBeforeUnmount(()=>{owner++;controller?.abort();emit('dirty',false);emit('processing',false)})
 </script>

@@ -30,7 +30,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
   const context = {
     Date,
     ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 11, PeriodStart: '2026-09-01', PeriodEnd: '2026-09-15' } }), defineEmits: () => () => {},
-    module: { exports: {} }, require: name => name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : name.includes('dtrAttendanceStatus') ? statusModule.exports : name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.endsWith('/messages') ? alertModule.exports : name.endsWith('.vue') ? {} : require(name),
+    module: { exports: {} }, require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : name.includes('dtrAttendanceStatus') ? statusModule.exports : name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.endsWith('/messages') ? alertModule.exports : name.endsWith('.vue') ? {} : require(name),
     xlsxForTest: { ...require('xlsx'), writeFile: workbook => workbooks.push(workbook) },
     $fetch: async (url, options) => {
       if (options) requests.push({ url, ...options })
@@ -118,7 +118,7 @@ test('automatic DTR break reaches payroll exactly once for day and overnight dut
   }
 })
 const overlap = (() => {
-  const context = { module: { exports: {} }, require: name => name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.includes('employeeStatusCrud') ? { employeeStatusAttendanceStatuses: ['On-Leave', 'Vacation Leave', 'Sick Leave', 'Suspended'] } : {} }
+  const context = { module: { exports: {} }, require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.includes('employeeStatusCrud') ? { employeeStatusAttendanceStatuses: ['On-Leave', 'Vacation Leave', 'Sick Leave', 'Suspended'] } : {} }
   vm.createContext(context)
   vm.runInContext(transformSync(fs.readFileSync(path.join(root, 'server/utils/dtrCrud.ts'), 'utf8') + '\nmodule.exports.policy = { timeOverlap, attendanceConflict };', { loader: 'ts', format: 'cjs' }).code, context)
   return context.module.exports.policy

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 import PayrollProcessingDetailModal from '~/components/PayrollProcessingDetailModal.vue'
 import SearchableSelect from '~~/components/SearchableSelect.vue'
@@ -59,7 +61,7 @@ async function load() {
     data.value = result
     if (!cutoff.value && result.selectedCutoff) cutoff.value = `${result.selectedCutoff.start}:${result.selectedCutoff.end}`
     if (selectedId.value && !result.sites.some(site => Number(site.BatchID) === selectedId.value)) selectedId.value = null
-  } catch (caught: any) { error.value = caught?.data?.statusMessage || caught?.message || 'Unable to load payroll processing.' }
+  } catch (caught: any) { error.value = requestErrorMessage(caught, 'Unable to load payroll processing.') }
   finally { loading.value = false }
 }
 async function review(action: 'finalize' | 'reject' | 'cancel', reason = '') {
@@ -70,7 +72,7 @@ async function review(action: 'finalize' | 'reject' | 'cancel', reason = '') {
     selectedId.value = null
     await load()
     success.value = action === 'finalize' ? 'Payroll finalized. Employee payroll records, eligible deductions, and approved adjustments were posted.' : action === 'cancel' ? 'Finalization cancelled. Payroll and deduction receipts were voided, balances restored, and the DTR returned to Draft.' : 'Returned to Draft. Correct the DTR and compute it again before finalizing.'
-  } catch (caught: any) { actionError.value = caught?.data?.statusMessage || caught?.message || 'Unable to save payroll review.' }
+  } catch (caught: any) { actionError.value = requestErrorMessage(caught, 'Unable to save payroll review.') }
   finally { busy.value = false }
 }
 async function changeDeduction(change: { action: 'skip' | 'restore'; employeeId: number; entryType: string; recordId: number; reason: string }) {
@@ -80,14 +82,14 @@ async function changeDeduction(change: { action: 'skip' | 'restore'; employeeId:
     await $fetch(`/api/payroll/processing/${selectedId.value}/deductions`, { method: 'POST', body: change })
     await load()
     success.value = change.action === 'skip' ? 'Deduction skipped for this cutoff.' : 'Deduction restored for this cutoff.'
-  } catch (caught: any) { actionError.value = caught?.data?.statusMessage || caught?.message || 'Unable to change this deduction.' }
+  } catch (caught: any) { actionError.value = requestErrorMessage(caught, 'Unable to change this deduction.') }
   finally { busy.value = false }
 }
 async function changeCashBond(change:any){
  if(!selectedId.value||busy.value)return
  busy.value=true;actionError.value=''
  try{await $fetch('/api/deductions-loans/cash-bonds/cutoff',{method:'PUT',body:{BatchID:selectedId.value,...change}});await load();success.value='Deduction amount saved for this employee and cutoff only.'}
- catch(e:any){actionError.value=e.data?.statusMessage||'Unable to change refundable deduction amount.'}finally{busy.value=false}
+ catch(e:any){actionError.value=requestErrorMessage(e, 'Unable to change refundable deduction amount.')}finally{busy.value=false}
 }
 async function pausePlan(change: { entryType: string; recordId: number; startDate: string; resumeDate: string; reason: string }) {
   if (!selectedId.value || busy.value) return
@@ -106,7 +108,7 @@ async function pausePlan(change: { entryType: string; recordId: number; startDat
     }
     await load()
     success.value = 'Plan paused. Resume it from the employee account or use the scheduled resume date.'
-  } catch (caught: any) { actionError.value = caught?.data?.statusMessage || caught?.message || 'Unable to pause this plan.' }
+  } catch (caught: any) { actionError.value = requestErrorMessage(caught, 'Unable to pause this plan.') }
   finally { busy.value = false }
 }
 onMounted(load)

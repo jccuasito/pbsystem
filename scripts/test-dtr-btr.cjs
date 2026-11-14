@@ -9,7 +9,7 @@ const { parse, compileScript, compileTemplate, compileStyle } = require('@vue/co
 function moduleFrom(filename, dependencies = {}, globals = {}) {
   const module = { exports: {} }
   vm.runInNewContext(transformSync(fs.readFileSync(filename, 'utf8'), { loader: 'ts', format: 'cjs' }).code,
-    { module, Date, require: name => dependencies[name] || {}, ...globals })
+    { module, Date, require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : dependencies[name] || {}, ...globals })
   return module.exports
 }
 const shared = moduleFrom('shared/utils/dtrBtr.ts')
@@ -88,7 +88,7 @@ test('Excel import previews matching names, saves multiple rows, and exports rou
   assert.deepEqual(compileStyle({ source: descriptor.styles[0].content, filename, id: 'btr-test', scoped: true }).errors, [])
   const calls = [], workbooks = [], XLSX = require('xlsx'), scope = vue.effectScope(), module = { exports: {} }
   const context = { ...vue, Date, onMounted() {}, defineProps: () => ({ dtr: batch }), defineEmits: () => () => {}, module,
-    require: name => name.endsWith('dtrBtrSheet') ? sheetHelpers : name.includes('dtrBtr') ? shared : {},
+    require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name.endsWith('dtrBtrSheet') ? sheetHelpers : name.includes('dtrBtr') ? shared : {},
     xlsxForTest: { ...XLSX, writeFile: workbook => workbooks.push(workbook) },
     $fetch: async (url, options) => { calls.push({ url, options }); return options ? { success: true } : { ...fixture, attendance: [] } } }
   try {

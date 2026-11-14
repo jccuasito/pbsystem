@@ -34,6 +34,14 @@ For hosting, use a current supported Node LTS release meeting all dependency eng
 
 ## Verification
 
+### User-facing request failures
+
+Frontend request catches use `shared/utils/requestError.ts`. Connection failures, timeouts and 5xx responses display a fixed public message rather than ofetch's raw `message` (which includes the request URL and query). Expected application validation/conflict messages are retained when they contain no technical diagnostics. The formatter rejects API paths, stack/file paths, HTML and common SQL/driver diagnostics, including when supplied as a nominal 4xx message. Local form and Excel validation messages remain available. Formatting does not mutate the original error or the workflow codes used for duplicate detection and conflict handling, and introduces no automatic mutation retry.
+
+This is a presentation boundary, not SQL injection protection or API response redaction. Authentication, authorization, input validation and parameterized queries remain the security controls. Browser developer tools can still show network requests; API paths are not secrets. Local Nuxt development diagnostics are for development, and public hosting must run a production build. Quitting the Nuxt process makes the service unavailable until it is started again.
+
+`node scripts/test-request-errors.cjs` checks transport, internal-error and validation cases. With Playwright available, `ERROR_BROWSER_TEST=1 node scripts/test-request-errors-ui.cjs` exercises the real DTR and portal components with ofetch against synthetic 503, network and validation responses, then verifies recovery. It does not stop the user's server or submit writes.
+
 Verification completed November 12, 2026: 251 unit checks passed (30 optional integration/browser checks skipped in that run); a separate database-isolation run passed all 15 checks; the billing, 13th-month and mobile employee-portal browser checks passed; and the production build completed. Fourteen read-only local production checks passed, including authenticated DTR retrieval, rejection of impossible dates/repeated query keys/malformed JSON/cross-origin mutations, and private image access (guest denied, authenticated bytes matching storage). The 12 existing employee photos/avatars were migrated with verified copies; the second migration run changed no files. These checks do not replace testing every production workflow or an independent security assessment.
 
 - `node scripts/audit-security.cjs`: API/SQL/import inventory saved to `.data/security-source-audit.json`; detects missing relative imports, runtime `.query` calls and direct request interpolation. This is a regression aid, not complete taint analysis. Dynamic SQL builders were also reviewed for fixed resource maps, placeholder lists and clauses with bind values.

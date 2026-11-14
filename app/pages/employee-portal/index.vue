@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useHead, onBeforeRouteLeave } from '#imports'
 import { useAppTheme } from '~/composables/useAppTheme'
@@ -118,7 +120,7 @@ async function loadSession(){
  }catch(cause:any){
   if(current!==request)return
   if([401,403].includes(Number(cause?.status||cause?.statusCode||cause?.data?.statusCode))){account.value=null;payslips.value=[];selected.value=null;settingsOpen.value=false;informationOpen.value=false;informationDirty.value=false;clearSettings()}
-  else error.value=cause?.data?.statusMessage||'Unable to load your payslip portal. Try again.'
+  else error.value=requestErrorMessage(cause, 'Unable to load your payslip portal. Try again.')
  }finally{if(current===request)loading.value=false}
 }
 async function submit(){
@@ -130,14 +132,14 @@ async function submit(){
   await $fetch(`/api/employee-portal/auth/${mode.value}`,{method:'POST',body,timeout:20000,retry:0})
   form.value.password='';form.value.confirmPassword='';form.value.governmentNumber='';form.value.code='';showPassword.value=false
   await loadSession()
- }catch(cause:any){error.value=cause?.data?.statusMessage||cause?.message||'Unable to continue.'}
+ }catch(cause:any){error.value=requestErrorMessage(cause, 'Unable to continue.')}
  finally{busy.value=false}
 }
 async function logout(){
  if(busy.value)return
  busy.value=true;error.value='';confirmationError.value='';request++
  try{await $fetch('/api/employee-portal/auth/logout',{method:'POST',body:{},retry:0,timeout:20000});account.value=null;payslips.value=[];selected.value=null;settingsOpen.value=false;informationOpen.value=false;informationDirty.value=false;clearSettings();form.value.password='';showPassword.value=false;notice.value='Signed out.';return true}
- catch(cause:any){confirmationError.value=cause?.data?.statusMessage||'Unable to sign out. Try again.';return false}
+ catch(cause:any){confirmationError.value=requestErrorMessage(cause, 'Unable to sign out. Try again.');return false}
  finally{busy.value=false;loading.value=false}
 }
 function openSettings(){navigatePortal('settings')}
@@ -145,7 +147,7 @@ async function saveSettings(body:AccountSettings){
  if(busy.value)return
  busy.value=true;error.value='';notice.value='';confirmationError.value=''
  try{await $fetch('/api/employee-portal/auth/profile',{method:'POST',body,retry:0,timeout:20000});settings.value.currentPassword='';settings.value.password='';settings.value.confirmPassword='';settingsOpen.value=false;await loadSession();notice.value='Your login and contact details were updated.';return true}
- catch(cause:any){confirmationError.value=cause?.data?.statusMessage||'Unable to save your account details.';return false}
+ catch(cause:any){confirmationError.value=requestErrorMessage(cause, 'Unable to save your account details.');return false}
  finally{busy.value=false}
 }
 function printPayslip(){window.print()}
@@ -159,7 +161,7 @@ async function saveImage(){
   if(current!==imageRequest)return
   if(imageUrl.value)URL.revokeObjectURL(imageUrl.value)
   imageBlob.value=result.blob;imageName.value=result.fileName;imageUrl.value=URL.createObjectURL(result.blob)
- }catch(cause:any){if(current===imageRequest)imageError.value=cause?.message||'Unable to create the image.'}
+ }catch(cause:any){if(current===imageRequest)imageError.value=requestErrorMessage(cause, 'Unable to create the image.')}
  finally{if(current===imageRequest)imageBusy.value=false}
 }
 async function shareImage(){

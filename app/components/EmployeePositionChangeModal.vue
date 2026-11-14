@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 const props = defineProps<{ employeeId: number }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -18,7 +20,7 @@ async function load() {
     const result = await $fetch<any>(`/api/employees/${props.employeeId}/position-changes`)
     if (current !== request) return
     context.value = result
-  } catch (cause: any) { if (current === request) error.value = cause?.data?.statusMessage || 'Unable to load position history.' }
+  } catch (cause: any) { if (current === request) error.value = requestErrorMessage(cause, 'Unable to load position history.') }
   finally { if (current === request) loading.value = false }
 }
 async function save() {
@@ -32,7 +34,7 @@ async function save() {
     newPosition.value = ''; reason.value = ''
     success.value = 'Employee position updated and recorded in position history.'
     emit('changed'); await load()
-  } catch (cause: any) { error.value = cause?.data?.statusMessage || 'Unable to change position.' }
+  } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to change position.') }
   finally { saving.value = false }
 }
 onMounted(async () => { trigger = document.activeElement as HTMLElement | null; await load(); await nextTick(); dialog.value?.focus() })

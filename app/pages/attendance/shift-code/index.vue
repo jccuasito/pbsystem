@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import ModernTimeField from '~~/components/ModernTimeField.vue'
@@ -80,7 +82,7 @@ async function load(silent = false) {
     items.value = response.items || []
     agencies.value = response.agencies || []
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to load shift codes.'
+    error.value = requestErrorMessage(cause, 'Unable to load shift codes.')
   } finally {
     if (!silent) loading.value = false
   }
@@ -95,7 +97,7 @@ async function save() {
     modalOpen.value = false
     await load()
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to save shift code.'
+    error.value = requestErrorMessage(cause, 'Unable to save shift code.')
   } finally {
     busy.value = false
   }
@@ -124,7 +126,7 @@ async function confirmAction() {
     confirmation.value = null
     await load()
   } catch (cause: any) {
-    confirmError.value = cause.data?.statusMessage || (request.kind === 'delete' ? 'Unable to delete shift code.' : 'Unable to deactivate shift code.')
+    confirmError.value = requestErrorMessage(cause, request.kind === 'delete' ? 'Unable to delete shift code.' : 'Unable to deactivate shift code.')
   } finally {
     confirmBusy.value = false
   }

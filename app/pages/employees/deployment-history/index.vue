@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import ModernDateField from '../../../../components/ModernDateField.vue'
 import SearchableSelect from '../../../../components/SearchableSelect.vue'
@@ -202,7 +204,7 @@ function openEmployeeDetails(person: any) {
   openDetails(group || { ...person, history: [] })
 }
 function openRoster(roster: any) { selectedRoster.value = roster; rosterOpen.value = true }
-async function load(silent = false) { if (!silent) loading.value = true; try { const response: any = await $fetch('/api/employees/deployments'); items.value = response.items || []; dtrAssignments.value = response.dtrAssignments || []; agencies.value = response.agencies || []; employees.value = response.employees || []; siteRates.value = response.siteRates || []; sites.value = response.sites || []; shiftCodes.value = response.agencyShiftCodes || []; if (!cutoffFilter.value && cutoffOptions.value[0]) cutoffFilter.value = cutoffOptions.value[0].key } catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to load deployment history.' } finally { if (!silent) loading.value = false } }
+async function load(silent = false) { if (!silent) loading.value = true; try { const response: any = await $fetch('/api/employees/deployments'); items.value = response.items || []; dtrAssignments.value = response.dtrAssignments || []; agencies.value = response.agencies || []; employees.value = response.employees || []; siteRates.value = response.siteRates || []; sites.value = response.sites || []; shiftCodes.value = response.agencyShiftCodes || []; if (!cutoffFilter.value && cutoffOptions.value[0]) cutoffFilter.value = cutoffOptions.value[0].key } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to load deployment history.') } finally { if (!silent) loading.value = false } }
 async function save() {
   if (!canSave.value) return
   if (deploymentConflict.value) {
@@ -226,7 +228,7 @@ async function save() {
     if (cause.data?.data?.code === DEPLOYMENT_ALREADY_EXISTS) {
       showDeploymentConflict(cause.data?.data?.existingDeployment || deploymentConflict.value)
       await load(true)
-    } else error.value = cause.data?.statusMessage || 'Unable to save deployment.'
+    } else error.value = requestErrorMessage(cause, 'Unable to save deployment.')
   } finally { busy.value = false }
 }
 onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })

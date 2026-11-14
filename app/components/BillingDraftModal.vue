@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { billingLineAmount, calculateBillingDraft, defaultBillingSettings, normalizeBillingDraft } from '~~/shared/utils/billingDraft'
 import type { BillingLine } from '~~/shared/utils/billingDraft'
@@ -23,7 +24,7 @@ function confirmStatus(){if(props.busy)return;if(confirmation.value==='finalize'
 const editable=computed(()=>props.detail.permissions?.canEdit===true)
 const stale=computed(()=>!!source&&sourceHash.value!==source.sourceHash)
 const warnings=computed(()=>(finalized.value?saved?.warnings:source?.warnings||saved?.warnings)||[])
-const calculation=computed(()=>{try{const input=normalizeBillingDraft(form.value.lines,form.value.settings);return {totals:calculateBillingDraft(input.lines,input.settings),error:''}}catch(e:any){return {totals:null,error:e.message}}})
+const calculation=computed(()=>{try{const input=normalizeBillingDraft(form.value.lines,form.value.settings);return {totals:calculateBillingDraft(input.lines,input.settings),error:''}}catch(e:any){return {totals:null,error:requestErrorMessage(e, 'Unable to calculate this billing draft.')}}})
 const totals=computed(()=>calculation.value.totals)
 const employees=computed(()=>(finalized.value?saved?.employees:source?.employees||saved?.employees)||[])
 const statementTitle=ref(saved?.profile?.title||source?.profile?.title||'Billing statement')
@@ -40,7 +41,7 @@ async function printDraft(){
   if(printing.value||props.busy||!totals.value)return
   printing.value=true;printError.value=''
   try{await printBillingInvoice(renderBillingInvoice({metadata:metadata.value,lines:form.value.lines,settings:form.value.settings,billingDate:form.value.billingDate,reference,finalized:finalized.value,title:statementTitle.value}))}
-  catch(error:any){printError.value=error.message||'Unable to open the print preview. Please try again.'}
+  catch(error:any){printError.value=requestErrorMessage(error, 'Unable to open the print preview. Please try again.')}
   finally{printing.value=false}
 }
 let previousOverflow=''

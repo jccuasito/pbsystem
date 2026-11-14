@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 
 type Day = {AttendanceID:number;EmployeeID:number;EmployeeNumber:string|null;EmployeeName:string;BatchID:number;DtrStatus:string;AgencyName:string;ClientName:string;SiteName:string;SiteAttendanceType:'Regular'|'Reliever';AttendanceDate:string;AttendanceStatus:string;RegularHours:number;OTHours:number;OTExtHours:number;RestDayHours:number;RestDayOTHours:number;NightDiffHours:number;TimeIn:string|null;TimeOut:string|null;ShiftCode:string|null;PositionName:string}
@@ -21,7 +23,7 @@ function closeDetails(){selectedEmployeeId.value=null}
 function onKeydown(event:KeyboardEvent){if(event.key==='Escape')closeDetails()}
 function dayLabel(value:string){return new Date(value+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}
 function hours(value:number){return Number(value||0).toFixed(2)}
-async function load(){if(!selected.value)return;loading.value=true;error.value='';try{const result=await $fetch<{rows:Day[];agencies:{AgencyID:number;AgencyName:string}[]}>('/api/attendance/dtr/relievers',{query:{periodStart:selected.value.start,periodEnd:selected.value.end,agencyId:agencyId.value||undefined}});rows.value=result.rows||[];agencies.value=result.agencies||[]}catch(cause:any){error.value=cause?.data?.statusMessage||'Unable to load reliever attendance.'}finally{loading.value=false}}
+async function load(){if(!selected.value)return;loading.value=true;error.value='';try{const result=await $fetch<{rows:Day[];agencies:{AgencyID:number;AgencyName:string}[]}>('/api/attendance/dtr/relievers',{query:{periodStart:selected.value.start,periodEnd:selected.value.end,agencyId:agencyId.value||undefined}});rows.value=result.rows||[];agencies.value=result.agencies||[]}catch(cause:any){error.value=requestErrorMessage(cause, 'Unable to load reliever attendance.')}finally{loading.value=false}}
 watch(year,()=>{cutoff.value=`${year.value}-01-01`})
 watch([cutoff,agencyId],()=>{closeDetails();load()})
 onMounted(()=>{load();window.addEventListener('keydown',onKeydown)})

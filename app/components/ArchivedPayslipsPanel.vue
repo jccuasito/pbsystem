@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed,onMounted,onBeforeUnmount,ref,watch } from 'vue'
 import { payslipPostedLabel } from '~~/shared/utils/payslipPresentation'
 import { archiveCutoffs } from '~~/shared/utils/payslipArchiveImport'
@@ -28,7 +30,7 @@ const cutoffs=computed(()=>{
   return [cutoff.label,cutoff.start,cutoff.end,...cutoff.records.map(item=>item.FileName),selections.value[cutoff.key]?.file.name].join(' ').toLowerCase().includes(search.value.toLowerCase().trim())
  })
 })
-async function load(){const current=++loadOwner;controller?.abort();controller=new AbortController();loading.value=true;error.value='';try{const result:any=await $fetch(staff.value?'/api/payroll/payslips/archive':'/api/employee-portal/archive',{query:staff.value?{employeeId:props.employeeId}:undefined,signal:controller.signal,retry:0,timeout:15000});if(current===loadOwner){items.value=result.items.filter((item:any)=>item.Status!=='Removed');canManage.value=result.canManage}}catch(cause:any){if(current===loadOwner)error.value=cause?.data?.statusMessage||'Unable to load historical payslips.'}finally{if(current===loadOwner)loading.value=false}}
+async function load(){const current=++loadOwner;controller?.abort();controller=new AbortController();loading.value=true;error.value='';try{const result:any=await $fetch(staff.value?'/api/payroll/payslips/archive':'/api/employee-portal/archive',{query:staff.value?{employeeId:props.employeeId}:undefined,signal:controller.signal,retry:0,timeout:15000});if(current===loadOwner){items.value=result.items.filter((item:any)=>item.Status!=='Removed');canManage.value=result.canManage}}catch(cause:any){if(current===loadOwner)error.value=requestErrorMessage(cause, 'Unable to load historical payslips.')}finally{if(current===loadOwner)loading.value=false}}
 function chooseUpload(cutoff:any){if(busy.value||review.value||!canManage.value)return;uploadTarget={key:cutoff.key,start:cutoff.start,end:cutoff.end,label:cutoff.label};fileInput.value?.click()}
 function chooseFile(event:Event){
  const input=event.target as HTMLInputElement,file=input.files?.[0],target=uploadTarget;input.value='';uploadTarget=null;if(!file||!target||busy.value)return
@@ -51,14 +53,14 @@ async function confirmAction(){
      const pdfData=await readFile(item.file);if(current!==owner)break
      await $fetch('/api/payroll/payslips/archive',{method:'POST',body:{action:'import',employeeId:props.employeeId,periodStart:item.start,periodEnd:item.end,agencyName:item.agencyName,siteLabel:item.siteLabel,employeeOnly:true,fileName:item.file.name,pdfData},retry:0,timeout:30000,signal:operationController.signal})
      if(current!==owner)break;URL.revokeObjectURL(selections.value[item.key].url);delete selections.value[item.key];saved++
-    }catch(cause:any){if(current!==owner)break;if(cause?.data?.data?.code==='ARCHIVE_DUPLICATE'){URL.revokeObjectURL(selections.value[item.key].url);delete selections.value[item.key];saved++}else{failed++;if(selections.value[item.key])selections.value[item.key].error=cause?.data?.statusMessage||cause?.message||'Upload failed. Try again.'}}
+    }catch(cause:any){if(current!==owner)break;if(cause?.data?.data?.code==='ARCHIVE_DUPLICATE'){URL.revokeObjectURL(selections.value[item.key].url);delete selections.value[item.key];saved++}else{failed++;if(selections.value[item.key])selections.value[item.key].error=requestErrorMessage(cause, 'Upload failed. Try again.')}}
    }
    if(current!==owner)return;review.value=null;ownership.value=false;notice.value=saved+' PDF(s) saved or already archived. '+(failed?failed+' upload(s) need attention. Successful uploads are retained.':'Review and post each draft when ready.');await load()
   }else{
    await $fetch('/api/payroll/payslips/archive',{method:'POST',body:{employeeId:props.employeeId,archiveId:plan.item.ArchiveID,expectedStatus:plan.item.Status,action:plan.action},retry:0,timeout:30000,signal:operationController.signal})
    if(current!==owner)return;review.value=null;notice.value='PDF status updated.';await load()
   }
- }catch(cause:any){if(current===owner)error.value=cause?.data?.statusMessage||'Unable to save this action. Please try again.'}finally{busy.value=false;progress.value=''}
+ }catch(cause:any){if(current===owner)error.value=requestErrorMessage(cause, 'Unable to save this action. Please try again.')}finally{busy.value=false;progress.value=''}
 }
 function clearDrafts(){for(const item of selectedFiles.value)URL.revokeObjectURL(item.url);selections.value={};review.value=null;ownership.value=false}
 function warnBeforeUnload(event:BeforeUnloadEvent){if(selectedFiles.value.length||busy.value){event.preventDefault();event.returnValue=''}}

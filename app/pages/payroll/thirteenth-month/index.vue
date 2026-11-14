@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import { annualSummary } from '~~/shared/utils/thirteenthMonth'
@@ -33,7 +35,7 @@ async function load() {
   try {
     const result = await $fetch<any>('/api/payroll/thirteenth-month', { query: { year: year.value, agencyId: agencyId.value || undefined } })
     if (request === requestId) data.value = result
-  } catch (caught: any) { if (request === requestId) error.value = caught?.data?.statusMessage || 'Unable to load 13th-month earnings.' }
+  } catch (caught: any) { if (request === requestId) error.value = requestErrorMessage(caught, 'Unable to load 13th-month earnings.') }
   finally { if (request === requestId) loading.value = false }
 }
 function filterChanged() { key.value = ''; data.value.items = []; load() }
@@ -61,7 +63,7 @@ async function submit(action: string) {
     message.value = action === 'release' || action === 'previous-payment' ? 'Payment recorded. No money was transferred by the system.' : '13th-month record updated.'
     await load(); mode.value = 'details'; resetDetail(); if (restoreForm) form.value = restoreForm
     if (error.value) dialogError.value = 'Saved successfully, but the latest data could not be loaded. Close this window and refresh before another action.'
-  } catch (caught: any) { dialogError.value = caught?.data?.statusMessage || 'Unable to save. Please try again.' }
+  } catch (caught: any) { dialogError.value = requestErrorMessage(caught, 'Unable to save. Please try again.') }
   finally { busy.value = false }
 }
 async function exportExcel() {

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import '../../../../assets/css/setup-directory.css'
@@ -165,7 +167,7 @@ async function load(silent = false) {
     }
     pageError.value = ''
   } catch (cause: any) {
-    pageError.value = cause.data?.statusMessage || 'Unable to load the loan and deduction catalog.'
+    pageError.value = requestErrorMessage(cause, 'Unable to load the loan and deduction catalog.')
   } finally {
     if (!silent) loading.value = false
   }
@@ -249,7 +251,7 @@ async function save() {
     modalOpen.value = false
     await load()
   } catch (cause: any) {
-    modalError.value = cause.data?.statusMessage || 'Unable to save this catalog record.'
+    modalError.value = requestErrorMessage(cause, 'Unable to save this catalog record.')
   } finally {
     busy.value = false
   }
@@ -268,7 +270,7 @@ async function deactivate() {
     confirmItem.value = null
     await load()
   } catch (cause: any) {
-    pageError.value = cause.data?.statusMessage || 'Unable to deactivate this record.'
+    pageError.value = requestErrorMessage(cause, 'Unable to deactivate this record.')
     confirmItem.value = null
   } finally {
     busy.value = false

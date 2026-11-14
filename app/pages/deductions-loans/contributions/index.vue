@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import '../../../../assets/css/setup-directory.css'
@@ -163,7 +165,7 @@ async function load() {
     positions.value = response.positions || []
     catalog.value = (response.catalogItems || []).filter(item => ['Contribution','Recurring Deduction'].includes(item.CatalogKind))
   } catch (cause: any) {
-    error.value = cause?.data?.statusMessage || 'Unable to load contributions.'
+    error.value = requestErrorMessage(cause, 'Unable to load contributions.')
   } finally { loading.value = false }
 }
 
@@ -194,7 +196,7 @@ async function saveCreate() {
   } catch (cause: any) {
     modalError.value = isConflict(cause)
       ? 'This agency position already has a plan for these dates. Use Update to change the amount or cutoff.'
-      : cause?.data?.statusMessage || 'Unable to save contribution.'
+      : requestErrorMessage(cause, 'Unable to save contribution.')
     if (isConflict(cause)) showToast(modalError.value, 'warning')
   }
   finally { saving.value = false }
@@ -230,7 +232,7 @@ async function saveEdit() {
     showToast(result.action === 'unchanged' ? 'No changes were needed.' : `${wasVersion ? 'Latest update' : 'Original contribution'} corrected and recorded in History.`)
     await load()
   } catch (cause: any) {
-    modalError.value = cause?.data?.statusMessage || 'Unable to edit the original contribution.'
+    modalError.value = requestErrorMessage(cause, 'Unable to edit the original contribution.')
     if (isConflict(cause)) showToast(modalError.value, 'warning')
   }
   finally { saving.value = false }
@@ -255,7 +257,7 @@ async function saveUpdate() {
       EffectiveDate: updateForm.EffectiveDate, Reason: updateForm.Reason,
     } })
     updateTarget.value = null; showToast('Dated contribution update saved.'); await load()
-  } catch (cause: any) { modalError.value = cause?.data?.statusMessage || 'Unable to save update.' }
+  } catch (cause: any) { modalError.value = requestErrorMessage(cause, 'Unable to save update.') }
   finally { saving.value = false }
 }
 
@@ -265,7 +267,7 @@ async function deactivate(item: Plan) {
   try {
     await $fetch('/api/deductions-loans/agency-contributions', { method: 'DELETE', body: { AgencyContributionID: item.AgencyContributionID, action: 'deactivate' } })
     showToast('Plan deactivated.'); await load()
-  } catch (cause: any) { error.value = cause?.data?.statusMessage || 'Unable to deactivate contribution.' }
+  } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to deactivate contribution.') }
 }
 
 function openDelete(item: Plan) {
@@ -284,7 +286,7 @@ async function deletePlan() {
     showToast('Unused plan permanently deleted.')
     await load()
   } catch (cause: any) {
-    modalError.value = cause?.data?.statusMessage || 'Unable to delete plan.'
+    modalError.value = requestErrorMessage(cause, 'Unable to delete plan.')
     if (isConflict(cause)) showToast(modalError.value, 'warning')
   } finally { saving.value = false }
 }
@@ -358,7 +360,7 @@ async function previewBulk() {
       showToast(`${bulkPreview.value.counts.duplicate} selected plan${bulkPreview.value.counts.duplicate === 1 ? '' : 's'} already exist. Remove duplicate rows before saving; nothing has changed.`, 'warning')
     }
   } catch (cause: any) {
-    bulkPreview.value = null; modalError.value = cause?.data?.statusMessage || 'Unable to preview bulk contributions.'
+    bulkPreview.value = null; modalError.value = requestErrorMessage(cause, 'Unable to preview bulk contributions.')
     if (isConflict(cause)) showToast(modalError.value, 'warning')
   }
   finally { saving.value = false }
@@ -374,7 +376,7 @@ async function saveBulk() {
     showToast(`${result.counts.create} plan${result.counts.create === 1 ? '' : 's'} added.`)
     await load()
   } catch (cause: any) {
-    bulkReviewNeedsRefresh.value = true; modalError.value = cause?.data?.statusMessage || 'Unable to save the plans. Go back to edit and preview again.'
+    bulkReviewNeedsRefresh.value = true; modalError.value = requestErrorMessage(cause, 'Unable to save the plans. Go back to edit and preview again.')
     if (isConflict(cause)) showToast(modalError.value, 'warning')
   }
   finally { saving.value = false }

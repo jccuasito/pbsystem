@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref } from 'vue'
 import BillingDraftModal from './BillingDraftModal.vue'
 import ClientBillingSetupModal from './ClientBillingSetupModal.vue'
@@ -43,7 +45,7 @@ async function load() {
     data.value = result
     const available = new Set(result.sources.filter((source: any) => !source.BillingID).map((source: any) => Number(source.BatchID)))
     chosen.value = new Set([...chosen.value].filter(id => available.has(id)))
-  } catch (cause: any) { if (token === request) error.value = cause.data?.statusMessage || 'Unable to load billing. Please retry.' }
+  } catch (cause: any) { if (token === request) error.value = requestErrorMessage(cause, 'Unable to load billing. Please retry.') }
   finally { if (token === request) loading.value = false }
 }
 async function open(account: any, draft?: any) {
@@ -52,7 +54,7 @@ async function open(account: any, draft?: any) {
   if (!draft && !ids.length) return
   opening.value = account.key; actionError.value = ''
   try { selected.value = await $fetch<any>(draft ? `/api/billing/drafts/${draft.BillingID}` : '/api/billing/drafts/preview', { query: draft ? {} : { batchIds: ids.join(',') } }) }
-  catch (cause: any) { error.value = cause.data?.statusMessage || 'Unable to prepare this bill.' }
+  catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to prepare this bill.') }
   finally { opening.value = '' }
 }
 async function save(body: any) {
@@ -69,7 +71,7 @@ async function save(body: any) {
     const refreshed = await refreshBill(result.billingId)
     await load()
     if (!refreshed) error.value = 'The bill was saved, but details could not be reloaded. Open it again from Saved bills.'
-  } catch (cause: any) { actionError.value = cause.data?.statusMessage || 'Unable to save this billing draft.' }
+  } catch (cause: any) { actionError.value = requestErrorMessage(cause, 'Unable to save this billing draft.') }
   finally { busy.value = false }
 }
 async function refreshBill(billingId: number) {
@@ -84,14 +86,14 @@ async function changeStatus(body: any) {
     notice.value = result.status === 'Finalized' ? 'Billing finalized. The saved statement is locked and ready to print.' : 'Bill reopened as Draft. Make your corrections, save, then finalize again.'
     const refreshed = await refreshBill(result.billingId); await load()
     if (!refreshed) error.value = 'Billing status was updated, but details could not be reloaded. Open the bill again from Saved bills.'
-  } catch (cause: any) { actionError.value = cause.data?.statusMessage || 'Unable to update the billing status.' }
+  } catch (cause: any) { actionError.value = requestErrorMessage(cause, 'Unable to update the billing status.') }
   finally { busy.value = false }
 }
 async function saveSetup(body: any) {
   if (busy.value) return
   busy.value = true; actionError.value = ''
   try { await $fetch('/api/billing/profiles', { method: 'POST', body }); setup.value = null; notice.value = 'Client billing setup saved.'; await load() }
-  catch (cause: any) { actionError.value = cause.data?.statusMessage || 'Unable to save client setup.' }
+  catch (cause: any) { actionError.value = requestErrorMessage(cause, 'Unable to save client setup.') }
   finally { busy.value = false }
 }
 function openSetup(account: any) { actionError.value = ''; setup.value = account }

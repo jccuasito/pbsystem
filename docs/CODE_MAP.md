@@ -52,6 +52,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/dtrBtrSheet.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/attendance/dtr` → `server/api/attendance/dtr/index.get.ts`
   - `POST /api/attendance/dtr` → `server/api/attendance/dtr/index.post.ts`
@@ -107,6 +108,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/attendance/dtr/relievers` → `server/api/attendance/dtr/relievers.get.ts`
 - Related backend utilities:
@@ -129,6 +131,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `shared/utils/philippineLegalHolidays.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/attendance/holidays` → `server/api/attendance/holidays/index.delete.ts`
   - `GET /api/attendance/holidays` → `server/api/attendance/holidays/index.get.ts`
@@ -153,6 +156,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernTimeField.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/shift-code` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/shift-code` → `server/api/organization/[resource].get.ts`
@@ -183,6 +187,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/billingInvoicePrint.ts`
   - `shared/utils/billingProfile.ts`
   - `shared/utils/payrollPreview.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/billing/drafts` → `server/api/billing/drafts.get.ts`
   - `POST /api/billing/drafts` → `server/api/billing/drafts.post.ts`
@@ -220,6 +225,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/billingInvoicePrint.ts`
   - `shared/utils/billingProfile.ts`
   - `shared/utils/payrollPreview.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/billing/drafts` → `server/api/billing/drafts.get.ts`
   - `POST /api/billing/drafts` → `server/api/billing/drafts.post.ts`
@@ -344,6 +350,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/philippineLegalHolidays.ts`
   - `shared/utils/rateFields.ts`
   - `shared/utils/regionalRates.ts`
+  - `shared/utils/requestError.ts`
   - `shared/utils/thirteenthMonth.ts`
 - API calls and handlers:
   - `GET /api/attendance/dtr` → `server/api/attendance/dtr/index.get.ts`
@@ -580,6 +587,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `assets/css/setup-directory.css`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].delete.ts`
   - `POST /api/deductions-loans/[param]` → `server/api/deductions-loans/[resource].post.ts`
@@ -608,6 +616,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `assets/css/setup-directory.css`
   - `components/ModernDateField.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.delete.ts`
   - `GET /api/deductions-loans/agency-contributions` → `server/api/deductions-loans/agency-contributions/index.get.ts`
@@ -636,6 +645,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/RefundableDeductionBalances.vue`
   - `components/ModernDateField.vue`
   - `shared/utils/issuanceCode.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/deductions-loans/agency-contributions/history` → `server/api/deductions-loans/agency-contributions/history.get.ts`
   - `GET /api/deductions-loans/cash-bonds` → `server/api/deductions-loans/cash-bonds.get.ts`
@@ -672,6 +682,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/deductions-loans/transactions` → `server/api/deductions-loans/transactions/index.get.ts`
 - Related backend utilities:
@@ -705,6 +716,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/governmentIds.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/employee-portal/archive` → `server/api/employee-portal/archive.get.ts`
   - `POST /api/employee-portal/auth/[param]` → `server/api/employee-portal/auth/[action].post.ts`
@@ -749,6 +761,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/alertmessage/messages.ts`
   - `components/ModernDateField.vue`
   - `components/SearchableSelect.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/employees` → `server/api/employees/index.get.ts`
   - `POST /api/employees` → `server/api/employees/index.post.ts`
@@ -797,6 +810,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/ModernDateField.vue`
   - `components/SearchableSelect.vue`
   - `shared/utils/deployment.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
   - `POST /api/employees/deployments` → `server/api/employees/deployments/index.post.ts`
@@ -825,6 +839,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/employee.ts`
   - `components/SearchableSelect.vue`
   - `shared/utils/governmentIds.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/employees/documents` → `server/api/employees/documents.delete.ts`
   - `GET /api/employees/documents` → `server/api/employees/documents.get.ts`
@@ -863,6 +878,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/employee-portal/archive` → `server/api/employee-portal/archive.get.ts`
   - `GET /api/employees/portal-accounts` → `server/api/employees/portal-accounts.get.ts`
@@ -906,6 +922,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/employeeStatusExport.ts`
   - `shared/utils/employeeStatusSheet.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/employees/status` → `server/api/employees/status/index.get.ts`
   - `GET /api/employees/status/[param]/summary` → `server/api/employees/status/[id]/summary.get.ts`
@@ -930,6 +947,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `POST /api/auth/forgot-password` → `server/api/auth/forgot-password.post.ts`
 - Related backend utilities:
@@ -966,6 +984,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `POST /api/auth/google-code` → `server/api/auth/google-code.post.ts`
   - `POST /api/auth/login` → `server/api/auth/login.post.ts`
@@ -991,6 +1010,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -1017,6 +1037,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -1039,7 +1060,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/organization/position/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/positions` → `server/api/organization/positions.delete.ts`
   - `GET /api/organization/positions` → `server/api/organization/positions.get.ts`
@@ -1066,6 +1087,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -1092,6 +1114,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -1118,6 +1141,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/[param]` → `server/api/organization/[resource].delete.ts`
   - `GET /api/organization/[param]` → `server/api/organization/[resource].get.ts`
@@ -1154,7 +1178,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/payroll/history/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/payroll/history` → `server/api/payroll/history.get.ts`
   - `GET /api/payroll/history/[param]` → `server/api/payroll/history/[id].get.ts`
@@ -1184,6 +1208,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/employee-portal/archive` → `server/api/employee-portal/archive.get.ts`
   - `GET /api/employees/portal-accounts` → `server/api/employees/portal-accounts.get.ts`
@@ -1231,6 +1256,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/employee-portal/archive` → `server/api/employee-portal/archive.get.ts`
   - `GET /api/employees/portal-accounts` → `server/api/employees/portal-accounts.get.ts`
@@ -1276,6 +1302,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/employee.ts`
   - `components/SearchableSelect.vue`
   - `shared/utils/payrollPreview.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `PUT /api/deductions-loans/cash-bonds/cutoff` → `server/api/deductions-loans/cash-bonds/cutoff.put.ts`
   - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
@@ -1312,6 +1339,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/payroll/site-accounts` → `server/api/payroll/site-accounts.get.ts`
 - Related backend utilities:
@@ -1335,6 +1363,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/printThirteenthMonth.ts`
   - `components/ModernDateField.vue`
+  - `shared/utils/requestError.ts`
   - `shared/utils/thirteenthMonth.ts`
 - API calls and handlers:
   - `GET /api/payroll/thirteenth-month` → `server/api/payroll/thirteenth-month.get.ts`
@@ -1367,6 +1396,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/SearchableSelect.vue`
   - `shared/utils/rateFields.ts`
   - `shared/utils/regionalRates.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
@@ -1408,6 +1438,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/SearchableSelect.vue`
   - `shared/utils/rateFields.ts`
   - `shared/utils/regionalRates.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/rates/[param]` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
@@ -1444,6 +1475,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/SearchableSelect.vue`
   - `components/SiteRateCrud.vue`
   - `shared/utils/rateFields.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/rates/site-rate` → `server/api/rates/[resource].delete.ts`
   - `GET /api/rates/site-rate` → `server/api/rates/[resource].get.ts`
@@ -1471,6 +1503,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `POST /api/auth/reset-password` → `server/api/auth/reset-password.post.ts`
   - `GET /api/auth/verify-reset-token` → `server/api/auth/verify-reset-token.get.ts`
@@ -1493,6 +1526,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useAppTheme.ts`
   - `components/modals/editprofile.vue`
   - `components/WorkspaceLoading.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/auth/account` → `server/api/auth/account.delete.ts`
   - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
@@ -1530,6 +1564,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `components/modals/emailverification.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
   - `POST /api/auth/google-code` → `server/api/auth/google-code.post.ts`
@@ -1556,6 +1591,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `components/modals/editprofile.vue`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
   - `GET /api/auth/me` → `server/api/auth/me.get.ts`
@@ -1580,6 +1616,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
+  - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/auth/verify-email` → `server/api/auth/verify-email.get.ts`
 - Related backend utilities:

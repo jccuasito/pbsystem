@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { useAppTheme } from '~/composables/useAppTheme'
 import { computed, onMounted, ref, watch } from 'vue'
 import EditProfile from '../../../components/modals/editprofile.vue'
@@ -65,7 +67,7 @@ const editableModuleCount = computed(() => visibleModules.value.filter((item: an
 watch(userSearch, () => { expandedGroups.value = {} })
 
 function errorMessage(cause: any) {
-  return cause?.data?.statusMessage || cause?.statusMessage || cause?.message || 'The request could not be completed. Please try again.'
+  return requestErrorMessage(cause, 'The request could not be completed. Please try again.')
 }
 function cloneUser(user: User) { return JSON.parse(JSON.stringify(user)) as User }
 function selectUser(user: User) { selectedUserId.value = user.id; draft.value = cloneUser(user); error.value = ''; success.value = '' }

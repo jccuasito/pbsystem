@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { computed, onMounted, ref } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import ModernDateField from './ModernDateField.vue'
@@ -98,7 +100,7 @@ async function selectLogo(event: Event) {
     reader.onerror = () => reject(new Error('Unable to read the selected logo.'))
     reader.readAsDataURL(file)
   }).catch((cause: Error) => {
-    error.value = cause.message
+    error.value = requestErrorMessage(cause, 'Unable to read this image.')
     return ''
   })
   if (!dataUrl) return
@@ -120,7 +122,7 @@ async function load(silent = false) {
     canEdit.value = response.canEdit !== false
     lookups.value = response
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to load records.'
+    error.value = requestErrorMessage(cause, 'Unable to load records.')
   } finally {
     if (!silent) loading.value = false
   }
@@ -145,7 +147,7 @@ async function save() {
     modalOpen.value = false
     await load()
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to save record.'
+    error.value = requestErrorMessage(cause, 'Unable to save record.')
   } finally {
     busy.value = false
   }
@@ -157,7 +159,7 @@ async function deactivate(item: any) {
     await $fetch(`/api/organization/${props.resource}`, { method: 'DELETE', body: { id: item[idKey.value] } })
     await load()
   } catch (cause: any) {
-    error.value = cause.data?.statusMessage || 'Unable to deactivate record.'
+    error.value = requestErrorMessage(cause, 'Unable to deactivate record.')
   }
 }
 
@@ -168,7 +170,7 @@ async function activate(item: any) {
     const {AgencyAccounts,SiteAccountID,...saved} = item
     await $fetch(`/api/organization/${props.resource}`, {method:'PUT',body:{...saved,id:item[idKey.value],Status:'Active'}})
     await load()
-  } catch (cause: any) { error.value=cause.data?.statusMessage || 'Unable to activate record.' }
+  } catch (cause: any) { error.value=requestErrorMessage(cause, 'Unable to activate record.') }
   finally { busy.value=false }
 }
 

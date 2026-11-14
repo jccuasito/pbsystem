@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { requestErrorMessage } from '~~/shared/utils/requestError'
+
 import { useAppTheme } from '~/composables/useAppTheme'
 import { ref, onMounted } from 'vue'
 
@@ -7,7 +9,7 @@ const route = useRoute(); const password = ref(''); const confirm = ref(''); con
 const checkingToken = ref(true); const tokenValid = ref(false)
 const showPassword = ref(false); const showConfirmPassword = ref(false)
 
-async function reset() { error.value = ''; if (password.value !== confirm.value) { error.value = 'Passwords do not match.'; return }; busy.value = true; try { message.value = (await $fetch<any>('/api/auth/reset-password', { method: 'POST', body: { token: route.query.token, password: password.value } })).message } catch (e: any) { error.value = e.data?.statusMessage || 'Unable to reset password.' } finally { busy.value = false } }
+async function reset() { error.value = ''; if (password.value !== confirm.value) { error.value = 'Passwords do not match.'; return }; busy.value = true; try { message.value = (await $fetch<any>('/api/auth/reset-password', { method: 'POST', body: { token: route.query.token, password: password.value } })).message } catch (e: any) { error.value = requestErrorMessage(e, 'Unable to reset password.') } finally { busy.value = false } }
 
 onMounted(async () => {
 
