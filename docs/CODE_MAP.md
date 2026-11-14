@@ -523,6 +523,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeePortalAuth.ts`
   - `server/utils/employeePortalRecovery.ts`
   - `server/utils/employeePositionCrud.ts`
+  - `server/utils/employeeResignation.ts`
   - `server/utils/employeeStatusCrud.ts`
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/governmentIdOcr.ts`
@@ -801,6 +802,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
   - `server/utils/employeePositionCrud.ts`
+  - `server/utils/employeeResignation.ts`
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
@@ -837,6 +839,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/managedPool.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
+  - `server/utils/employeeResignation.ts`
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
@@ -869,6 +872,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/managedPool.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
+  - `server/utils/employeeResignation.ts`
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/governmentIdOcr.ts`
   - `server/utils/inputValidation.ts`

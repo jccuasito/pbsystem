@@ -10,10 +10,11 @@ function evaluate(source, globals = {}) {
   return module.exports
 }
 
-function harness(body, duplicateRows = []) {
+function harness(body, duplicateRows = [], lockedStatus = 'Active') {
   const calls = []
   const execute = async (sql, values) => {
     calls.push({ sql, values: Array.from(values || []) })
+    if (sql.startsWith('SELECT PhotoPath, AgencyPositionID, Status')) return [[{PhotoPath:null,AgencyPositionID:7,Status:lockedStatus}]]
     if (sql.includes('FROM employee e') && sql.includes("DATE_FORMAT(e.Birthday")) return [duplicateRows]
     if (sql.startsWith('SELECT ProfileID FROM employee_profile')) return [[]]
     if (sql.startsWith('SELECT BankID, AccountName')) return [[]]
@@ -95,6 +96,17 @@ const validEmployee = {
   EmergencyAddress: 'Davao City',
   EmergencyContactNo: '09181234567',
 }
+
+test('generic profile updates cannot bypass resignation or reactivate a resigned employee',async()=>{
+ for(const [stored,requested] of [['Active','Inactive'],['Inactive','Active']]){
+  const {api,calls}=harness({...validEmployee,id:12,Status:requested},[],stored)
+  await assert.rejects(()=>api.updateEmployee({}),e=>e.statusCode===409 && /resign|Resigned/.test(e.message))
+  assert.equal(calls.filter(call=>call.sql.startsWith('UPDATE employee SET')).length,0)
+ }
+ const {api,calls}=harness({...validEmployee,Status:'Inactive'})
+ await assert.rejects(()=>api.createEmployee({}),e=>e.statusCode===400 && /Active/.test(e.message))
+ assert.equal(calls.length,0)
+})
 
 test('employee create normalizes names and email while preserving a valid numeric contact', async () => {
   const { api, calls } = harness(validEmployee)

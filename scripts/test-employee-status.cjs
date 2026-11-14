@@ -74,7 +74,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
   try {
     const tables = {
       user: 'UserID INT PRIMARY KEY, FirstName VARCHAR(50), LastName VARCHAR(50)',
-      employee: 'EmployeeID INT PRIMARY KEY, EmployeeNumber VARCHAR(30), AgencyPositionID INT, FirstName VARCHAR(50), MiddleName VARCHAR(50), LastName VARCHAR(50), Status VARCHAR(20)',
+      employee: 'EmployeeID INT PRIMARY KEY, EmployeeNumber VARCHAR(30), AgencyPositionID INT, FirstName VARCHAR(50), MiddleName VARCHAR(50), LastName VARCHAR(50), Status VARCHAR(20), ResignationDate DATE NULL',
       agency_position: 'AgencyPositionID INT PRIMARY KEY, AgencyID INT, PositionID INT',
       agency: 'AgencyID INT PRIMARY KEY, AgencyName VARCHAR(100)',
       position: 'PositionID INT PRIMARY KEY, PositionName VARCHAR(100)',
@@ -91,7 +91,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     }
     for (const [name, columns] of Object.entries(tables)) await c.query(`CREATE TEMPORARY TABLE \`${name}\` (${columns}) ENGINE=InnoDB`)
     await c.query("INSERT INTO `user` VALUES (14,'Test','Encoder')")
-    await c.query("INSERT INTO employee VALUES (8,'DJA-0001',11,'John','Doe','Example','Active')")
+    await c.query("INSERT INTO employee (EmployeeID,EmployeeNumber,AgencyPositionID,FirstName,MiddleName,LastName,Status) VALUES (8,'DJA-0001',11,'John','Doe','Example','Active')")
     await c.query('INSERT INTO agency_position VALUES (11,3,4)')
     await c.query("INSERT INTO agency VALUES (3,'DJA Security Services INC.')")
     await c.query("INSERT INTO `position` VALUES (4,'Security Guard')")
@@ -173,7 +173,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { ...range, AttendanceStatus: 'Suspended' } }), /DTR covering/)
 
     // These employees have no fixed posting, no cutoff roster and no DTR in 2027.
-    await c.query("INSERT INTO employee VALUES (9,NULL,11,'Pending','','Reliever','Active'),(10,NULL,11,'Pending','','Regular','Active')")
+    await c.query("INSERT INTO employee (EmployeeID,EmployeeNumber,AgencyPositionID,FirstName,MiddleName,LastName,Status) VALUES (9,NULL,11,'Pending','','Reliever','Active'),(10,NULL,11,'Pending','','Regular','Active')")
     for (const id of [9, 10]) {
       const beforeDtr = await api.updateEmployeeDailyStatus({ body: { EmployeeID: id, AttendanceStatus: 'Sick Leave', StartDate: '2027-01-17', Remarks: 'HR before assignment' } })
       assert.equal(beforeDtr.created, 1)
@@ -226,14 +226,22 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
     assert.equal((await c.query("SELECT COUNT(*) count FROM attendance WHERE EmployeeID=9 AND AttendanceDate='2027-01-18'"))[0][0].count, 0)
     // More than the old recent-history cap, all in TEMPORARY tables.
     const manyEmployees = Array.from({ length: 70 }, (_, i) => [300 + i, null, 11, 'Cutoff', '', String(i), 'Active'])
-    await c.query('INSERT INTO employee VALUES ?', [manyEmployees])
+    await c.query('INSERT INTO employee (EmployeeID,EmployeeNumber,AgencyPositionID,FirstName,MiddleName,LastName,Status) VALUES ?', [manyEmployees])
     const manyDays = manyEmployees.flatMap(employee => Array.from({ length: 15 }, (_, i) => [employee[0], null, null, `2028-02-${String(i + 1).padStart(2,'0')}`, 'Present', 14]))
     await c.query('INSERT INTO attendance (EmployeeID,DeploymentID,BatchID,AttendanceDate,AttendanceStatus,CreatedBy) VALUES ?', [manyDays])
-    await c.query("INSERT INTO employee VALUES (400,NULL,11,'Inactive','','Employee','Inactive')")
+    await c.query("INSERT INTO employee (EmployeeID,EmployeeNumber,AgencyPositionID,FirstName,MiddleName,LastName,Status) VALUES (400,NULL,11,'Inactive','','Employee','Inactive')")
     await c.query("INSERT INTO attendance (EmployeeID,AttendanceDate,AttendanceStatus,CreatedBy) VALUES (400,'2028-02-01','Absent',14),(300,'2028-02-16','Absent',14)")
     const fullCutoff = await api.getEmployeeStatusCutoff({ query: { startDate: '2028-02-01', endDate: '2028-02-15' } })
-    assert.equal(fullCutoff.history.length, 1050)
-    assert.ok(fullCutoff.history.every(row => row.EmployeeID !== 400 && row.AttendanceDate <= '2028-02-15'))
+    assert.equal(fullCutoff.history.length, 1051)
+    assert.ok(fullCutoff.history.some(row => row.EmployeeID === 400))
+    assert.ok(fullCutoff.history.every(row => row.AttendanceDate <= '2028-02-15'))
+    const resigned = (await api.listEmployeeStatus({})).employees.find(row => row.EmployeeID === 400)
+    assert.equal(resigned.Status, 'Inactive')
+    assert.equal(resigned.ResignationDate, null)
+    await assert.rejects(() => api.updateEmployeeDailyStatus({ body: { EmployeeID:400,AttendanceStatus:'Present',StartDate:'2028-02-01' } }), error => error.statusCode===409 && /resigned/.test(error.message))
+    const resignedHistory = await api.getEmployeeStatusSummary({params:{id:'400'},query:{year:'2028'}})
+    assert.equal(resignedHistory.employee.Status, 'Inactive')
+    assert.equal(resignedHistory.history[0].AttendanceStatus, 'Absent', 'Rejected edit retains historical values')
     assert.ok((await api.listEmployeeStatus({})).availableYears.includes(2028))
     await c.query("INSERT INTO client VALUES (42,'Historical client','Active')")
     await c.query("INSERT INTO site VALUES (52,42,'Actual cutoff site','Active')")

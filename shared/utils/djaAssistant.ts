@@ -46,7 +46,7 @@ export const assistantPages: Record<string, AssistantPage> = {
 export function assistantCanView(access: AssistantAccess, module: string) {
   return module === 'settings' || access[module]?.canView === true || (module === 'portal' && access.employees?.canView === true)
 }
-export type AssistantIntent = 'help' | 'activeLoans' | 'issuedLoans' | 'activeEmployees' | 'hiredEmployees' | 'pendingPayroll' | 'billingTotal' | 'presentToday' | 'unsupported'
+export type AssistantIntent = 'help' | 'activeLoans' | 'issuedLoans' | 'activeEmployees' | 'hiredEmployees' | 'resignedEmployees' | 'pendingPayroll' | 'billingTotal' | 'presentToday' | 'unsupported'
 export type AssistantCommand = { intent: AssistantIntent; language: AssistantLanguage; view: string; period: { start: string; end: string; label: string }; historical: boolean; dated: boolean }
 export type AssistantReply = { text: string; generatedAt: string; source?: string; scope?: string; heading?: string; steps?: string[]; topic?: string; related?: { id: string; label: string }[]; metric?: { label: string; value: number; format: 'count' | 'php' }; link?: { view: string; label: string } }
 export function assistantScopeReply(language: AssistantLanguage, now = new Date()): AssistantReply {
@@ -89,6 +89,13 @@ export function parseAssistantCommand(prompt: string, view = 'dashboard', locale
   const parts = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Manila', year: 'numeric', month: 'numeric' }).formatToParts(now)
   const currentYear = Number(parts.find(p => p.type === 'year')!.value), currentMonth = Number(parts.find(p => p.type === 'month')!.value)
   let year = currentYear, month = currentMonth, dated = false
+  const resignationQuestion=/^(?:(?:how many|number of|ilan ang|ilang|may) )?(?:resigned employees|employees (?:who )?resigned|resignations|resign|nag resign|nagresign)(?: ba| are there)?$/
+  const annual=/\s+(this year|ngayong taon|last year|nakaraang taon|(?:(?:in|noong|sa) )?20\d{2})$/.exec(text)
+  if (annual && resignationQuestion.test(text.slice(0,annual.index))) {
+    const target=/20\d{2}/.exec(annual[1])?.[0]
+    const resignationYear=target ? Number(target) : /last|nakaraang/.test(annual[1]) ? currentYear-1 : currentYear
+    return {intent:'resignedEmployees',language,view,period:{start:`${resignationYear}-01-01`,end:`${resignationYear+1}-01-01`,label:String(resignationYear)},historical:resignationYear!==currentYear,dated:true}
+  }
   if (/\s+(?:this month|ngayong buwan)$/.test(text)) { dated = true; text = text.replace(/\s+(?:this month|ngayong buwan)$/, '') }
   else if (/\s+(?:last month|nakaraang buwan)$/.test(text)) { dated = true; month--; if (!month) { month = 12; year-- }; text = text.replace(/\s+(?:last month|nakaraang buwan)$/, '') }
   else {
@@ -104,10 +111,11 @@ export function parseAssistantCommand(prompt: string, view = 'dashboard', locale
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:loans (?:issued|released)|na release na loans)$/.test(text)) intent = 'issuedLoans'
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:active employees|aktibong empleyado)(?: are there)?$/.test(text)) intent = 'activeEmployees'
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:employees hired|bagong empleyado)$/.test(text)) intent = 'hiredEmployees'
+  else if (resignationQuestion.test(text)) intent = 'resignedEmployees'
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:pending payroll|payroll for approval)(?: are there)?$/.test(text)) intent = 'pendingPayroll'
   else if (/^(?:(?:how much is|magkano ang|what is) )?(?:total billing|billing total)$/.test(text)) intent = 'billingTotal'
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:present today|employees present today)$/.test(text) && !dated) intent = 'presentToday'
-  return { intent, language, view, period: { start, end, label }, historical: year !== currentYear || month !== currentMonth, dated }
+  return { intent, language, view, period: intent==='resignedEmployees' && !dated ? {start:`${currentYear}-01-01`,end:`${currentYear+1}-01-01`,label:String(currentYear)} : { start, end, label }, historical: year !== currentYear || month !== currentMonth, dated }
 }
 
 export function assistantSuggestions(view: string, access: AssistantAccess, language: AssistantLanguage) {

@@ -101,7 +101,7 @@ function frontend(fetch) {
             ? employeeHelpers
             : name.includes('alertmessage/messages')
               ? alertMessages
-              : {},
+              : name.includes('requestError') ? require('../shared/utils/requestError.ts') : {},
     },
   ))
   return { state, close: () => scope.stop() }

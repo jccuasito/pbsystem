@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { recordEmployeeResignation } from './employeeResignation'
 import { listGovernmentIds, saveGovernmentId } from './governmentIdCrud'
 import { imageData } from './inputValidation'
 import { privateProfileDirectory, privateProfilePath } from './privateProfileImages.mjs'
@@ -649,7 +650,7 @@ function employeeListSql(filters: string[]) {
   return [
     'SELECT',
     '  e.EmployeeID, e.AgencyPositionID, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName, e.Nickname, e.Birthday,',
-    '  e.Gender, e.CivilStatus, e.Address, e.Email, e.ContactNumber, e.DateHired, e.Status, e.PhotoPath AS PhotoUrl,',
+    "  e.Gender, e.CivilStatus, e.Address, e.Email, e.ContactNumber, e.DateHired, e.Status, DATE_FORMAT(e.ResignationDate, '%Y-%m-%d') AS ResignationDate, e.PhotoPath AS PhotoUrl,",
     '  e.PermanentUnitHouseNumber, e.PermanentProvince, e.PermanentStreet, e.PermanentCityMunicipality, e.PermanentSubdivision, e.PermanentBarangay, e.PermanentRegion, e.PermanentPostalCode,',
     '  e.PresentUnitHouseNumber, e.PresentProvince, e.PresentStreet, e.PresentCityMunicipality, e.PresentSubdivision, e.PresentBarangay, e.PresentRegion, e.PresentPostalCode,',
     '  e.BeneficiaryNotApplicable, e.Beneficiary1, e.Beneficiary1Relationship, e.Beneficiary2, e.Beneficiary2Relationship, e.Beneficiaries,',
@@ -826,6 +827,7 @@ export async function createEmployee(event: any) {
   const body = await readBody<Record<string, unknown>>(event) || {}
   const beneficiaries = validateEmployeeCompleteness(body)
   const photo = parseEmployeePhoto(body.PhotoDataUrl)
+  if (parseStatus(body.Status) !== 'Active') throw createError({statusCode:400,statusMessage:'New employees must be Active. Record resignation using Deactivate / resign after creation.'})
   const values = employeeValues(body, beneficiaries)
   payrollDisbursementDetails(body)
   profileMeasurements(body)
@@ -872,9 +874,10 @@ export async function updateEmployee(event: any) {
   let existing: any = null
   try {
     await connection.beginTransaction()
-    const [[lockedEmployee]] = await connection.execute<any[]>('SELECT PhotoPath, AgencyPositionID FROM employee WHERE EmployeeID = ? LIMIT 1 FOR UPDATE', [employeeId])
+    const [[lockedEmployee]] = await connection.execute<any[]>('SELECT PhotoPath, AgencyPositionID, Status FROM employee WHERE EmployeeID = ? LIMIT 1 FOR UPDATE', [employeeId])
     existing = lockedEmployee
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+    if (parseStatus(body.Status) !== existing.Status) throw createError({statusCode:409,statusMessage:existing.Status==='Inactive' ? 'Resigned employees cannot be reactivated through profile editing.' : 'Use Deactivate / resign to record the resignation date.'})
     if (Number(body.AgencyPositionID) !== Number(existing.AgencyPositionID)) throw createError({ statusCode: 409, statusMessage: 'Use Change position to record an effective date and preserve position history. Refresh this employee before saving.' })
     const [result] = await connection.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body, beneficiaries), session.sub, employeeId] as any[])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
@@ -899,12 +902,18 @@ export async function updateEmployee(event: any) {
 
 export async function deleteEmployee(event: any) {
   const session = requireSession(event)
-  void session.sub
-  const body = await readBody<{ id?: unknown }>(event)
-  const employeeId = parseInteger(body?.id, 'id')
-  const [result] = await pool.execute<any>('UPDATE employee SET Status = \'Inactive\' WHERE EmployeeID = ?', [employeeId])
-  if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
-  return { success: true }
+  const body = await readBody<{ id?: unknown; ResignationDate?: unknown }>(event)
+  const employeeId = parseInteger(body?.id, 'id') as number
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const result = await recordEmployeeResignation(connection,employeeId,body?.ResignationDate,session.sub)
+    await connection.commit()
+    return result
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {connection.release()}
 }
 
 export async function permanentlyDeleteEmployee(event: any) {

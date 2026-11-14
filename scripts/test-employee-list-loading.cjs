@@ -17,7 +17,7 @@ function workspace(fetch) {
   const scope = vue.effectScope()
   let refreshOptions
   const state = scope.run(() => evaluate(source + '\nmodule.exports={load,loading,items,filters,search,filteredItems,error,modalOpen,transferring,transferSiteRates,filteredTransferSiteRates};', {
-    require: name => name === 'vue' ? { ...vue, onMounted() {}, onBeforeUnmount() {} } : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh: (_, options) => { refreshOptions = options } } : name.includes('utils/employee') ? employeeUtils : name.includes('alertmessage/messages') ? messages : {},
+    require: name => name === 'vue' ? { ...vue, onMounted() {}, onBeforeUnmount() {} } : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh: (_, options) => { refreshOptions = options } } : name.includes('utils/employee') ? employeeUtils : name.includes('alertmessage/messages') ? messages : name.includes('requestError') ? require('../shared/utils/requestError.ts') : {},
     defineEmits: () => () => {}, $fetch: fetch,
   }))
   return { state, refreshOptions, close: () => scope.stop() }
@@ -82,11 +82,11 @@ test('agency, position, and search filter loaded employees immediately without e
 
 test('failed request clears loading and allows the next request to recover', async () => {
   let requests = 0
-  const harness = workspace(async () => { if (++requests === 1) throw new Error('timeout'); return result })
+  const harness = workspace(async () => { if (++requests === 1) throw {name:'FetchError',message:'[GET] "/api/employees": no response'}; return result })
   try {
     await harness.state.load()
     assert.equal(harness.state.loading.value, false)
-    assert.match(harness.state.error.value, /Unable to load/)
+    assert.match(harness.state.error.value, /Cannot connect to the server/)
     await harness.state.load(true)
     assert.equal(harness.state.items.value.length, 3)
     assert.equal(harness.state.error.value, '')

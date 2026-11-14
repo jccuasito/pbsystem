@@ -29,6 +29,30 @@ test('every dashboard workspace has a curated help entry; suggestions respect pe
  for(const guide of shared.assistantGuides)for(const language of ['en','fil'])assert.ok(guide.steps[language].length>=3&&guide.steps[language].every(Boolean),guide.id)
  for(const guide of shared.assistantGuides)for(const language of ['en','fil'])assert.equal(shared.findAssistantGuide(`${language==='fil'?'Paano':'How to'}: ${guide.title[language]}`,guide.view)?.guide.id,guide.id,guide.title[language])
 })
+
+test('resignation counts use dated periods and explicitly exclude legacy undated records',async()=>{
+ const reads=[],server=api({execute:async(sql,params)=>{reads.push({sql,params});return[[{value:'2',undated:'3'}]]}})
+ for(const prompt of ['may resign ba ngayong taon?','How many resigned employees this year?']){
+  const answer=await server.answerAssistant(prompt,'dashboard','auto',access,now)
+  assert.equal(answer.metric.value,2);assert.equal(answer.scope,'2026')
+  assert.deepEqual(Array.from(reads.at(-1).params),['2026-01-01','2027-01-01','Inactive'])
+  assert.match(answer.text,/3 Resigned records/)
+ }
+ const monthly=await server.answerAssistant('Resignations September 2026','dashboard','en',access,now)
+ assert.match(monthly.scope,/September 2026/)
+ assert.deepEqual(Array.from(reads.at(-1).params),['2026-09-01','2026-10-01','Inactive'])
+ const lastYear=shared.parseAssistantCommand('Resignations last year','dashboard','en',now)
+ assert.equal(lastYear.period.start,'2025-01-01');assert.equal(lastYear.period.end,'2026-01-01')
+ const rollover=shared.parseAssistantCommand('Resignations this year','dashboard','en',new Date('2026-12-31T17:00:00Z'))
+ assert.equal(rollover.period.start,'2027-01-01')
+ const guide=await server.answerAssistant('Paano mag resign ng employee?','dashboard','fil',access,now)
+ assert.equal(guide.topic,'employee-remove');assert.match(guide.steps.join(' '),/Confirm resignation/)
+ const before=reads.length
+ await assert.rejects(()=>server.answerAssistant('Resignations this year','dashboard','en',{dashboard:{canView:true}},now),e=>e.statusCode===403)
+ assert.equal(reads.length,before)
+ for(const undated of [undefined,null,'',false,-1,1.5])await assert.rejects(()=>api({execute:async()=>[[{value:0,undated}]]}).answerAssistant('Resignations','dashboard','en',access,now),e=>e.statusCode===503)
+ for(const prompt of ['Resignations this year','How do I resign an employee?'])assert.equal(shared.portalAssistantReply(prompt,'en').metric,undefined)
+})
 test('natural Taglish workflows resolve across modules, explicit topics and scoped follow-ups',async()=>{
  const reads=[],server=api({execute:async()=>{reads.push(1);return[[{value:1}]]}})
  for(const [question,topic] of [
@@ -144,10 +168,15 @@ test('real aggregate SELECTs use temporary tables only',{skip:process.env.ASSIST
   const server=api(db)
   assert.equal((await server.answerAssistant('Loans released September 2026','dashboard','en',access,now)).metric.value,2)
   assert.equal((await server.answerAssistant('Active loans','dashboard','en',access,now)).metric.value,2)
-  await db.execute('CREATE TEMPORARY TABLE employee(DateHired DATE, Status VARCHAR(20))')
-  await db.execute("INSERT INTO employee VALUES ('2026-11-01','Active'),('2026-11-14','Inactive'),('2026-12-01','Active')")
+  await db.execute('CREATE TEMPORARY TABLE employee(DateHired DATE, Status VARCHAR(20), ResignationDate DATE NULL)')
+  await db.execute("INSERT INTO employee VALUES ('2026-11-01','Active',NULL),('2026-11-14','Inactive','2026-11-14'),('2026-12-01','Active',NULL)")
   assert.equal((await server.answerAssistant('Active employees','dashboard','en',access,now)).metric.value,2)
   assert.equal((await server.answerAssistant('Employees hired this month','dashboard','en',access,now)).metric.value,2)
+  await db.execute("INSERT INTO employee VALUES ('2020-01-01','Inactive',NULL),('2020-01-01','Inactive','2026-09-01'),('2020-01-01','Inactive','2025-11-01')")
+  const resigned=await server.answerAssistant('may resign ba ngayong taon?','dashboard','auto',access,now)
+  assert.equal(resigned.metric.value,2);assert.match(resigned.text,/1 Resigned records/)
+  assert.equal((await server.answerAssistant('Resignations this month','dashboard','en',access,now)).metric.value,1)
+  assert.equal((await server.answerAssistant('Resignations last year','dashboard','en',access,now)).metric.value,1)
   await db.execute('CREATE TEMPORARY TABLE payroll(Status VARCHAR(20))')
   await db.execute("INSERT INTO payroll VALUES ('For Approval'),('Approved'),('Released'),('For Approval')")
   assert.equal((await server.answerAssistant('Pending payroll','dashboard','en',access,now)).metric.value,2)

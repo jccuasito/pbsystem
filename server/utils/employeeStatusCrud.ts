@@ -62,7 +62,7 @@ export async function listEmployeeStatus(event: any) {
   const session = requireSession(event)
   void session.sub
   const [employeesResult, deploymentsResult, cutoffsResult, dtrCutoffsResult, historyResult, yearsResult] = await Promise.all([
-    pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, e.Status,
+    pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, e.Status, DATE_FORMAT(e.ResignationDate, '%Y-%m-%d') AS ResignationDate,
       CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
       a.AgencyName, p.PositionName,
       ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName, c.ClientID, s.SiteID
@@ -79,7 +79,6 @@ export async function listEmployeeStatus(event: any) {
       LEFT JOIN site_rate sr ON sr.SiteRateID = ed.SiteRateID
       LEFT JOIN site s ON s.SiteID = ed.SiteID
       LEFT JOIN client c ON c.ClientID = s.ClientID
-      WHERE e.Status = 'Active'
       ORDER BY e.LastName, e.FirstName, e.MiddleName`),
     pool.execute<any[]>(`SELECT ed.DeploymentID, ed.EmployeeID, ed.DeploymentType, ed.StartDate, ed.EndDate,
       a.AgencyName, c.ClientName, s.SiteName, c.ClientID, s.SiteID
@@ -142,7 +141,7 @@ export async function getEmployeeStatusCutoff(event: any) {
       at.DeploymentID, at.AttendanceStatus, at.Remarks, ${recordAuditFields},
       d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus, c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM attendance at
-      INNER JOIN employee e ON e.EmployeeID = at.EmployeeID AND e.Status = 'Active'
+      INNER JOIN employee e ON e.EmployeeID = at.EmployeeID
       LEFT JOIN employee_deployment ed ON ed.DeploymentID = at.DeploymentID
       LEFT JOIN attendance_dtr d ON d.BatchID = at.BatchID
       LEFT JOIN site s ON s.SiteID = COALESCE(d.SiteID, ed.SiteID)
@@ -153,7 +152,7 @@ export async function getEmployeeStatusCutoff(event: any) {
     pool.execute<any[]>(`SELECT de.EmployeeID, d.BatchID, d.PeriodStart, d.PeriodEnd, d.Status AS DtrStatus,
       ed.DeploymentID, ed.StartDate, ed.EndDate, c.ClientName, s.SiteName, c.ClientID, s.SiteID
       FROM attendance_dtr_employee de
-      INNER JOIN employee e ON e.EmployeeID = de.EmployeeID AND e.Status = 'Active'
+      INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
       INNER JOIN attendance_dtr d ON d.BatchID = de.BatchID
       INNER JOIN employee_deployment ed ON ed.DeploymentID = de.DeploymentID
       INNER JOIN client c ON c.ClientID = d.ClientID
@@ -175,14 +174,14 @@ export async function getEmployeeStatusSummary(event: any) {
   }
 
   const [employeeResult, attendanceYearsResult, cutoffYearsResult] = await Promise.all([
-    pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber,
+    pool.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, e.Status, DATE_FORMAT(e.ResignationDate, '%Y-%m-%d') AS ResignationDate,
       CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
       a.AgencyName, p.PositionName
       FROM employee e
       INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
       INNER JOIN agency a ON a.AgencyID = ap.AgencyID
       INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
-      WHERE e.EmployeeID = ? AND e.Status = 'Active' LIMIT 1`, [employeeId]),
+      WHERE e.EmployeeID = ? LIMIT 1`, [employeeId]),
     pool.execute<any[]>('SELECT DISTINCT YEAR(AttendanceDate) AS SummaryYear FROM attendance WHERE EmployeeID = ? ORDER BY SummaryYear DESC', [employeeId]),
     pool.execute<any[]>(`SELECT DISTINCT YEAR(d.PeriodStart) AS SummaryYear
       FROM attendance_dtr_employee de
@@ -190,7 +189,7 @@ export async function getEmployeeStatusSummary(event: any) {
       WHERE de.EmployeeID = ? ORDER BY SummaryYear DESC`, [employeeId]),
   ])
   const employee = employeeResult[0][0]
-  if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
+  if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
 
   const availableYears = [...new Set([
     ...attendanceYearsResult[0].map((row: any) => Number(row.SummaryYear)),
@@ -251,8 +250,9 @@ export async function updateEmployeeDailyStatus(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[employee]] = await connection.execute<any[]>('SELECT EmployeeID FROM employee WHERE EmployeeID = ? AND Status = \'Active\' FOR UPDATE', [employeeId])
-    if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
+    const [[employee]] = await connection.execute<any[]>('SELECT EmployeeID, Status FROM employee WHERE EmployeeID = ? FOR UPDATE', [employeeId])
+    if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
+    if (employee.Status !== 'Active') throw createError({statusCode:409,statusMessage:'This employee is resigned. Daily status updates are not permitted.'})
     const assignments: any[] = []
     for (const attendanceDate of selectedDates) {
       // A cutoff roster takes precedence, including cutoff-only Regular and Reliever assignments.

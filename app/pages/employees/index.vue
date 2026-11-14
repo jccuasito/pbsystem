@@ -39,6 +39,9 @@ const duplicateMatches = ref<any[]>([])
 const positionEmployeeId = ref<number | null>(null)
 const transferOpen = ref(false)
 const deleteOpen = ref(false)
+const resigning = ref<any>(null), resignationDay = ref(employeeCurrentDate()), resignationError = ref('')
+const resignationDialog = ref<HTMLElement | null>(null)
+let resignationTrigger: HTMLElement | null = null
 const editing = ref<any>(null)
 const transferring = ref<any>(null)
 const deleting = ref<any>(null)
@@ -323,13 +326,26 @@ async function confirmSimilarEmployee() {
 }
 
 async function deactivate(item: any) {
-  if (!confirm('Mark this employee as inactive?')) return
+  if (item.Status === 'Inactive') return
+  resignationTrigger = document.activeElement as HTMLElement | null
+  resigning.value=item;resignationDay.value=employeeCurrentDate();resignationError.value=''
+  await nextTick()
+  resignationDialog.value?.focus()
+}
+function closeResignation() {
+  if (busy.value) return
+  resigning.value=null
+  resignationTrigger?.focus()
+}
+async function saveResignation() {
+  if (!resigning.value || busy.value) return
+  busy.value=true;resignationError.value=''
   try {
-    await $fetch(`/api/employees/${item.EmployeeID}`, { method: 'DELETE', body: { id: item.EmployeeID } })
+    await $fetch(`/api/employees/${resigning.value.EmployeeID}`,{method:'DELETE',body:{id:resigning.value.EmployeeID,ResignationDate:resignationDay.value}})
+    resigning.value=null
     await load()
-  } catch (cause: any) {
-    error.value = requestErrorMessage(cause, 'Unable to deactivate employee.')
-  }
+  } catch(cause) {resignationError.value=requestErrorMessage(cause,'Unable to record employee resignation.')}
+  finally {busy.value=false}
 }
 
 function openDelete(item: any) {
@@ -824,7 +840,7 @@ onBeforeUnmount(() => {
   compactViewQuery?.removeEventListener('change', handleCompactViewChange)
   employeeObserver?.disconnect()
 })
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !busy.value && !modalOpen.value && !transferOpen.value && !deleteOpen.value && !positionEmployeeId.value })
+useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !busy.value && !modalOpen.value && !transferOpen.value && !deleteOpen.value && !resigning.value && !positionEmployeeId.value })
 </script>
 
 <template>
@@ -906,7 +922,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             <td data-label="Position">{{ format(item.PositionName) }}</td>
             <td data-label="Current Site">{{ format(item.SiteName) }}</td>
             <td data-label="Deployment"><span class="status" :class="`status--${String(item.DeploymentStatus || 'unassigned').toLowerCase()}`">{{ item.DeploymentStatus }}</span></td>
-            <td data-label="Status"><span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span></td>
+            <td data-label="Status"><span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status === 'Inactive' ? 'Resigned' : item.Status }}</span></td>
             <td class="row-actions" data-label="Actions">
               <button class="action-icon action-icon--edit" type="button" aria-label="Edit employee" title="Edit" @click="reset(item); modalOpen = true">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
@@ -915,7 +931,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
               <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee to another agency" title="Agency transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
               </button>
-              <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
+              <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate / resign employee" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/></svg>
               </button>
               <button class="action-icon action-icon--delete" type="button" aria-label="Delete employee permanently" title="Delete permanently" @click="openDelete(item)">
@@ -939,7 +955,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             <small class="employee-age">Age: {{ formatEmployeeAge(item.Birthday, ageAsOf) }}</small>
             <span>{{ formatEmployeeId(item.EmployeeID) }} · {{ formatEmployeeNumber(item.EmployeeNumber) }}</span>
           </div>
-          <span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status }}</span>
+          <span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status === 'Inactive' ? 'Resigned' : item.Status }}</span>
         </header>
 
         <div class="employee-card__details">
@@ -960,7 +976,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee to another agency" title="Agency transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
             </button>
-            <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
+            <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate / resign employee" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/></svg>
             </button>
             <button class="action-icon action-icon--delete" type="button" aria-label="Delete employee permanently" title="Delete permanently" @click="openDelete(item)">
@@ -1009,7 +1025,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             <div class="employee-core-grid">
               <label class="employee-core-field"><span>Employee number</span><input v-model="form.EmployeeNumber" placeholder="Enter employee number" /></label>
               <div class="employee-core-field employee-core-field--search"><SearchableSelect v-model="form.AgencyPositionID" label="Agency position" placeholder="Search agency or position" empty-text="No matching agency position." :options="agencyPositionOptions" :disabled="!!editing" required /><small>{{ editing ? 'Use Change position from the employee list to record a promotion.' : 'Required for rates and deployments.' }}</small></div>
-              <label class="employee-core-field"><span>Status</span><select v-model="form.Status"><option>Active</option><option>Inactive</option></select><small>Employee record availability.</small></label>
+              <label class="employee-core-field"><span>Status</span><select v-model="form.Status" disabled><option value="Active">Active</option><option value="Inactive">Resigned</option></select><small>Use Deactivate / resign to record resignation. Resigned employees cannot be reactivated here.</small></label>
             </div>
             <div class="grid"><label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label><label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label></div>
             <div class="grid"><label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label><label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label></div>
@@ -1282,6 +1298,12 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
     </Teleport>
 
     <Teleport to="body">
+      <div v-if="resigning" class="backdrop" @keydown.esc.stop.prevent="closeResignation"><form ref="resignationDialog" class="modal resignation-modal" role="dialog" aria-modal="true" aria-labelledby="resignation-title" tabindex="-1" @submit.prevent="saveResignation">
+        <h2 id="resignation-title">Record employee resignation</h2><p>{{ formatEmployeeName(resigning) }} · {{ formatEmployeeId(resigning.EmployeeID) }}</p>
+        <ModernDateField v-model="resignationDay" label="Resignation date" :max="ageAsOf" :min="String(resigning.DateHired || '').slice(0,10)" required />
+        <p class="transfer-note">This deactivates the employee and marks them as Resigned. Daily status updates will be locked. Existing attendance and payroll history will be retained.</p>
+        <p v-if="resignationError" class="error" role="alert">{{ resignationError }}</p><footer><button type="button" class="cancel-button" :disabled="busy" @click="closeResignation">Cancel</button><button type="submit" class="primary" :disabled="busy || !resignationDay">{{ busy ? 'Saving…' : 'Confirm resignation' }}</button></footer>
+      </form></div>
       <div v-if="deleteOpen" class="backdrop">
         <section class="modal delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-employee-title" aria-describedby="delete-employee-note">
           <div class="delete-modal__icon" aria-hidden="true">!</div>
@@ -1304,6 +1326,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
 </template>
 
 <style scoped>
+.resignation-modal {width:min(100%,540px);color:var(--theme-ink,#162033)}
+.resignation-modal > p {margin:0;line-height:1.5}
 .employees-page{padding:32px;max-width:1400px;margin:auto;color:var(--theme-ink,#162033);font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:var(--theme-accent,#5271a5)}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:var(--theme-soft,#eef3ff);color:var(--theme-accent,#2043cc)}.filters{display:grid;grid-template-columns:minmax(280px,1fr) minmax(180px,220px) minmax(180px,220px);gap:14px;margin:0 0 16px}.filters label{display:grid;min-width:0;gap:6px;font-size:.8rem;font-weight:700;color:var(--theme-muted,#56657b)}.filters input,.filters select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid var(--theme-line,#ccd5e4);border-radius:8px;padding:8px 10px;background:var(--theme-surface,#fff);font:inherit}.table-wrap{overflow:auto;border:1px solid var(--theme-line,#dce3ee);border-radius:14px;background:var(--theme-surface,#fff)}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid var(--theme-line,#edf1f6);font-size:.88rem;white-space:nowrap}th{background:var(--theme-soft,#f8fafc);color:var(--theme-muted,#526174);font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}.row-actions button{border:1px solid var(--theme-line,#cfd8e6);border-radius:7px;background:var(--theme-surface,#fff);padding:7px 9px;color:var(--theme-ink,#24415f);font-weight:700;cursor:pointer}.row-actions .delete-action{border-color:#fecaca;color:#b42318;background:#fff7f7}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:var(--theme-surface,#fff);border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:var(--theme-muted,#475569)}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid var(--theme-line,#cfd8e6);border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.transfer-subtitle{margin:-5px 0 0;color:var(--theme-muted,#405675);font-weight:700}.transfer-note{margin:0;padding:10px 12px;border-radius:8px;background:var(--theme-soft,#eff6ff);color:var(--theme-accent,#315887);font-size:.85rem;line-height:1.4}.rate-picker{position:relative}.rate-picker input{padding-right:86px}.rate-picker small{color:var(--theme-muted,#637287);font-weight:600}.rate-search-button{position:absolute;right:6px;top:27px;border:0;border-radius:6px;background:#2349e6;color:#fff;padding:7px 11px;font-weight:800;cursor:pointer}.rate-picker__results{position:absolute;z-index:4;top:100%;left:0;right:0;max-height:270px;overflow:auto;border:1px solid var(--theme-line,#bfcee4);border-radius:8px;background:var(--theme-surface,#fff);box-shadow:0 12px 26px rgba(15,23,42,.16)}.rate-picker__results button{display:grid;width:100%;gap:3px;padding:10px 12px;border:0;border-bottom:1px solid var(--theme-line,#edf1f6);background:var(--theme-surface,#fff);text-align:left;cursor:pointer;color:var(--theme-ink,#1d3557)}.rate-picker__results button:hover{background:var(--theme-soft,#eff6ff)}.rate-picker__results span{font-size:.8rem;color:var(--theme-muted,#61708a)}.rate-picker__results p{margin:0;padding:12px;color:var(--theme-muted,#66758b);font-weight:600}.shift-missing{display:grid;gap:5px;padding:12px;border:1px solid #f5c978;border-radius:9px;background:#fff9ed;color:#80530b;font-size:.85rem}.shift-missing span{color:#8a6a30}.shift-missing button{justify-self:start;border:0;border-radius:7px;background:#f59e0b;color:#fff;padding:7px 10px;font-weight:800;cursor:pointer}.shift-choice{display:flex;gap:8px;flex-wrap:wrap}.shift-choice button{border:1px solid var(--theme-line,#cfd8e6);border-radius:7px;background:var(--theme-surface,#fff);padding:8px 10px;font-weight:700;cursor:pointer}.shift-choice button.active{border-color:#2349e6;background:var(--theme-soft,#eef3ff);color:var(--theme-accent,#2043cc)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}.delete-modal{width:min(100%,540px);justify-items:center;text-align:center;gap:14px}.delete-modal__icon{display:grid;place-items:center;width:50px;height:50px;border-radius:50%;background:#fee2e2;color:#b42318;font-size:1.5rem;font-weight:900}.delete-modal__employee{margin:0;color:var(--theme-ink,#1e3655);font-weight:800}.delete-modal__employee span{color:var(--theme-muted,#64748b);font-weight:700}.delete-modal__note{margin:0;padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7;color:#7f1d1d;font-size:.88rem;line-height:1.55;text-align:left}.delete-modal footer{width:100%}.delete-modal footer button{min-width:90px;border:1px solid var(--theme-line,#cfd8e6);border-radius:8px;background:var(--theme-surface,#fff);padding:9px 16px;font-weight:800;cursor:pointer}.delete-modal footer .danger{border-color:#dc2626;background:#dc2626;color:#fff}@media(max-width:760px){.employees-page{padding:20px}.filters,.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
 </style>
 

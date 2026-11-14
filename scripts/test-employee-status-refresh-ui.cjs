@@ -21,6 +21,7 @@ const globals=['base','theme','components','auth','dashboard','payroll-processin
  await page.evaluate(()=>{
   window.metaCalls=0;window.cutoffCalls=0;window.cutoffPending=false;window.metaPending=false;window.failNextCutoff=false;window.posts=[]
   const employees=Array.from({length:200},(_,i)=>({EmployeeID:i+1,EmployeeNumber:i?'000'+(i+1):null,EmployeeName:'Test Employee '+String(i+1).padStart(3,'0'),AgencyName:'Test Agency',PositionName:'Guard'}))
+  employees.at(-1).Status='Inactive';employees.at(-1).ResignationDate=null
   window.$fetch=async(url,opts)=>{
    const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms))
    if(opts?.method==='POST'){window.posts.push(opts.body);return {success:true,created:1,pending:1}}
@@ -66,7 +67,22 @@ const globals=['base','theme','components','auth','dashboard','payroll-processin
   await page.getByRole('button',{name:'Retry refresh',exact:true}).click()
   await page.waitForFunction(()=>!window.cutoffPending&&!window.metaPending)
   await page.getByRole('alert').filter({hasText:/refresh/i}).waitFor({state:'hidden'})
+  await page.locator('.filters label').filter({hasText:/^Status/}).locator('select').selectOption('resigned')
+  assert.equal(await table.locator('tbody tr').count(),1)
+  const resignedRow=table.locator('tbody tr').first()
+  assert.match(await resignedRow.textContent(),/Resigned.*Date not recorded/)
+  assert.equal(await resignedRow.getByRole('button',{name:'Update status',exact:true}).isDisabled(),true)
+  await resignedRow.getByRole('button',{name:'View summary',exact:true}).click()
+  await page.locator('.summary-modal').waitFor()
+  await page.locator('.summary-modal .modal-close').click()
+  await page.getByRole('button',{name:'View cutoff sheet',exact:true}).click()
+  await sheet.waitFor()
+  await sheet.locator('.day-cell button').first().click()
+  const editor=page.locator('.status-modal');await editor.waitFor()
+  assert.match(await editor.textContent(),/Resigned employee.*not permitted/)
+  assert.equal(await editor.getByRole('button',{name:/Save/}).count(),0)
+  assert.equal(await page.evaluate(()=>window.posts.length),0)
   assert.deepEqual(errors,[])
-  console.log('PASS: real polling with 200 employees, slow responses, stable DOM buttons, update dialog, background failure, rapid summary reopen')
+  console.log('PASS: real polling with 200 employees, stable refresh, resignation filter, readable history and locked resigned cells')
  await page.close()
 }finally{await browser.close()}})().catch(error=>{console.error(error);process.exitCode=1})

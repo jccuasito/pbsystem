@@ -24,11 +24,12 @@ export const assistantGuides: AssistantGuide[] = [
     'Review the target agency/position, effective date and applicable site/rate setup in the selected form.',
     'Save through that workflow so the history is retained. Do not create a second employee just to change their assignment.'
   ],['Hanapin ang employee. Piliin ang Change position / history para sa position, o Transfer employee to another agency para sa transfer.', 'Suriin ang target agency/position, effective date at applicable site/rate setup sa form.', 'I-save sa tamang workflow para manatili ang history. Huwag gumawa ng panibagong employee para lang magpalit ng assignment.']),
-  guide('employee-remove','employees-list','Deactivate or delete an employee','Mag-deactivate o mag-delete ng employee',['deactivate','delete'],[
-    'Locate the correct employee and verify their identity. Deactivate disables the employee record; Delete permanently is a separate action.',
-    'Prefer the existing deactivation workflow when the employee must stop being active. Permanent deletion may be blocked by linked records.',
-    'Read the system confirmation carefully. This assistant never deletes or deactivates anyone for you.'
-  ],['Hanapin at tiyakin ang tamang employee. Magkaiba ang Deactivate at Delete permanently.', 'Gamitin ang deactivation kung ihihinto ang pagiging active. Maaaring hindi payagan ang permanent deletion kapag may linked records.', 'Basahin ang confirmation ng system. Hindi nagde-delete o deactivate ng tao ang assistant.']),
+  guide('employee-remove','employees-list','Record employee resignation','Magtala ng employee resignation',['deactivate','resign','delete'],[
+    'In Employee List, choose Deactivate / resign employee. Enter the Resignation date (today by default), review the notice, then Confirm resignation.',
+    'The employee is labelled Resigned. Employee Status retains the history and summary, but daily status changes are locked. Profile editing cannot reactivate the employee.',
+    'Previously Inactive employees are shown as Resigned with Date not recorded. Their resignation year is not inferred. Permanent deletion is separate and is not needed for resignation.'
+  ],['Sa Employee List, piliin ang Deactivate / resign employee. Ilagay ang Resignation date (araw ngayon ang default), basahin ang notice, at piliin ang Confirm resignation.', 'Resigned na ang employee. Nananatili ang history at summary sa Employee Status ngunit naka-lock ang daily status updates. Hindi siya mare-reactivate sa profile editing.', 'Ang dating Inactive ay Resigned na may Date not recorded. Hindi hinuhulaan ang resignation year. Hiwalay ang permanent delete; hindi ito kailangan para sa resignation.']),
+
   guide('deployment-create','employees-deployments','Record a deployment','Mag-record ng deployment',['use','create','edit'],[
     'Open Deployment History and choose + New deployment.',
     'Select the employee and applicable agency/client/site assignment, deployment type and dates. Ongoing deployment is for an assignment with no confirmed end date.',
@@ -238,7 +239,7 @@ export const assistantGuides: AssistantGuide[] = [
 /** Longest explicit page name wins; a prior topic is used only for pronoun follow-ups. */
 export const assistantGuideAliases: Record<string,string[]> = {
   dashboard:['dashboard','overview','payroll progress'],
-  'employees-list':['employee list','employee record','employee records','employee','employees','empleyado','personnel'],
+  'employees-list':['employee list','employee record','employee records','resignation','resigned','resign','nag resign','nagresign','employee','employees','empleyado','personnel'],
   'employees-deployments':['deployment history','deployment','deploy','assignment','posting'],
   'employees-documents':['employee documents','government id','government ids','id scan','scan','documents','document','dokumento'],
   'employees-status':['employee status','leave','sick leave','vacation leave','suspension','suspended','on leave','absence'],
@@ -307,7 +308,7 @@ export function findAssistantGuide(prompt: string, currentView: string, contextG
   const topics=assistantGuides.filter(item=>item.view===view)
   if (!topics.length) return null
   let action='use'
-  const actions:[string,RegExp][]=[['btr',/\b(?:btr|break time reliever)\b/],['backup',/\b(?:backup|back up|restore)\b/],['access',/\b(?:permission|permissions|team access|staff access)\b/],['recovery',/\b(?:recovery|forgot|nakalimutan|recover)\b/],['position',/\b(?:change position|promotion|promote|palit ng position)\b/],['transfer',/\b(?:transfer|ilipat|lipat)\b/],['people',/\b(?:add|create|dagdag|magdagdag)\b.*\b(?:employee|employees|tao)\b.*\bdtr\b/],['import',/\b(?:import)\b/],['upload',/\b(?:upload|attach|scan)\b/],['print',/\b(?:print|pdf|png)\b/],['export',/\b(?:export|download)\b/],['post',/\b(?:post|publish|publication)\b/],['pause',/\b(?:pause|skip)\b/],['resume',/\b(?:resume)\b/],['delete',/\b(?:delete|remove|burahin)\b/],['deactivate',/\b(?:deactivate|disable)\b/],['approve',/\b(?:approve|finalize|finalise|reject)\b/],['compute',/\b(?:compute|calculate|kalkulahin|computation)\b/],['edit',/\b(?:edit|update|change|correct|baguhin|itama)\b/],['requirements',/\b(?:requirements|required|fields|kailangan)\b/],['create',/\b(?:create|add|new|gumawa|magdagdag|register|encode)\b/],['summary',/\b(?:summary|history)\b/]]
+  const actions:[string,RegExp][]=[['resign',/\b(?:resign|resigned|resignation|nagresign)\b/],['btr',/\b(?:btr|break time reliever)\b/],['backup',/\b(?:backup|back up|restore)\b/],['access',/\b(?:permission|permissions|team access|staff access)\b/],['recovery',/\b(?:recovery|forgot|nakalimutan|recover)\b/],['position',/\b(?:change position|promotion|promote|palit ng position)\b/],['transfer',/\b(?:transfer|ilipat|lipat)\b/],['people',/\b(?:add|create|dagdag|magdagdag)\b.*\b(?:employee|employees|tao)\b.*\bdtr\b/],['import',/\b(?:import)\b/],['upload',/\b(?:upload|attach|scan)\b/],['print',/\b(?:print|pdf|png)\b/],['export',/\b(?:export|download)\b/],['post',/\b(?:post|publish|publication)\b/],['pause',/\b(?:pause|skip)\b/],['resume',/\b(?:resume)\b/],['delete',/\b(?:delete|remove|burahin)\b/],['deactivate',/\b(?:deactivate|disable)\b/],['approve',/\b(?:approve|finalize|finalise|reject)\b/],['compute',/\b(?:compute|calculate|kalkulahin|computation)\b/],['edit',/\b(?:edit|update|change|correct|baguhin|itama)\b/],['requirements',/\b(?:requirements|required|fields|kailangan)\b/],['create',/\b(?:create|add|new|gumawa|magdagdag|register|encode)\b/],['summary',/\b(?:summary|history)\b/]]
   action=actions.find(([,pattern])=>pattern.test(text))?.[0]||action
   if (view==='employees-list' && /\bmagpalit\b.*\bposition\b/.test(text)) action='position'
   const selected=topics.find(item=>item.actions.includes(action))
