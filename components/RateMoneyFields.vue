@@ -15,8 +15,8 @@ const emit = defineEmits<{ 'update:modelValue': [value: Record<string, any>] }>(
 
 <style scoped>
 .rate-money-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.rate-money-grid label{display:grid;gap:5px;font-size:.8rem;font-weight:700;color:#475569}
-.rate-money-grid input{box-sizing:border-box;width:100%;min-width:0;min-height:40px;border:1px solid #cfd8e6;border-radius:7px;padding:8px;font:inherit;color:#172033;background:#fff}
+.rate-money-grid label{display:grid;gap:5px;font-size:.8rem;font-weight:700;color:var(--theme-muted,#475569)}
+.rate-money-grid input{box-sizing:border-box;width:100%;min-width:0;min-height:40px;border:1px solid var(--theme-line,#cfd8e6);border-radius:7px;padding:8px;font:inherit;color:var(--theme-ink,#172033);background:var(--theme-surface,#fff)}
 @media(max-width:700px){.rate-money-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:420px){.rate-money-grid{grid-template-columns:1fr}}
 </style>

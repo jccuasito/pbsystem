@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { useAppTheme } from '~/composables/useAppTheme'
+import { ref, onMounted } from 'vue'
 import EmailVerification from '../../../components/modals/emailverification.vue'
 
-const isDark = ref(false)
+const isDark = useAppTheme()
 const form = ref({ firstName: '', lastName: '', gender: '', departmentId: null as number | null, email: '', password: '', confirmPassword: '' })
 const departments = ref<{ DepartmentID: number; DepartmentName: string }[]>([])
 const error = ref(''); const message = ref(''); const busy = ref(false)
@@ -26,15 +27,12 @@ function openVerification() { if (!form.value.email.trim()) { error.value = 'Ent
 function startGoogle() { error.value = ''; if (!googleReady.value || !googleCodeClient.value) { error.value = 'Google sign-in is still loading. Please try again.'; return }; googleCodeClient.value.requestCode() }
 
 onMounted(async () => {
-  const savedTheme = localStorage.getItem('dja-theme')
-  isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
   try { departments.value = (await $fetch<any>('/api/auth/departments')).departments }
   catch { error.value = 'Departments could not be loaded. Please refresh the page.' }
   const id = useRuntimeConfig().public.googleClientId; if (!id) return
   const script = document.createElement('script'); script.src = 'https://accounts.google.com/gsi/client'; script.async = true; script.onload = () => { const google = (window as any).google; googleCodeClient.value = google?.accounts.oauth2.initCodeClient({ client_id: id, scope: 'openid email profile', ux_mode: 'popup', callback: googleSignup }); googleReady.value = Boolean(googleCodeClient.value) }; document.head.appendChild(script)
 })
 
-watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'light'))
 </script>
 
 <template>

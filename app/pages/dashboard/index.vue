@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useAppTheme } from '~/composables/useAppTheme'
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from '#app'
 import LogoutAlert from '../../../components/alertmessage/logoutalert.vue'
@@ -40,7 +41,7 @@ import PayrollRunProgress from '../../components/PayrollRunProgress.vue'
 const route = useRoute()
 const router = useRouter()
 
-const isDark = ref(false)
+const isDark = useAppTheme()
 const isPinned = ref(false)
 const isHovering = ref(false)
 const isMobileNavOpen = ref(false)
@@ -104,13 +105,9 @@ function updateOnlineStatus() {
 // --- END OFFLINE / CACHE SUPPORT ---
 
 onMounted(() => {
-  const savedTheme = localStorage.getItem('dja-theme')
-  isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
-
   isPinned.value = localStorage.getItem('dja-sidebar-pinned') === 'true'
 })
 
-watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'light'))
 watch(isPinned, (value) => localStorage.setItem('dja-sidebar-pinned', value ? 'true' : 'false'))
 watch(() => route.path, () => { isMobileNavOpen.value = false })
 watch(isMobileNavOpen, (isOpen) => {
@@ -123,11 +120,6 @@ watch(isMobileNavOpen, (isOpen) => {
   document.documentElement.style.overflow = documentOverflowBeforeDrawer
 })
 
-useHead(() => ({
-  htmlAttrs: {
-    'data-theme': isDark.value ? 'dark' : 'light'
-  }
-}))
 
 const expanded = computed(() => isPinned.value || isHovering.value || isMobileNavOpen.value)
 

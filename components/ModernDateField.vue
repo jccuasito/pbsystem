@@ -161,31 +161,31 @@ watch(() => props.disabled, (disabled) => { if (disabled) open.value = false })
 </template>
 
 <style scoped>
-.modern-date-field{position:relative;display:grid;min-width:0;gap:6px;color:#475569;font-size:.8rem;font-weight:700}
+.modern-date-field{position:relative;display:grid;min-width:0;gap:6px;color:var(--theme-muted,#475569);font-size:.8rem;font-weight:700}
 .modern-date-field>label{font:inherit}
-.modern-date-field__trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;box-sizing:border-box;width:100%;min-height:44px;border:1px solid #cfd8e6;border-radius:10px;padding:9px 12px;background:#fff;color:#172033;font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease}
+.modern-date-field__trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;box-sizing:border-box;width:100%;min-height:44px;border:1px solid var(--theme-line,#cfd8e6);border-radius:10px;padding:9px 12px;background:var(--theme-surface,#fff);color:var(--theme-ink,#172033);font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease}
 .modern-date-field__trigger:hover,.modern-date-field__trigger:focus-visible{border-color:#7798d0;box-shadow:0 0 0 3px rgba(35,73,230,.1);outline:0}
-.modern-date-field--disabled{color:#8290a3}
-.modern-date-field--disabled .modern-date-field__trigger{border-color:#d6deea;background:#e9eef5;color:#8290a3;cursor:not-allowed;box-shadow:none}
-.modern-date-field--disabled .modern-date-field__trigger svg{stroke:#91a0b5}
-.modern-date-field__trigger .placeholder{color:#8b97a8;font-weight:600}
-.modern-date-field__trigger svg{width:19px;height:19px;fill:none;stroke:#315173;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.modern-date-field--disabled{color:var(--theme-muted,#8290a3)}
+.modern-date-field--disabled .modern-date-field__trigger{border-color:var(--theme-line,#d6deea);background:var(--theme-soft,#e9eef5);color:var(--theme-muted,#8290a3);cursor:not-allowed;box-shadow:none}
+.modern-date-field--disabled .modern-date-field__trigger svg{stroke:var(--theme-muted,#91a0b5)}
+.modern-date-field__trigger .placeholder{color:var(--theme-muted,#8b97a8);font-weight:600}
+.modern-date-field__trigger svg{width:19px;height:19px;fill:none;stroke:var(--theme-muted,#315173);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .modern-date-field__native{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-.modern-date-field__panel{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:300px;box-sizing:border-box;border:1px solid #cbd7e8;border-radius:14px;padding:12px;background:#fff;box-shadow:0 18px 45px rgba(23,42,70,.2);font-family:Inter,system-ui,sans-serif}
+.modern-date-field__panel{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:300px;box-sizing:border-box;border:1px solid var(--theme-line,#cbd7e8);border-radius:14px;padding:12px;background:var(--theme-surface,#fff);box-shadow:0 18px 45px rgba(23,42,70,.2);font-family:Inter,system-ui,sans-serif}
 .modern-date-field--end .modern-date-field__panel{right:0;left:auto}
 .modern-date-field__panel header{display:grid;grid-template-columns:34px 1fr 34px;align-items:center;gap:6px;margin-bottom:10px}
 .modern-date-field__panel header>div{display:grid;grid-template-columns:1.35fr .85fr;gap:6px}
-.modern-date-field__panel select,.modern-date-field__panel header button{min-height:34px;border:1px solid #dae2ee;border-radius:8px;background:#f8faff;color:#1e385b;font:inherit;font-weight:800}
+.modern-date-field__panel select,.modern-date-field__panel header button{min-height:34px;border:1px solid var(--theme-line,#dae2ee);border-radius:8px;background:var(--theme-soft,#f8faff);color:var(--theme-ink,#1e385b);font:inherit;font-weight:800}
 .modern-date-field__panel header button{padding:0;font-size:1.25rem;cursor:pointer}
 .modern-date-field__weekdays,.modern-date-field__days{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
-.modern-date-field__weekdays span{padding:5px 0;color:#7b8798;font-size:.67rem;text-align:center;text-transform:uppercase}
-.modern-date-field__days button{aspect-ratio:1;border:0;border-radius:8px;background:transparent;color:#243b5a;font:inherit;font-size:.75rem;cursor:pointer}
-.modern-date-field__days button:hover:not(:disabled){background:#edf3ff;color:#173fae}
-.modern-date-field__days button.outside{color:#a9b2bf}
-.modern-date-field__days button.today{box-shadow:inset 0 0 0 1px #7192ce;color:#2349e6}
+.modern-date-field__weekdays span{padding:5px 0;color:var(--theme-muted,#7b8798);font-size:.67rem;text-align:center;text-transform:uppercase}
+.modern-date-field__days button{aspect-ratio:1;border:0;border-radius:8px;background:transparent;color:var(--theme-ink,#243b5a);font:inherit;font-size:.75rem;cursor:pointer}
+.modern-date-field__days button:hover:not(:disabled){background:var(--theme-soft,#edf3ff);color:var(--theme-accent,#173fae)}
+.modern-date-field__days button.outside{color:var(--theme-muted,#a9b2bf)}
+.modern-date-field__days button.today{box-shadow:inset 0 0 0 1px #7192ce;color:var(--theme-accent,#2349e6)}
 .modern-date-field__days button.selected{background:#2349e6;color:#fff;box-shadow:none}
 .modern-date-field__days button:disabled{color:#d1d6de;cursor:not-allowed}
-.modern-date-field__panel footer{display:flex;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:1px solid #edf1f6}
-.modern-date-field__panel footer button{border:0;background:transparent;color:#2349e6;font:inherit;font-weight:800;cursor:pointer}
+.modern-date-field__panel footer{display:flex;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:1px solid var(--theme-line,#edf1f6)}
+.modern-date-field__panel footer button{border:0;background:transparent;color:var(--theme-accent,#2349e6);font:inherit;font-weight:800;cursor:pointer}
 @media(max-width:600px){.modern-date-field__panel,.modern-date-field--end .modern-date-field__panel{right:auto;left:0;width:min(300px,calc(100vw - 56px))}}
 </style>

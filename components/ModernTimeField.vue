@@ -169,27 +169,27 @@ watch(() => props.disabled, (disabled) => { if (disabled) closePicker() })
 </template>
 
 <style scoped>
-.modern-time-field{position:relative;display:grid;min-width:0;gap:6px;color:#3b5478;font-size:.78rem;font-weight:750}
+.modern-time-field{position:relative;display:grid;min-width:0;gap:6px;color:var(--theme-muted,#3b5478);font-size:.78rem;font-weight:750}
 .modern-time-field>label{font:inherit}
-.modern-time-field__trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;box-sizing:border-box;width:100%;min-height:47px;border:1px solid #cbd9ee;border-radius:9px;padding:9px 12px;background:#fff;color:#112b53;font:inherit;font-size:.85rem;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease}
+.modern-time-field__trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;box-sizing:border-box;width:100%;min-height:47px;border:1px solid var(--theme-line,#cbd9ee);border-radius:9px;padding:9px 12px;background:var(--theme-surface,#fff);color:var(--theme-ink,#112b53);font:inherit;font-size:.85rem;text-align:left;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease}
 .modern-time-field__trigger:hover,.modern-time-field__trigger:focus-visible{border-color:#7798d0;box-shadow:0 0 0 3px rgba(35,73,230,.1);outline:0}
-.modern-time-field__trigger .placeholder{color:#8b97a8;font-weight:600}
-.modern-time-field__trigger svg{width:19px;height:19px;flex:none;fill:none;stroke:#315173;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.modern-time-field--disabled{color:#8290a3}
-.modern-time-field--disabled .modern-time-field__trigger{background:#e9eef5;color:#8290a3;cursor:not-allowed}
+.modern-time-field__trigger .placeholder{color:var(--theme-muted,#8b97a8);font-weight:600}
+.modern-time-field__trigger svg{width:19px;height:19px;flex:none;fill:none;stroke:var(--theme-muted,#315173);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.modern-time-field--disabled{color:var(--theme-muted,#8290a3)}
+.modern-time-field--disabled .modern-time-field__trigger{background:var(--theme-soft,#e9eef5);color:var(--theme-muted,#8290a3);cursor:not-allowed}
 .modern-time-field__native{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-.modern-time-field__panel{position:fixed;z-index:1400;box-sizing:border-box;width:min(320px,calc(100vw - 24px));border:1px solid #cbd7e8;border-radius:14px;padding:15px;background:#fff;box-shadow:0 18px 45px rgba(23,42,70,.2);color:#243b5a;font-family:Inter,system-ui,sans-serif;font-size:.8rem}
-.modern-time-field__heading{margin-bottom:12px;color:#1e385b;font-weight:800}
+.modern-time-field__panel{position:fixed;z-index:1400;box-sizing:border-box;width:min(320px,calc(100vw - 24px));border:1px solid var(--theme-line,#cbd7e8);border-radius:14px;padding:15px;background:var(--theme-surface,#fff);box-shadow:0 18px 45px rgba(23,42,70,.2);color:var(--theme-ink,#243b5a);font-family:Inter,system-ui,sans-serif;font-size:.8rem}
+.modern-time-field__heading{margin-bottom:12px;color:var(--theme-ink,#1e385b);font-weight:800}
 .modern-time-field__controls{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:9px}
-.modern-time-field__controls label{display:grid;gap:5px;color:#526c92;font-size:.73rem;font-weight:700}
-.modern-time-field__controls select{width:100%;min-height:40px;border:1px solid #dae2ee;border-radius:8px;padding:7px 9px;background:#f8faff;color:#1e385b;font:inherit;font-size:.92rem;font-weight:800;cursor:pointer}
+.modern-time-field__controls label{display:grid;gap:5px;color:var(--theme-muted,#526c92);font-size:.73rem;font-weight:700}
+.modern-time-field__controls select{width:100%;min-height:40px;border:1px solid var(--theme-line,#dae2ee);border-radius:8px;padding:7px 9px;background:var(--theme-soft,#f8faff);color:var(--theme-ink,#1e385b);font:inherit;font-size:.92rem;font-weight:800;cursor:pointer}
 .modern-time-field__controls select:focus-visible,.modern-time-field__panel button:focus-visible{outline:2px solid #7798d0;outline-offset:2px}
-.modern-time-field__separator{padding-bottom:9px;color:#526c92;font-size:1.2rem;font-weight:800}
+.modern-time-field__separator{padding-bottom:9px;color:var(--theme-muted,#526c92);font-size:1.2rem;font-weight:800}
 .modern-time-field__period{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px}
-.modern-time-field__period button{min-height:36px;border:1px solid #dae2ee;border-radius:8px;background:#f8faff;color:#315173;font:inherit;font-weight:800;cursor:pointer}
-.modern-time-field__period button.selected{border-color:#2349e6;background:#edf3ff;color:#2349e6}
-.modern-time-field__preview{margin-top:13px;color:#1e385b;font-size:1rem;font-weight:800;text-align:center}
-.modern-time-field__panel footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;padding-top:11px;border-top:1px solid #edf1f6}
-.modern-time-field__panel footer button{min-height:34px;border:0;border-radius:7px;padding:5px 9px;background:transparent;color:#2349e6;font:inherit;font-weight:800;cursor:pointer}
+.modern-time-field__period button{min-height:36px;border:1px solid var(--theme-line,#dae2ee);border-radius:8px;background:var(--theme-soft,#f8faff);color:var(--theme-muted,#315173);font:inherit;font-weight:800;cursor:pointer}
+.modern-time-field__period button.selected{border-color:#2349e6;background:var(--theme-soft,#edf3ff);color:var(--theme-accent,#2349e6)}
+.modern-time-field__preview{margin-top:13px;color:var(--theme-ink,#1e385b);font-size:1rem;font-weight:800;text-align:center}
+.modern-time-field__panel footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;padding-top:11px;border-top:1px solid var(--theme-line,#edf1f6)}
+.modern-time-field__panel footer button{min-height:34px;border:0;border-radius:7px;padding:5px 9px;background:transparent;color:var(--theme-accent,#2349e6);font:inherit;font-weight:800;cursor:pointer}
 .modern-time-field__panel footer .modern-time-field__apply{padding:7px 12px;background:#2349e6;color:#fff}
 </style>

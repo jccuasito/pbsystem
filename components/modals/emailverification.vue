@@ -74,13 +74,13 @@ function close() {
 
 <style scoped>
 .email-verification { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(4, 19, 54, .7); backdrop-filter: blur(6px); }
-.email-verification__card { position: relative; width: min(100%, 430px); box-sizing: border-box; padding: 36px; border: 1px solid rgba(255,255,255,.66); border-radius: 20px; background: #fff; color: #102755; box-shadow: 0 28px 70px rgba(0, 12, 40, .35); text-align: center; }
-.email-verification__close { position: absolute; top: 12px; right: 14px; width: 34px; height: 34px; border: 0; border-radius: 50%; background: #edf3fc; color: #385888; font-size: 1.5rem; cursor: pointer; }
-.email-verification__icon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 15px; border-radius: 16px; background: #e8f1ff; color: #2563d8; font-size: 1.7rem; }
-.email-verification__eyebrow { margin: 0 0 7px; color: #2867dc; font-size: .72rem; font-weight: 800; letter-spacing: .12em; }
-.email-verification h2 { margin: 0; font-size: 1.7rem; letter-spacing: -.04em; }.email-verification__copy { margin: 12px 0 24px; color: #5f7192; line-height: 1.55; }
-.email-verification__digits { display: flex; justify-content: center; gap: 8px; }.email-verification__digits input { width: 44px; height: 54px; box-sizing: border-box; border: 1px solid #bad0ef; border-radius: 10px; background: #f9fbff; color: #102755; font-size: 1.45rem; font-weight: 700; text-align: center; outline: none; }.email-verification__digits input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.16); }
-.email-verification__submit { width: 100%; margin-top: 24px; min-height: 48px; border: 0; border-radius: 9px; background: #5ca9eb; color: #103363; font-weight: 800; cursor: pointer; }.email-verification__submit:disabled { opacity: .55; cursor: not-allowed; }
-.email-verification__error { margin: 14px 0 -8px; color: #bb2d3b; font-size: .88rem; }.email-verification__hint { margin: 16px 0 0; color: #7686a3; font-size: .8rem; }
+.email-verification__card { position: relative; width: min(100%, 430px); box-sizing: border-box; padding: 36px; border: 1px solid rgba(255,255,255,.66); border-radius: 20px; background:var(--theme-surface,#fff); color:var(--theme-ink,#102755); box-shadow: 0 28px 70px rgba(0, 12, 40, .35); text-align: center; }
+.email-verification__close { position: absolute; top: 12px; right: 14px; width: 34px; height: 34px; border: 0; border-radius: 50%; background:var(--theme-soft,#edf3fc); color:var(--theme-accent,#385888); font-size: 1.5rem; cursor: pointer; }
+.email-verification__icon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 15px; border-radius: 16px; background:var(--theme-soft,#e8f1ff); color:var(--theme-accent,#2563d8); font-size: 1.7rem; }
+.email-verification__eyebrow { margin: 0 0 7px; color:var(--theme-accent,#2867dc); font-size: .72rem; font-weight: 800; letter-spacing: .12em; }
+.email-verification h2 { margin: 0; font-size: 1.7rem; letter-spacing: -.04em; }.email-verification__copy { margin: 12px 0 24px; color:var(--theme-muted,#5f7192); line-height: 1.55; }
+.email-verification__digits { display: flex; justify-content: center; gap: 8px; }.email-verification__digits input { width: 44px; height: 54px; box-sizing: border-box; border:1px solid var(--theme-line,#bad0ef); border-radius: 10px; background:var(--theme-soft,#f9fbff); color:var(--theme-ink,#102755); font-size: 1.45rem; font-weight: 700; text-align: center; outline: none; }.email-verification__digits input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.16); }
+.email-verification__submit { width: 100%; margin-top: 24px; min-height: 48px; border: 0; border-radius: 9px; background: #5ca9eb; color:var(--theme-accent,#103363); font-weight: 800; cursor: pointer; }.email-verification__submit:disabled { opacity: .55; cursor: not-allowed; }
+.email-verification__error { margin: 14px 0 -8px; color: #bb2d3b; font-size: .88rem; }.email-verification__hint { margin: 16px 0 0; color:var(--theme-muted,#7686a3); font-size: .8rem; }
 @media (max-width: 420px) { .email-verification__card { padding: 30px 20px; }.email-verification__digits { gap: 5px; }.email-verification__digits input { width: 40px; height: 50px; } }
 </style>

@@ -10,7 +10,7 @@
   border: 1px solid transparent;
   border-radius: 8px;
   color: #ffffff;
-  background: var(--accent);
+  background:var(--action-bg,var(--accent));
   font-size: 0.9rem;
   font-weight: 700;
   line-height: 1;
@@ -24,6 +24,6 @@
 .app-button:active { transform: translateY(0); }
 .app-button--outline { color: var(--ink); border-color: var(--line); background: transparent; box-shadow: none; }
 .app-button--outline:hover { border-color: var(--accent); color: var(--accent); box-shadow: none; }
-.app-button--light { color: var(--navy); background: #ffffff; box-shadow: none; }
-.app-button--light:hover { background: #eef5ff; box-shadow: 0 10px 22px rgba(4, 23, 62, 0.2); }
+.app-button--light { color: var(--navy); background:#fff; box-shadow: none; }
+.app-button--light:hover { background:var(--theme-soft,#eef5ff); box-shadow: 0 10px 22px rgba(4, 23, 62, 0.2); }
 .app-button--large { min-height: 50px; padding: 14px 22px; font-size: 0.96rem; }

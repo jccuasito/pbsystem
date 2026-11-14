@@ -1,5 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap');
 
+:root {
+  color-scheme: light;
+  --paper: #f9fafc;
+  --surface: #ffffff;
+  --ink: #132047;
+  --muted: #66718b;
+  --line: #e5e9f1;
+  --soft: #edf3ff;
+  --accent: #2363d6;
+  --action-bg: #2363d6;
+}
+
 .page {
   --navy: #142b5e;
   --blue: #2463d4;
@@ -33,7 +45,7 @@
 
 html[data-theme='dark'] {
   --navy: #142b5e;
-  --blue: #79a7ff;
+  --blue: #2463d4;
   --paper: #0d1529;
   --surface: #15203a;
   --ink: #eef3ff;
@@ -44,4 +56,29 @@ html[data-theme='dark'] {
   --glow: #14294e;
   color-scheme: dark;
   background: var(--paper);
+}
+
+/* Component fallbacks keep the original light palette. These screen-only tokens
+   also reach native dialogs and teleports without recoloring printed documents. */
+@media screen {
+  html[data-theme='dark'] {
+    --theme-canvas: #0d1529;
+    --theme-surface: #15203a;
+    --theme-soft: #1c2d49;
+    --theme-line: #344765;
+    --theme-ink: #eef3ff;
+    --theme-muted: #aabbd3;
+    --theme-accent: #91baff;
+  }
+  html[data-theme='dark'] body {
+    background: var(--paper);
+    color: var(--ink);
+  }
+  html[data-theme='dark'] :is(input, select, textarea) {
+    color-scheme: dark;
+  }
+  html[data-theme='dark'] :is(input, textarea)::placeholder {
+    color: #91a4be;
+    opacity: 1;
+  }
 }

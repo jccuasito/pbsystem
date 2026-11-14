@@ -28,13 +28,13 @@ watch([() => props.modelValue, dialog], ([message, element]) => {
 </template>
 
 <style scoped>
-.system-alert { box-sizing: border-box; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 28px; border: 1px solid #d6e1f1; border-radius: 16px; background: #fff; color: #142f58; box-shadow: 0 20px 60px #101b3433; font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; }
+.system-alert { box-sizing: border-box; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 28px; border:1px solid var(--theme-line,#d6e1f1); border-radius: 16px; background:var(--theme-surface,#fff); color:var(--theme-ink,#142f58); box-shadow: 0 20px 60px #101b3433; font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; }
 .system-alert::backdrop { background: #0e1e3b80; }
-.system-alert__label { color: #2859a3; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.system-alert__label { color:var(--theme-accent,#2859a3); font-size: 12px; font-weight: 700; text-transform: uppercase; }
 .system-alert__label[data-tone=success] { color: #16804b; }
 .system-alert__label[data-tone=error] { color: #b42318; }
 .system-alert h2 { margin: 10px 0; font-size: 20px; }
-.system-alert p { margin: 0 0 24px; color: #526683; line-height: 1.6; overflow-wrap: anywhere; }
+.system-alert p { margin: 0 0 24px; color:var(--theme-muted,#526683); line-height: 1.6; overflow-wrap: anywhere; }
 .system-alert button { display: block; margin-left: auto; min-width: 80px; padding: 11px 20px; border: 0; border-radius: 9px; background: #2867d8; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
 .system-alert button:focus-visible { outline: 3px solid #92b7ff; outline-offset: 3px; }
 </style>

@@ -234,7 +234,7 @@ function close() { if (!busy.value) emit('update:modelValue', false) }
 .edit-profile__cancel, .edit-profile__save { flex: 1; min-height: 46px; border-radius: 9px; font-weight: 700; font-size: .88rem; cursor: pointer; border: 1px solid transparent; font-family: inherit; }
 .edit-profile__cancel { background: var(--surface); color: var(--ink); border-color: var(--line); }
 .edit-profile__cancel:hover { background: var(--soft); }
-.edit-profile__save { background: var(--accent); color: #fff; }
+.edit-profile__save { background:var(--action-bg,var(--accent)); color: #fff; }
 .edit-profile__save:hover { filter: brightness(1.08); }
 .edit-profile__cancel:disabled, .edit-profile__save:disabled { opacity: .6; cursor: not-allowed; }
 @media (max-width: 480px) { .edit-profile__card { padding: 24px 18px; } }

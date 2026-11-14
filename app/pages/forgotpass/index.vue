@@ -1,16 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { useAppTheme } from '~/composables/useAppTheme'
+import { ref } from 'vue'
 
-const isDark = ref(false)
+const isDark = useAppTheme()
 const email = ref(''); const message = ref(''); const busy = ref(false)
 async function submit() { busy.value = true; try { message.value = (await $fetch<any>('/api/auth/forgot-password', { method: 'POST', body: { email: email.value } })).message } finally { busy.value = false } }
 
-onMounted(() => {
-  const savedTheme = localStorage.getItem('dja-theme')
-  isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
-})
 
-watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'light'))
 </script>
 
 <template>

@@ -1,10 +1,15 @@
 <script setup>
+import { provideAppTheme } from '~/composables/useAppTheme'
+
+const { isDark } = provideAppTheme()
+useHead(() => ({ htmlAttrs: { 'data-theme': isDark.value ? 'dark' : 'light' } }))
 useHead({
   title: 'DJA Group of Companies — Payroll Management System',
   meta: [
     { name: 'description', content: 'Centralized payroll, attendance, and employee records management for DJA Group of Companies.' }
   ],
   link: [
+    { key: 'favicon', rel: 'icon', type: 'image/png', href: '/images/logo.png' },
     { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
     { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
     {

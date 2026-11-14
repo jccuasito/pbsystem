@@ -257,18 +257,19 @@ function printDtr() {
 
 <style>
 .compact-dtr-layer{position:fixed;z-index:90;inset:0;display:grid;place-items:center;padding:18px;background:rgba(15,27,52,.32);font-family:'Plus Jakarta Sans','Inter',system-ui,-apple-system,'Segoe UI',sans-serif}
-.compact-dtr-window{display:flex;flex-direction:column;width:min(1840px,100%);height:min(94vh,1040px);overflow:hidden;border-radius:16px;background:#eef2f7;box-shadow:0 24px 70px rgba(15,31,58,.24)}
-.compact-dtr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 20px;border-bottom:1px solid #d8e0ec;background:#fff}
-.compact-dtr-toolbar p{margin:0 0 3px;color:#2867d8;font-size:11px;font-weight:800;letter-spacing:.09em}
-.compact-dtr-toolbar h2{margin:0;color:#102d58;font-size:24px}
+.compact-dtr-window{display:flex;flex-direction:column;width:min(1840px,100%);height:min(94vh,1040px);overflow:hidden;border-radius:16px;background:var(--theme-soft,#eef2f7);box-shadow:0 24px 70px rgba(15,31,58,.24)}
+.compact-dtr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 20px;border-bottom:1px solid var(--theme-line,#d8e0ec);background:var(--theme-surface,#fff)}
+.compact-dtr-toolbar p{margin:0 0 3px;color:var(--theme-accent,#2867d8);font-size:11px;font-weight:800;letter-spacing:.09em}
+.compact-dtr-toolbar h2{margin:0;color:var(--theme-ink,#102d58);font-size:24px}
 .compact-dtr-actions{display:flex;gap:9px}
-.compact-dtr-actions button{display:inline-flex;align-items:center;gap:7px;min-height:42px;padding:9px 15px;border:1px solid #ccd8ea;border-radius:8px;background:#fff;color:#20436f;font:inherit;font-weight:750;cursor:pointer}
-.compact-dtr-actions button:hover{background:#edf4ff;border-color:#9ab8eb}
+.compact-dtr-actions button{display:inline-flex;align-items:center;gap:7px;min-height:42px;padding:9px 15px;border:1px solid var(--theme-line,#ccd8ea);border-radius:8px;background:var(--theme-surface,#fff);color:var(--theme-accent,#20436f);font:inherit;font-weight:750;cursor:pointer}
+.compact-dtr-actions button:hover{background:var(--theme-soft,#edf4ff);border-color:#9ab8eb}
 .compact-dtr-actions .print-button{border-color:#2867d8;background:#2867d8;color:#fff}
 .compact-dtr-actions .print-button:hover{background:#1e58c3}
 .compact-dtr-actions svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .compact-dtr-scroll{flex:1;min-width:0;overflow-x:hidden;overflow-y:auto;padding:18px}
-.compact-dtr-print-root{box-sizing:border-box;width:min(1800px,100%);min-width:0;margin:0 auto;padding:22px;background:#fff;color:#101820;box-shadow:0 4px 18px rgba(18,45,88,.12);print-color-adjust:exact;-webkit-print-color-adjust:exact}
+/* Keep the document palette independent from the surrounding workspace. */
+.compact-dtr-print-root{--ink:#101820;--muted:#64748b;--line:#202020;--surface:#fff;--soft:#f1f5f9;--accent:#2363d6;--theme-canvas:initial;--theme-surface:initial;--theme-soft:initial;--theme-line:initial;--theme-ink:initial;--theme-muted:initial;--theme-accent:initial;color-scheme:light;box-sizing:border-box;width:min(1800px,100%);min-width:0;margin:0 auto;padding:22px;background:#fff;color:#101820;box-shadow:0 4px 18px rgba(18,45,88,.12);print-color-adjust:exact;-webkit-print-color-adjust:exact}
 .compact-dtr-print-root .print-header{position:relative;display:flex;align-items:center;justify-content:center;min-height:72px;padding:6px 85px}
 .compact-dtr-print-root .brand-logo{display:flex;align-items:center;justify-content:center;flex:none;min-width:0;min-height:0;overflow:hidden;border:0;background:transparent;color:#52647d;font-size:14px;font-weight:850}
 .compact-dtr-print-root .brand-logo>img{display:block!important;box-sizing:border-box!important;flex:none;min-width:0!important;min-height:0!important;width:100%!important;height:100%!important;max-width:100%!important;max-height:100%!important;padding:0!important;border:0!important;background:transparent!important;object-fit:contain!important;object-position:center!important}
@@ -344,9 +345,9 @@ function printDtr() {
 @media(max-width:700px){.compact-dtr-layer{padding:0}.compact-dtr-window{height:100vh;border-radius:0}.compact-dtr-toolbar{align-items:flex-start;padding:13px}.compact-dtr-toolbar h2{font-size:20px}.compact-dtr-actions{flex-direction:column}.compact-dtr-actions button{min-height:36px;padding:7px 10px}.compact-dtr-scroll{padding:10px}}
 @media print{
   @page{size:A4 landscape;margin:6mm}
-  html,body{width:auto!important;height:auto!important;background:#fff!important}
-  body *{visibility:hidden!important}
-  .compact-dtr-print-root,.compact-dtr-print-root *{visibility:visible!important}
+  html:has(.compact-dtr-print-root),body:has(.compact-dtr-print-root){width:auto!important;height:auto!important;background:#fff!important}
+  body:has(.compact-dtr-print-root) *{visibility:hidden!important}
+  body:has(.compact-dtr-print-root) :is(.compact-dtr-print-root,.compact-dtr-print-root *){visibility:visible!important}
   .compact-dtr-layer{position:static!important;display:block!important;padding:0!important;background:#fff!important}
   .compact-dtr-window{display:block!important;width:auto!important;height:auto!important;overflow:visible!important;background:#fff!important;box-shadow:none!important}
   .no-print{display:none!important}

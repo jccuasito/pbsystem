@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { useAppTheme } from '~/composables/useAppTheme'
+import { ref, computed, onMounted } from 'vue'
 import EditProfile from '../../../components/modals/editprofile.vue'
 
-const isDark = ref(false)
+const isDark = useAppTheme()
 const currentUser = ref<any>(null)
 const loading = ref(true)
 const showEdit = ref(false)
@@ -19,12 +20,9 @@ async function load() {
 function onSaved(user: any) { currentUser.value = user }
 
 onMounted(() => {
-  const savedTheme = localStorage.getItem('dja-theme')
-  isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
   load()
 })
 
-watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'light'))
 </script>
 
 <template>
@@ -111,7 +109,7 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
 .profile-card__name-row h1 { margin: 0; font-size: 1.4rem; font-weight: 800; letter-spacing: -0.03em; color: var(--ink); }
 .profile-card__badges { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .profile-badge { display: inline-flex; align-items: center; padding: 3px 11px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; }
-.profile-badge--role { color: #1f6fd6; background: #e6f0fd; }
+.profile-badge--role { color:var(--theme-accent,#1f6fd6); background:var(--theme-soft,#e6f0fd); }
 .profile-badge--dept { color: var(--muted); background: var(--soft); }
 .profile-edit-btn {
   min-height: 42px; padding: 0 20px; border: 1px solid var(--line); border-radius: 10px;
@@ -119,7 +117,7 @@ watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'lig
   font-family: inherit;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
-.profile-edit-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.profile-edit-btn:hover { background:var(--action-bg,var(--accent)); color: #fff; border-color: var(--accent); }
 
 .profile-details { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 0; padding: 4px clamp(20px, 4vw, 36px) 28px; border-top: 1px solid var(--line); }
 .profile-details > div { padding: 16px 0; border-bottom: 1px dashed var(--line); min-width: 0; }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { useAppTheme } from '~/composables/useAppTheme'
+import { ref, onMounted } from 'vue'
 
-const isDark = ref(false)
+const isDark = useAppTheme()
 const email = ref(''); const password = ref(''); const error = ref(''); const busy = ref(false)
 const showPassword = ref(false)
 const googleReady = ref(false)
@@ -25,8 +26,6 @@ function startGoogle() {
 }
 
 onMounted(() => {
-  const savedTheme = localStorage.getItem('dja-theme')
-  isDark.value = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
   const config = useRuntimeConfig()
   if (!config.public.googleClientId) return
   const script = document.createElement('script'); script.src = 'https://accounts.google.com/gsi/client'; script.async = true
@@ -34,7 +33,6 @@ onMounted(() => {
   document.head.appendChild(script)
 })
 
-watch(isDark, (value) => localStorage.setItem('dja-theme', value ? 'dark' : 'light'))
 </script>
 
 <template>

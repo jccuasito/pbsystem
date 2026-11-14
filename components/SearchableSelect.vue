@@ -43,13 +43,13 @@ watch(() => props.options, () => { active.value = 0 })
 
 <style scoped>
 .searchable-select{position:relative;min-width:0;font:inherit}
-.searchable-select>label{display:block;margin-bottom:6px;font-size:.85rem;font-weight:700;color:#475569}
-.searchable-select>input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;border:1px solid #cfd8e6;border-radius:8px;padding:10px 12px;background:#fff;color:#172033;font:inherit}
-.searchable-select>input:disabled{background:#f4f6fa;color:#768399;cursor:not-allowed}
-.searchable-select__menu{position:absolute;z-index:10;left:0;right:0;max-height:240px;overflow-y:auto;border:1px solid #cfd8e6;border-radius:8px;background:#fff;box-shadow:0 8px 24px #17203320}
+.searchable-select>label{display:block;margin-bottom:6px;font-size:.85rem;font-weight:700;color:var(--theme-muted,#475569)}
+.searchable-select>input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;border:1px solid var(--theme-line,#cfd8e6);border-radius:8px;padding:10px 12px;background:var(--theme-surface,#fff);color:var(--theme-ink,#172033);font:inherit}
+.searchable-select>input:disabled{background:var(--theme-soft,#f4f6fa);color:var(--theme-muted,#768399);cursor:not-allowed}
+.searchable-select__menu{position:absolute;z-index:10;left:0;right:0;max-height:240px;overflow-y:auto;border:1px solid var(--theme-line,#cfd8e6);border-radius:8px;background:var(--theme-surface,#fff);box-shadow:0 8px 24px #17203320}
 .searchable-select__menu ul{list-style:none;margin:0;padding:4px}
-.searchable-select__menu li{padding:10px;border-radius:5px;cursor:pointer;line-height:1.4;overflow-wrap:anywhere;font-size:.875rem;color:#223a60}
-.searchable-select__menu li.active,.searchable-select__menu li:hover{background:#edf3ff}
+.searchable-select__menu li{padding:10px;border-radius:5px;cursor:pointer;line-height:1.4;overflow-wrap:anywhere;font-size:.875rem;color:var(--theme-ink,#223a60)}
+.searchable-select__menu li.active,.searchable-select__menu li:hover{background:var(--theme-soft,#edf3ff)}
 .searchable-select__menu li[aria-selected=true]{font-weight:700}
-.searchable-select__menu p{padding:10px;margin:0;color:#64748b;font-size:.8rem}
+.searchable-select__menu p{padding:10px;margin:0;color:var(--theme-muted,#64748b);font-size:.8rem}
 </style>

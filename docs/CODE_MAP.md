@@ -269,6 +269,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/PortalRequestsAdmin.vue`
   - `app/components/RefundableDeductionBalances.vue`
   - `app/components/RequestChatWindow.vue`
+  - `app/composables/useAppTheme.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
   - `app/pages/attendance/dtr-reliever/index.vue`
@@ -695,6 +696,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/InformationRequestThread.vue`
   - `app/components/RequestChatWindow.vue`
+  - `app/composables/useAppTheme.ts`
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/payslipImage.ts`
@@ -927,7 +929,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/forgotpass/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `app/composables/useAppTheme.ts`
 - API calls and handlers:
   - `POST /api/auth/forgot-password` → `server/api/auth/forgot-password.post.ts`
 - Related backend utilities:
@@ -947,7 +949,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/funnelpage/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `app/composables/useAppTheme.ts`
 - API calls and handlers:
   - None detected.
 - Related backend utilities:
@@ -963,7 +965,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/loginscreen/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `app/composables/useAppTheme.ts`
 - API calls and handlers:
   - `POST /api/auth/google-code` → `server/api/auth/google-code.post.ts`
   - `POST /api/auth/login` → `server/api/auth/login.post.ts`
@@ -1468,7 +1470,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/reset-password.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `app/composables/useAppTheme.ts`
 - API calls and handlers:
   - `POST /api/auth/reset-password` → `server/api/auth/reset-password.post.ts`
   - `GET /api/auth/verify-reset-token` → `server/api/auth/verify-reset-token.get.ts`
@@ -1488,6 +1490,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/settings/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
+  - `app/composables/useAppTheme.ts`
   - `components/modals/editprofile.vue`
   - `components/WorkspaceLoading.vue`
 - API calls and handlers:
@@ -1525,6 +1528,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/signupscreen/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
+  - `app/composables/useAppTheme.ts`
   - `components/modals/emailverification.vue`
 - API calls and handlers:
   - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
@@ -1550,6 +1554,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/userprofile/viewprofile.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
+  - `app/composables/useAppTheme.ts`
   - `components/modals/editprofile.vue`
 - API calls and handlers:
   - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
@@ -1574,7 +1579,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/verify-email.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
-  - None detected.
+  - `app/composables/useAppTheme.ts`
 - API calls and handlers:
   - `GET /api/auth/verify-email` → `server/api/auth/verify-email.get.ts`
 - Related backend utilities:
