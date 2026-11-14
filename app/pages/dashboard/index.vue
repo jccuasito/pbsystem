@@ -37,6 +37,7 @@ import PayrollSummaryPage from '../payroll/summary/index.vue'
 import SettingsPage from '../settings/index.vue'
 import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
 import PayrollRunProgress from '../../components/PayrollRunProgress.vue'
+import DjaAssistant from '../../components/DjaAssistant.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -271,6 +272,11 @@ function openWorkspaceView(view: WorkspaceView, updateUrl = true) {
 function returnToDashboard(updateUrl = true) {
   isMobileNavOpen.value = false
   if (updateUrl && route.query.view) router.push('/dashboard')
+}
+
+function openAssistantPage(view: string) {
+  if (view === 'dashboard' && moduleAccess.value?.dashboard?.canView) returnToDashboard()
+  else if (workspaceViews.has(view as WorkspaceView)) openWorkspaceView(view as WorkspaceView)
 }
 
 const workspaceComponents: Partial<Record<WorkspaceView, any>> = {
@@ -641,6 +647,7 @@ onBeforeUnmount(() => {
         </main>
       </div>
 
+      <DjaAssistant v-if="currentUser && moduleAccess && !isBooting" :key="currentUser.id" :view="activeWorkspaceView || 'dashboard'" :access="moduleAccess" @navigate="openAssistantPage" />
       <LogoutAlert v-model="showLogoutAlert" :busy="loggingOut" :dark="isDark" @confirm="confirmLogout" />
     </div>
   </div>

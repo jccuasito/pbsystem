@@ -259,6 +259,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
   - `app/components/ClientBillingSetupModal.vue`
+  - `app/components/DjaAssistant.vue`
+  - `app/components/DjaAssistantMark.vue`
   - `app/components/DtrAttendanceWorkspace.vue`
   - `app/components/DtrBtrModal.vue`
   - `app/components/DtrCompactPrintView.vue`
@@ -336,6 +338,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/billingInvoicePrint.ts`
   - `shared/utils/billingProfile.ts`
   - `shared/utils/deployment.ts`
+  - `shared/utils/djaAssistant.ts`
+  - `shared/utils/djaAssistantGuides.ts`
   - `shared/utils/dtrActionMenu.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
@@ -353,6 +357,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/requestError.ts`
   - `shared/utils/thirteenthMonth.ts`
 - API calls and handlers:
+  - `POST /api/assistant/query` → `server/api/assistant/query.post.ts`
   - `GET /api/attendance/dtr` → `server/api/attendance/dtr/index.get.ts`
   - `POST /api/attendance/dtr` → `server/api/attendance/dtr/index.post.ts`
   - `DELETE /api/attendance/dtr/[param]` → `server/api/attendance/dtr/[id].delete.ts`
@@ -504,6 +509,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/cashBondLedger.ts`
   - `server/utils/databaseBackup.mjs`
   - `server/utils/deductionLoanCatalogCrud.ts`
+  - `server/utils/djaAssistant.ts`
   - `server/utils/dtrBtrCrud.ts`
   - `server/utils/dtrCrud.ts`
   - `server/utils/dtrDeploymentDates.ts`
@@ -551,6 +557,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/billingDraft.ts`
   - `shared/utils/billingProfile.ts`
+  - `shared/utils/djaAssistant.ts`
+  - `shared/utils/djaAssistantGuides.ts`
   - `shared/utils/dtrAttendanceStatus.ts`
   - `shared/utils/dtrBtr.ts`
   - `shared/utils/employeeInformation.ts`
@@ -703,6 +711,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/components/ArchivedPayslipsPanel.vue`
+  - `app/components/DjaAssistant.vue`
+  - `app/components/DjaAssistantMark.vue`
   - `app/components/EmployeeInformationPanel.vue`
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/InformationRequestThread.vue`
@@ -712,12 +722,15 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/utils/employee.ts`
   - `app/utils/payslipImage.ts`
   - `components/SearchableSelect.vue`
+  - `shared/utils/djaAssistant.ts`
+  - `shared/utils/djaAssistantGuides.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
   - `shared/utils/requestError.ts`
 - API calls and handlers:
+  - `POST /api/assistant/query` → `server/api/assistant/query.post.ts`
   - `GET /api/employee-portal/archive` → `server/api/employee-portal/archive.get.ts`
   - `POST /api/employee-portal/auth/[param]` → `server/api/employee-portal/auth/[action].post.ts`
   - `POST /api/employee-portal/auth/logout` → `server/api/employee-portal/auth/[action].post.ts`
@@ -732,6 +745,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
   - `server/utils/auth.ts`
+  - `server/utils/djaAssistant.ts`
   - `server/utils/employeeInformationCrud.ts`
   - `server/utils/employeePortalAuth.ts`
   - `server/utils/employeePortalRecovery.ts`
@@ -741,6 +755,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payslipCrud.ts`
   - `server/utils/requestCapacity.ts`
   - `server/utils/requestSecurity.ts`
+  - `server/utils/settingsAccess.ts`
+  - `shared/utils/djaAssistant.ts`
+  - `shared/utils/djaAssistantGuides.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`

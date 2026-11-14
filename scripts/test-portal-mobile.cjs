@@ -16,9 +16,11 @@ async function buildFixture(){
   build.onLoad({filter:/\.vue$/},args=>{
    const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[])
    const id='data-v-'+require('node:crypto').createHash('sha1').update(path.relative(root,args.path)).digest('hex').slice(0,8)
-   const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'})
+   let contents
+   if(descriptor.script||descriptor.scriptSetup)contents=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'}).content
+   else{const template=sfc.compileTemplate({source:descriptor.template.content,filename:args.path,id});assert.deepEqual(template.errors,[]);contents=template.code.replace('export function render','function render')+';const __component={render}'}
    for(const style of descriptor.styles){const compiled=sfc.compileStyle({source:style.content,filename:args.path,id,scoped:style.scoped});assert.deepEqual(compiled.errors,[]);styles.push(compiled.code)}
-   return{contents:script.content+`;__component.__scopeId=${JSON.stringify(id)};export default __component;`,loader:'ts',resolveDir:path.dirname(args.path)}
+   return{contents:contents+`;__component.__scopeId=${JSON.stringify(id)};export default __component;`,loader:'ts',resolveDir:path.dirname(args.path)}
   })
  }}]})
  return{script:result.outputFiles[0].text,css:styles.join('\n')}
@@ -97,6 +99,24 @@ test('mobile portal cards, historical sites and full PNG download work in Chromi
    await page.getByRole('button',{name:'Hide password',exact:true}).click();assert.equal(await page.locator('#portal-password').getAttribute('type'),'password')
    assert.equal(await page.getByRole('button',{name:/Google|OTP/}).count(),0)
    await page.screenshot({path:path.join(output,'login-'+width+'.png'),fullPage:true})
+  }
+  for(const signedIn of [false,true])for(const width of [375,1280]){
+   await page.setViewportSize({width,height:850});await load(snapshot,signedIn)
+   if(!signedIn){assert.equal(await page.locator('.dja-assistant').count(),0,'No assistant is mounted before portal login');assert.equal(await page.getByRole('button',{name:'Open DJA Assistant'}).count(),0);continue}
+   await page.evaluate(()=>{const original=window.$fetch;window.assistantRequests=[];window.$fetch=async(...args)=>{window.assistantRequests.push(args[0]);return original(...args)}})
+   await page.getByRole('button',{name:'Open DJA Assistant'}).click()
+   const launcher=await page.locator('.dja-assistant__launcher').boundingBox(),mark=await page.locator('.dja-assistant__launcher-mark').boundingBox()
+   assert.ok(Math.abs(launcher.x+launcher.width/2-mark.x-mark.width/2)<1,'Portal launcher icon is centered horizontally')
+   assert.ok(Math.abs(launcher.y+launcher.height/2-mark.y-mark.height/2)<1,'Portal launcher icon is centered vertically')
+   assert.equal(await page.locator('.dja-assistant__tooltip').count(),0,'No close tooltip can overflow below the open launcher')
+   for(const question of ['paano mag create ng employee record?','Magkano ang sahod ni Juan?','How to view another employee payslip?','How do I prepare payroll?']){
+    await page.getByRole('textbox',{name:'Ask DJA Assistant'}).fill(question);await page.getByRole('button',{name:'Send',exact:true}).click()
+    assert.equal(await page.locator('.dja-assistant__steps,.dja-assistant__metric,.dja-assistant__link').count(),0)
+    assert.match(await page.locator('.dja-assistant__answer').last().innerText(),/Portal account at sariling payslip|portal guides only/)
+   }
+   assert.deepEqual(await page.evaluate(()=>window.assistantRequests),[],'Portal assistant makes no API calls, signed in or out')
+   await assertFits(`Assistant ${signedIn?'signed-in':'signed-out'} ${width}`)
+   await page.screenshot({path:path.join(output,`assistant-${signedIn?'signed-in':'signed-out'}-${width}.png`),fullPage:true})
   }
   await page.setViewportSize({width:375,height:850});await load()
   await page.getByRole('button',{name:'My account',exact:true}).click();await assertFits('My account')
