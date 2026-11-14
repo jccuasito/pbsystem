@@ -1,3 +1,4 @@
+import { coalesceRead } from '../../utils/requestCapacity'
 import pool from '../../connection/dbconnect'
 import { requireSession } from '../../utils/auth'
 
@@ -12,14 +13,17 @@ function relativeTime(value: Date | string) {
 
 export default defineEventHandler(async (event) => {
   const session = requireSession(event)
-  const [rows] = await pool.execute<any[]>(`
-    SELECT text, activityAt FROM (
-      SELECT CONCAT('Payroll for ', DATE_FORMAT(StartDate, '%b %e'), '-', DATE_FORMAT(EndDate, '%e'), ' cutoff is ', LOWER(Status)) AS text, PayrollDate AS activityAt FROM payroll
-      UNION ALL
-      SELECT CONCAT('Attendance for ', DATE_FORMAT(AttendanceDate, '%b %e'), ' was marked ', AttendanceStatus) AS text, COALESCE(UpdatedAt, CreatedAt) AS activityAt FROM attendance
-      UNION ALL
-      SELECT CONCAT('Billing for ', BillingPeriod, ' is ', LOWER(Status)) AS text, BillingDate AS activityAt FROM billing
-    ) AS activities WHERE activityAt IS NOT NULL ORDER BY activityAt DESC LIMIT 5
-  `)
-  return { activities: rows.map((row) => ({ text: row.text, time: relativeTime(row.activityAt) })) }
+  void session.sub
+  return coalesceRead('dashboard:recent-activity', async () => {
+    const [rows] = await pool.execute<any[]>(`
+      SELECT text, activityAt FROM (
+        SELECT CONCAT('Payroll for ', DATE_FORMAT(StartDate, '%b %e'), '-', DATE_FORMAT(EndDate, '%e'), ' cutoff is ', LOWER(Status)) AS text, PayrollDate AS activityAt FROM payroll
+        UNION ALL
+        SELECT CONCAT('Attendance for ', DATE_FORMAT(AttendanceDate, '%b %e'), ' was marked ', AttendanceStatus) AS text, COALESCE(UpdatedAt, CreatedAt) AS activityAt FROM attendance
+        UNION ALL
+        SELECT CONCAT('Billing for ', BillingPeriod, ' is ', LOWER(Status)) AS text, BillingDate AS activityAt FROM billing
+      ) AS activities WHERE activityAt IS NOT NULL ORDER BY activityAt DESC LIMIT 5
+    `)
+    return { activities: rows.map((row) => ({ text: row.text, time: relativeTime(row.activityAt) })) }
+  })
 })

@@ -3,11 +3,13 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "nuxt build",
+    "build": "nuxt build && node scripts/write-build-info.mjs",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "start": "node --env-file=.env deployment/namecheap/app.js",
+    "preflight": "node --env-file=.env scripts/deployment-preflight.mjs"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
