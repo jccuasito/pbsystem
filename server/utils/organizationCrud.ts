@@ -1,6 +1,7 @@
 import { createError, getQuery, getRouterParam, readBody, setHeader } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { imageData } from './inputValidation'
 
 type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-policy' | 'site' | 'site-account' | 'site-policy' | 'site-shift' | 'shift-code' | 'region'
 
@@ -147,14 +148,8 @@ function logoValue(body: Record<string, unknown>) : LogoValue {
   if (body.LogoData === null) return null
   if (typeof body.LogoData !== 'string') throw createError({ statusCode: 400, statusMessage: 'Logo must be an image file.' })
 
-  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$/i.exec(body.LogoData)
-  if (!match) throw createError({ statusCode: 400, statusMessage: 'Use a PNG, JPG, or WEBP image for the logo.' })
-
-  const data = Buffer.from(match[2].replace(/\s/g, ''), 'base64')
-  if (!data.length || data.length > 2 * 1024 * 1024) {
-    throw createError({ statusCode: 400, statusMessage: 'Logo image must be no larger than 2 MB.' })
-  }
-  return { data, mimeType: match[1].toLowerCase() }
+  const { buffer: data, mime: mimeType } = imageData(body.LogoData)
+  return { data, mimeType }
 }
 
 function supportsLogo(resourceName: Resource) {

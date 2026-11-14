@@ -14,14 +14,18 @@
     "google-auth-library": "^10.9.1",
     "jsonwebtoken": "^9.0.3",
     "mysql2": "^3.23.2",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.5.0",
     "nuxt": "^4.5.0",
     "pdf-lib": "^1.17.1",
     "vue": "^3.5.40",
     "vue-router": "^5.2.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/node": "^26.1.2"
+  },
+  "overrides": {
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.1"
   }
 }

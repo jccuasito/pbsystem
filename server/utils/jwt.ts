@@ -11,5 +11,5 @@ export function signToken(payload: object) {
 }
 
 export function verifyToken(token: string) {
-  return jwt.verify(token, jwtSecret(), { issuer: 'pbsystem', audience: 'pbsystem-web' })
+  return jwt.verify(token, jwtSecret(), { algorithms: ['HS256'], issuer: 'pbsystem', audience: 'pbsystem-web' })
 }

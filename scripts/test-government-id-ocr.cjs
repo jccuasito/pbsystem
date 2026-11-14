@@ -14,6 +14,7 @@ function evaluate(file, globals = {}) {
   vm.runInNewContext(transformSync(source, { loader: 'ts', format: 'cjs' }).code, { module, Buffer, process, ...globals })
   return module.exports
 }
+const employeeHelpers = evaluate('app/utils/employee.ts')
 const rules = evaluate('shared/utils/governmentIds.ts')
 const parser = evaluate('shared/utils/governmentIdOcr.ts', { require: () => rules })
 const h3 = { readBody: async e => e.body, createError: details => Object.assign(new Error(details.statusMessage), details) }
@@ -73,7 +74,7 @@ test('auto-fill populates blank fields but keeps manual entries and ignores a cl
   const module = { exports: {} }
   scope.run(() => vm.runInNewContext(transformSync(source + '\nmodule.exports={governmentKind,form,scanDataUrl,scanName,scanResult,recognizeScan,useDetectedDetails,clearNewScan,changeDocumentSection,activeSection};', { loader: 'ts', format: 'cjs' }).code, {
     module, AbortController, defineEmits: () => () => {},
-    require: name => name === 'vue' ? { ...vue, onMounted() {} } : name.includes('governmentIds') ? rules : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : {},
+    require: name => name === 'vue' ? { ...vue, onMounted() {} } : name.includes('governmentIds') ? rules : name.endsWith('/utils/employee') ? employeeHelpers : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : {},
     $fetch: () => new Promise(resolve => pending.push(resolve)),
   }))
   try {
@@ -122,7 +123,7 @@ test('a duplicate scan warning blocks form saving until that scan is removed', a
   const module={exports:{}}
   scope.run(()=>vm.runInNewContext(transformSync(source+'\nmodule.exports={form,governmentKind,activeEmployeeId,scanDataUrl,scanError,recognizeScan,clearNewScan,save};',{loader:'ts',format:'cjs'}).code,{
     module,AbortController,defineEmits:()=>()=>{},
-    require:name=>name==='vue'?{...vue,onMounted(){}}:name.includes('governmentIds')?rules:name.includes('useRealtimeRefresh')?{useRealtimeRefresh(){}}:{},
+    require:name=>name==='vue'?{...vue,onMounted(){}}:name.includes('governmentIds')?rules:name.endsWith('/utils/employee')?employeeHelpers:name.includes('useRealtimeRefresh')?{useRealtimeRefresh(){}}:{},
     $fetch:async(url,options)=>{if(url.endsWith('/recognize'))throw {status:409,data:{statusMessage:'This ID is already saved for EMP-0001.'}};writes.push(options);return {}},
   }))
   try {

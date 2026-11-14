@@ -1,12 +1,13 @@
 import { createError, readBody } from 'h3'
 import pool from '../../connection/dbconnect'
 import { requireSession } from '../../utils/auth'
+import { textInput } from '../../utils/inputValidation'
 
 export default defineEventHandler(async (event) => {
   const session = requireSession(event)
   const body = await readBody<{ firstName?: string; lastName?: string; gender?: string; departmentId?: number | string | null }>(event)
-  const firstName = body.firstName?.trim()
-  const lastName = body.lastName?.trim()
+  const firstName = textInput(body?.firstName, 'first name', 100)
+  const lastName = textInput(body?.lastName, 'last name', 100)
   const gender = body.gender
 
   if (!firstName || !lastName || !['Male', 'Female', 'Prefer not to say'].includes(gender || '')) {

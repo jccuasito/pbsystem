@@ -41,6 +41,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrBtrModal.vue`
   - `app/components/DtrCompactPrintView.vue`
   - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
+  - `app/components/DtrImportResultModal.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
@@ -83,6 +84,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/dtrDeploymentDates.ts`
   - `server/utils/dtrWorkflowAudit.ts`
   - `server/utils/employeeStatusCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
@@ -109,6 +111,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/dtrRelieverCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - None detected.
@@ -131,6 +134,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/holidayCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - None detected.
@@ -151,6 +155,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
 - Static assets:
@@ -181,6 +186,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/billingDraftCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateVersions.ts`
   - `shared/utils/billingDraft.ts`
@@ -215,6 +221,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/billingDraftCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateVersions.ts`
   - `shared/utils/billingDraft.ts`
@@ -238,6 +245,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrBtrModal.vue`
   - `app/components/DtrCompactPrintView.vue`
   - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
+  - `app/components/DtrImportResultModal.vue`
   - `app/components/EmployeeAddressFields.vue`
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/EmployeePayslipWorkspace.vue`
@@ -492,6 +500,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/governmentIdOcr.ts`
   - `server/utils/holidayCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
@@ -506,11 +515,13 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/philippineAddress.ts`
   - `server/utils/portalAccountsCrud.ts`
   - `server/utils/positionAssignmentCrud.ts`
+  - `server/utils/privateProfileImages.mjs`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersionCrud.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`
   - `server/utils/regionalRateCrud.ts`
+  - `server/utils/requestSecurity.ts`
   - `server/utils/settingsAccess.ts`
   - `server/utils/siteAccountSummary.ts`
   - `server/utils/thirteenthMonthCrud.ts`
@@ -567,6 +578,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/deductionLoanCatalogCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - None detected.
@@ -589,6 +601,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateVersions.ts`
   - `shared/utils/rateFields.ts`
@@ -620,6 +633,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/dtrWorkflowAudit.ts`
   - `server/utils/employeeAccountTransactionCrud.ts`
   - `server/utils/employeeLoanDeductionCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/rateVersions.ts`
@@ -643,6 +657,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeAccountTransactionCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - None detected.
@@ -683,9 +698,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeInformationCrud.ts`
   - `server/utils/employeePortalAuth.ts`
   - `server/utils/employeePortalRecovery.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payslipArchiveCrud.ts`
   - `server/utils/payslipCrud.ts`
+  - `server/utils/requestSecurity.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
@@ -728,9 +745,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeCrud.ts`
   - `server/utils/employeePositionCrud.ts`
   - `server/utils/governmentIdCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/philippineAddress.ts`
+  - `server/utils/privateProfileImages.mjs`
   - `server/utils/rateVersions.ts`
   - `shared/utils/governmentIds.ts`
   - `shared/utils/rateFields.ts`
@@ -759,7 +778,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
   - `server/utils/governmentIdCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/privateProfileImages.mjs`
   - `shared/utils/governmentIds.ts`
 - Static assets:
   - None detected.
@@ -787,7 +808,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeCrud.ts`
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/governmentIdOcr.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/privateProfileImages.mjs`
   - `shared/utils/governmentIdOcr.ts`
   - `shared/utils/governmentIds.ts`
 - Static assets:
@@ -825,10 +848,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeePortalAdmin.ts`
   - `server/utils/employeePortalAuth.ts`
   - `server/utils/employeePortalRecovery.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payslipArchiveCrud.ts`
   - `server/utils/payslipCrud.ts`
   - `server/utils/portalAccountsCrud.ts`
+  - `server/utils/requestSecurity.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
@@ -856,6 +881,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeStatusCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `shared/utils/attendanceStatuses.ts`
 - Static assets:
@@ -873,6 +899,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/mailer.ts`
 - Static assets:
@@ -908,6 +935,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/googleAuth.ts`
+  - `server/utils/googleSignIn.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - `public/images/logo.png`
@@ -930,6 +959,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
 - Static assets:
@@ -953,6 +983,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
 - Static assets:
@@ -973,6 +1004,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/positionAssignmentCrud.ts`
 - Static assets:
@@ -996,6 +1028,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
 - Static assets:
@@ -1019,6 +1052,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
 - Static assets:
@@ -1042,6 +1076,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/organizationCrud.ts`
 - Static assets:
@@ -1074,6 +1109,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payrollHistoryCrud.ts`
 - Static assets:
@@ -1111,10 +1147,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeePortalAdmin.ts`
   - `server/utils/employeePortalAuth.ts`
   - `server/utils/employeePortalRecovery.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payslipArchiveCrud.ts`
   - `server/utils/payslipCrud.ts`
   - `server/utils/portalAccountsCrud.ts`
+  - `server/utils/requestSecurity.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
@@ -1156,12 +1194,14 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeePortalAdmin.ts`
   - `server/utils/employeePortalAuth.ts`
   - `server/utils/employeePortalRecovery.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payslipArchiveCrud.ts`
   - `server/utils/payslipCrud.ts`
   - `server/utils/payslipPublication.ts`
   - `server/utils/payslipSiteCrud.ts`
   - `server/utils/portalAccountsCrud.ts`
+  - `server/utils/requestSecurity.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
@@ -1193,6 +1233,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/dtrWorkflowAudit.ts`
   - `server/utils/employeeAccountTransactionCrud.ts`
   - `server/utils/employeeLoanDeductionCrud.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/payrollDeductionOverrideCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
@@ -1216,6 +1257,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/siteAccountSummary.ts`
 - Static assets:
@@ -1238,6 +1280,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/thirteenthMonthCrud.ts`
   - `shared/utils/thirteenthMonth.ts`
@@ -1272,6 +1315,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersionCrud.ts`
@@ -1310,6 +1354,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersionCrud.ts`
@@ -1339,6 +1384,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/rateCrud.ts`
   - `server/utils/rateVersions.ts`
@@ -1361,6 +1407,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - `public/images/logo.png`
@@ -1393,7 +1440,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/databaseBackup.mjs`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/privateProfileImages.mjs`
   - `server/utils/settingsAccess.ts`
 - Static assets:
   - None detected.
@@ -1414,6 +1463,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
   - `server/utils/googleAuth.ts`
+  - `server/utils/googleSignIn.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/mailer.ts`
 - Static assets:
@@ -1434,7 +1485,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/privateProfileImages.mjs`
   - `server/utils/settingsAccess.ts`
 - Static assets:
   - None detected.
@@ -1451,6 +1504,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/utils/auth.ts`
+  - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
 - Static assets:
   - None detected.

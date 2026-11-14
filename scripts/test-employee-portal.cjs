@@ -4,6 +4,7 @@ const h3={createError:d=>Object.assign(new Error(d.statusMessage),d),getQuery:e=
 const staffAuth={requireSession:e=>{if(!e.actor)throw h3.createError({statusCode:401});return e.actor},hashPassword:value=>bcrypt.hash(value,12),passwordMatches:(value,hash)=>bcrypt.compare(value,hash),normalizeEmail:value=>value.trim().toLowerCase(),assertPassword:value=>{if(value.length<12||!/[a-z]/i.test(value)||!/[0-9]/.test(value))throw h3.createError({statusCode:400})}}
 const government=evaluate('shared/utils/governmentIds.ts'),privacy=evaluate('shared/utils/employeePortal.ts'),presentation=evaluate('shared/utils/payslipPresentation.ts')
 const recoveryHelpers=evaluate('server/utils/employeePortalRecovery.ts',{'node:crypto':crypto})
+const requestSecurity=evaluate('server/utils/requestSecurity.ts',{'node:crypto':crypto,'h3':h3,'./inputValidation':{}},{URL,process:{env:{NODE_ENV:'test'}}})
 const publicEvent=(ip='127.0.0.5')=>({cookies:{},headers:{'content-type':'application/json',origin:'http://localhost:3000'},url:'http://localhost:3000',node:{req:{socket:{remoteAddress:ip}}}})
 test('portal pages compile and privacy terms do not waive employee rights',()=>{
  for(const file of ['app/pages/employee-portal/index.vue','app/pages/payroll/payslip/index.vue','app/pages/employees/portal-accounts/index.vue','app/components/EmployeePayslipWorkspace.vue','app/pages/payroll/payslip-sites/index.vue','app/pages/dashboard/index.vue','app/components/EmployeePayslipSheet.vue']){
@@ -84,7 +85,7 @@ test('portal signup/session/publication isolation and recovery use synthetic tem
   await db.query("INSERT INTO payroll_processing_posting VALUES(1,1,'Active'),(2,2,'Active'),(3,1,'Active')")
   const connection={execute:(...args)=>db.execute(...args),beginTransaction:()=>db.beginTransaction(),commit:()=>db.commit(),rollback:()=>db.rollback(),release(){}}
   const database={...connection,getConnection:async()=>connection}
-  const auth=evaluate('server/utils/employeePortalAuth.ts',{'node:crypto':crypto,'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'../../shared/utils/governmentIds':government,'../../shared/utils/employeePortal':privacy,'./employeePortalRecovery':recoveryHelpers})
+  const auth=evaluate('server/utils/employeePortalAuth.ts',{'node:crypto':crypto,'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'../../shared/utils/governmentIds':government,'../../shared/utils/employeePortal':privacy,'./employeePortalRecovery':recoveryHelpers,'./requestSecurity':requestSecurity})
   const slips=evaluate('server/utils/payslipCrud.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth})
   const publication=evaluate('server/utils/payslipPublication.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'./payslipCrud':slips})
   const admin=evaluate('server/utils/employeePortalAdmin.ts',{'h3':h3,'../connection/dbconnect':database,'./auth':staffAuth,'./employeePortalRecovery':recoveryHelpers})

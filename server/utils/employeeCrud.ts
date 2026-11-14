@@ -5,6 +5,8 @@ import path from 'node:path'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { listGovernmentIds, saveGovernmentId } from './governmentIdCrud'
+import { imageData } from './inputValidation'
+import { privateProfileDirectory, privateProfilePath } from './privateProfileImages.mjs'
 import { alertMessages, DEPLOYMENT_ALREADY_EXISTS, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../components/alertmessage/messages'
 
 type EmployeeSection = 'profile' | 'government' | 'education' | 'license' | 'training' | 'clearance' | 'bank' | 'insurance'
@@ -274,20 +276,14 @@ function structuredAddress(body: Record<string, unknown>, prefix: 'Permanent' | 
 
 function parseEmployeePhoto(value: unknown) {
   if (value === null || value === undefined || value === '') return null
-  if (typeof value !== 'string') throw createError({ statusCode: 400, statusMessage: 'Employee photo is invalid.' })
-  const match = value.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/)
-  if (!match) throw createError({ statusCode: 400, statusMessage: 'Employee photo must be a PNG, JPG, or WEBP image.' })
-  const buffer = Buffer.from(match[2], 'base64')
-  if (!buffer.length || buffer.length > employeePhotoMaxBytes) {
-    throw createError({ statusCode: 400, statusMessage: 'Employee photo must be 2MB or smaller.' })
-  }
-  return { buffer, extension: employeePhotoTypes[match[1]] }
+  const { buffer, extension } = imageData(value, employeePhotoMaxBytes)
+  return { buffer, extension }
 }
 
 function employeePhotoFile(photoPath: unknown) {
   const value = String(photoPath || '')
   if (!/^\/uploads\/employees\/[a-zA-Z0-9._-]+$/.test(value)) return null
-  return path.join(process.cwd(), 'public', ...value.split('/').filter(Boolean))
+  try { return privateProfilePath('employees', value.split('/').pop()) } catch { return null }
 }
 
 async function removeEmployeePhoto(photoPath: unknown) {
@@ -299,7 +295,7 @@ async function removeEmployeePhoto(photoPath: unknown) {
 }
 
 async function saveEmployeePhoto(employeeId: number, photo: NonNullable<ReturnType<typeof parseEmployeePhoto>>) {
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'employees')
+  const uploadDir = privateProfileDirectory('employees')
   await fs.mkdir(uploadDir, { recursive: true })
   const filename = `employee-${employeeId}-${crypto.randomBytes(6).toString('hex')}.${photo.extension}`
   const absolutePath = path.join(uploadDir, filename)
@@ -615,6 +611,7 @@ function assertEmployeeIsNotDuplicate(review: Awaited<ReturnType<typeof employee
 }
 
 function sectionConfig(section: string) {
+  if (!Object.hasOwn(sectionConfigs, section)) throw createError({ statusCode: 404, statusMessage: 'Employee section not found.' })
   const config = sectionConfigs[section as EmployeeSection]
   if (!config) throw createError({ statusCode: 404, statusMessage: 'Employee section not found.' })
   return config

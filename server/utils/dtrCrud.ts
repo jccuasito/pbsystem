@@ -2,6 +2,7 @@ import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import type { PoolConnection } from 'mysql2/promise'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { calendarDate } from './inputValidation'
 import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceStatus'
 import { assertDtrBtrReady } from './dtrBtrCrud'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/alertmessage/messages'
@@ -22,8 +23,7 @@ function positiveId(value: unknown, label: string) {
 }
 
 function date(value: unknown, label: string) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw createError({ statusCode: 400, statusMessage: `${label} is required.` })
-  return value
+  return calendarDate(value, label)
 }
 
 // MySQL may return DATE/DATETIME values either as a Date instance or an ISO

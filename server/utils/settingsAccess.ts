@@ -22,9 +22,12 @@ export function defaultAccess(role: string) {
 
 export async function currentActor(event: any) {
   const session = requireSession(event)
+  if (event.context?.securityActor?.UserID === session.sub) return event.context.securityActor as { UserID: number; UserType: string; Status: string }
   const [rows] = await pool.execute<any[]>('SELECT UserID, UserType, Status FROM `user` WHERE UserID = ? LIMIT 1', [session.sub])
   const actor = rows[0]
   if (!actor || actor.Status !== 'Active') throw createError({ statusCode: 401, statusMessage: 'Please sign in again.' })
+  event.context ||= {}
+  event.context.securityActor = actor
   return actor as { UserID: number; UserType: string; Status: string }
 }
 

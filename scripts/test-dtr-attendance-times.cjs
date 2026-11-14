@@ -38,7 +38,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
     },
   }
   vm.createContext(context)
-  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, dayTimeConflict, canEditAttendanceField, resetControlledField, editControlledField, shifts, sitePolicy, attendanceRows, relieverElsewhereRows, displayedEntry, elsewhereLabel, totalDays, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr };', { loader: 'ts', format: 'cjs' }).code, context))
+  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, dayTimeConflict, canEditAttendanceField, resetControlledField, editControlledField, shifts, sitePolicy, attendanceRows, relieverElsewhereRows, displayedEntry, elsewhereLabel, totalDays, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr, readDtrImportFile, importRows, submitDtrImport, error };', { loader: 'ts', format: 'cjs' }).code, context))
   const state = context.module.exports
   state.shifts.value = [shift]
   state.sitePolicy.value = { ...sitePolicy }
@@ -54,6 +54,43 @@ function backend() {
   return context.module.exports.calculate
 }
 const calculate = backend()
+
+test('Excel import keeps employee codes and incomplete biometric rows available for DTR review', async () => {
+  const XLSX = require('xlsx'), harness = workspace()
+  try {
+    const rows = [
+      ['Employee ID', 'Date', 'Shift Code', 'Date In', 'Time In', 'Date Out', 'Time Out'],
+      ['DJA-0001', new Date(2026, 8, 16), 'DS0700-1900', new Date(2026, 8, 16), 7 / 24, new Date(2026, 8, 16), 19 / 24],
+      ['EMP-0011', new Date(2026, 8, 17), 'NS2200-1000', new Date(2026, 8, 17), 22 / 24, '', ''],
+      ['DJA-0001', new Date(2026, 8, 18), 'DS0700-1900', '', '', new Date(2026, 8, 18), 19 / 24],
+      ['DJA-0001', new Date(2026, 8, 19), 'NS1900-0700', '', '', '', ''],
+      ['EMP-0011', new Date(2026, 8, 20), 'NS2200-1000', new Date(2026, 8, 20), 22 / 24, new Date(2026, 8, 21), 10 / 24],
+    ]
+    const sheet = XLSX.utils.aoa_to_sheet(rows)
+    for (let row = 1; row < rows.length; row++) {
+      for (const column of [1, 3, 5]) { const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })]; if (cell?.t === 'n') cell.z = 'd-mmm-yy' }
+      for (const column of [4, 6]) { const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })]; if (cell?.t === 'n') cell.z = 'h:mm' }
+    }
+    const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, sheet, 'DTR')
+    const bytes = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+    await harness.state.readDtrImportFile({ name: 'biometric.xlsx', arrayBuffer: async () => bytes })
+    assert.equal(harness.state.error.value, '')
+    const parsed = harness.state.importRows.value
+    assert.equal(parsed.length, 5)
+    assert.equal(parsed[0].EmployeeID, 'DJA-0001')
+    assert.equal(parsed[0].AttendanceDate, '2026-09-16')
+    assert.equal(parsed[0].TimeIn, '07:00'); assert.equal(parsed[0].TimeOut, '19:00')
+    assert.equal(parsed[1].EmployeeID, 'EMP-0011'); assert.equal(parsed[1].TimeIn, '22:00'); assert.equal(parsed[1].TimeOut, '')
+    assert.equal(parsed[2].TimeIn, ''); assert.equal(parsed[2].TimeOut, '19:00')
+    assert.equal(parsed[3].TimeIn, ''); assert.equal(parsed[3].TimeOut, '')
+    assert.equal(parsed[4].DateIn, '2026-09-20'); assert.equal(parsed[4].DateOut, '2026-09-21')
+    await harness.state.submitDtrImport()
+    assert.equal(harness.requests.length, 1)
+    assert.equal(harness.requests[0].url, '/api/attendance/dtr/11/records')
+    assert.equal(harness.requests[0].body.ImportRows, true)
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.requests[0].body.Rows)), JSON.parse(JSON.stringify(parsed)))
+  } finally { harness.close() }
+})
 
 test('position changes keep both dated assignment windows open without enabling assignment gaps', () => {
   const harness = workspace()

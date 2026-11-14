@@ -1,6 +1,7 @@
 import { createError, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { calendarDate, textInput } from './inputValidation'
 
 type HolidayBody = Record<string, unknown>
 
@@ -11,13 +12,11 @@ function holidayId(value: unknown) {
 }
 
 function holidayDate(value: unknown) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw createError({ statusCode: 400, statusMessage: 'Holiday date is required.' })
-  return value
+  return calendarDate(value, 'holiday date')
 }
 
 function holidayName(value: unknown) {
-  if (typeof value !== 'string' || !value.trim()) throw createError({ statusCode: 400, statusMessage: 'Holiday name is required.' })
-  return value.trim()
+  return textInput(value, 'holiday name', 150)
 }
 
 function holidayType(value: unknown) {

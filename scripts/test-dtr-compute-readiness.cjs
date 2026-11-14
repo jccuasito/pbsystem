@@ -26,7 +26,7 @@ function backend(roster, failStaging = false) {
   const moduleState = { exports: {} }
   vm.runInNewContext(transformSync(source, { loader: 'ts', format: 'cjs' }).code, {
     module: moduleState,
-    require: name => name === 'h3'
+    require: name => name === './inputValidation' ? require('../server/utils/inputValidation.ts') : name === 'h3'
       ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: () => '79', readBody: async () => ({ target: 'billing' }) }
       : name.includes('dbconnect') ? { getConnection: async () => connection }
         : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts')
@@ -93,7 +93,7 @@ function saveBackend({ status = 'Present', shiftCodeId = null, importedDuties = 
   const moduleState = { exports: {} }
   vm.runInNewContext(transformSync(source, { loader: 'ts', format: 'cjs' }).code, {
     module: moduleState,
-    require: name => name === 'h3'
+    require: name => name === './inputValidation' ? require('../server/utils/inputValidation.ts') : name === 'h3'
       ? { createError: details => Object.assign(new Error(details.statusMessage), details), getRouterParam: () => '79', readBody: async () => ({ EmployeeID: 13, AttendanceDate: '2026-09-30', AttendanceStatus: status, ShiftCodeID: shiftCodeId, TimeIn: '2026-09-30 07:00', TimeOut: '2026-09-30 19:00', RegularHours: 8, OTHours: 4 }) }
       : name.includes('dbconnect') ? { getConnection: async () => connection }
         : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts')

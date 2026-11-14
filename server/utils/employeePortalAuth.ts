@@ -5,14 +5,14 @@ import { hashPassword, passwordMatches, assertPassword, normalizeEmail } from '.
 import { governmentIdIdentity, validateGovernmentId } from '../../shared/utils/governmentIds'
 import { normalizePortalName, portalAgreementVersion, portalPrivacySections } from '../../shared/utils/employeePortal'
 import { portalRecoveryHash, recoveryAttemptKey } from './employeePortalRecovery'
+import { assertSameOrigin } from './requestSecurity'
 
 const cookie='pbs_employee_session'
 const digest=(value:string)=>crypto.createHash('sha256').update(value).digest('hex')
 const dummyHash=hashPassword('portal-invalid-login-placeholder-2048')
 export function portalNoStore(event:any){setHeader(event,'Cache-Control','private, no-store');setHeader(event,'Pragma','no-cache')}
 export function portalMutation(event:any){
-  const origin=getRequestHeader(event,'origin')
-  if(origin&&origin!==getRequestURL(event).origin)throw createError({statusCode:403,statusMessage:'Open this portal directly to continue.'})
+  assertSameOrigin(event)
   if(!getRequestHeader(event,'content-type')?.toLowerCase().startsWith('application/json'))throw createError({statusCode:415,statusMessage:'Send a JSON request.'})
   if(Number(getRequestHeader(event,'content-length')||0)>16384)throw createError({statusCode:413,statusMessage:'This request is too large.'})
   portalNoStore(event)

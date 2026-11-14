@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import bcrypt from 'bcrypt'
 import { createError, getCookie, setCookie } from 'h3'
 import { signToken, verifyToken } from './jwt'
+import { emailInput } from './inputValidation'
 
 export type AuthUser = { UserID: number; FirstName: string; LastName: string; Email: string; DepartmentID: number | null; UserType: string; Status: string }
 
@@ -10,13 +11,13 @@ const SESSION_COOKIE = 'pbs_session'
 export const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex')
 export const randomToken = () => crypto.randomBytes(32).toString('hex')
 export const randomVerificationCode = () => crypto.randomInt(100000, 1000000).toString()
-export const normalizeEmail = (email: string) => email.trim().toLowerCase()
+export const normalizeEmail = (email: unknown) => emailInput(email)
 export const hashPassword = (password: string) => bcrypt.hash(password, 12)
 export const passwordMatches = (password: string, hash: string) => bcrypt.compare(password, hash)
 
-export function assertPassword(password: string) {
-  if (password.length < 12 || !/[a-z]/i.test(password) || !/\d/.test(password)) {
-    throw createError({ statusCode: 400, statusMessage: 'Password must be at least 12 characters and include letters and numbers.' })
+export function assertPassword(password: unknown): asserts password is string {
+  if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password, 'utf8') > 72 || !/[a-z]/i.test(password) || !/\d/.test(password)) {
+    throw createError({ statusCode: 400, statusMessage: 'Password must be at least 12 characters, no more than 72 bytes, and include letters and numbers.' })
   }
 }
 
@@ -39,6 +40,7 @@ export function requireSession(event: any) {
   if (!token) throw createError({ statusCode: 401, statusMessage: 'Please sign in.' })
   try {
     const claims = verifyToken(token) as { sub: number; email: string; userType: string; historyId?: number }
+    if (!claims || !Number.isSafeInteger(claims.sub) || claims.sub < 1 || typeof claims.email !== 'string' || !['Admin', 'Supervisor', 'Encoder', 'Viewer'].includes(claims.userType) || (claims as any).signup) throw new Error('Invalid session claims')
     return event.context?.activeUserType ? { ...claims, userType: event.context.activeUserType as string } : claims
   }
   catch { throw createError({ statusCode: 401, statusMessage: 'Your session has expired. Please sign in again.' }) }

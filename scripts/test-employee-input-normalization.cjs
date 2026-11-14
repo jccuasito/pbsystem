@@ -42,6 +42,8 @@ function harness(body, duplicateRows = []) {
           }
         : name === './auth'
           ? { requireSession: () => ({ sub: 99 }) }
+          : name === './inputValidation'
+            ? evaluate(fs.readFileSync('server/utils/inputValidation.ts', 'utf8'), { Buffer, require: module => module === 'h3' ? { createError: details => Object.assign(new Error(details.statusMessage), details) } : {} })
           : name.includes('alertmessage/messages')
             ? alertMessages
             : {},
@@ -196,7 +198,7 @@ test('employee create rejects missing Basic Information before duplicate checkin
 
 test('employee create rejects unsupported employee photos before writing to the database', async () => {
   const { api, calls } = harness({ ...validEmployee, PhotoDataUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBA==' })
-  await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /PNG, JPG, or WEBP/.test(error.message))
+  await assert.rejects(api.createEmployee({}), error => error.statusCode === 400 && /PNG, JPG, or WEBP/i.test(error.message))
   assert.equal(calls.length, 0)
 })
 
