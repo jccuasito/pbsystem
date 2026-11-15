@@ -14,6 +14,8 @@ Settings are documented in `.env.example`. Increasing the pool blindly can exhau
 
 ## Database indexes and backups
 
+Before enabling notification bells on a new/restored deployment database, run `node --env-file=.env scripts/apply-notifications.mjs` from the app root. It makes a verified SQL backup before adding missing per-user notification receipt tables and does not change payroll/attendance records. The API does not create tables automatically. See [NOTIFICATIONS.md](NOTIFICATIONS.md) for alert eligibility, read-state behavior and scheduled-backup monitoring limits.
+
 Preview missing indexes with:
 
 ```powershell

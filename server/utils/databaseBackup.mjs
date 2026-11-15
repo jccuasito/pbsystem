@@ -156,8 +156,33 @@ export async function restoreDatabaseBackup(name, actorId) {
 
 export async function ensureDailyDatabaseBackup() {
   if (restoring) return null
-  const today = localDay()
-  const existing = await listDatabaseBackups()
-  if (existing.some(item => item.kind === 'daily' && item.localDay === today)) return null
-  return createDatabaseBackup('daily')
+  const statusFile=path.join(backupDirectory(),'daily-status.json')
+  try {
+    const today = localDay()
+    const existing = await listDatabaseBackups()
+    if (existing.some(item => item.kind === 'daily' && item.localDay === today)) {
+      await rm(statusFile,{force:true})
+      return null
+    }
+    const backup=await createDatabaseBackup('daily')
+    if(backup?.kind==='daily')await rm(statusFile,{force:true})
+    return backup
+  } catch(error) {
+    // Persist only the time/status. Client errors must never contain database
+    // credentials, dump output, file paths or exception messages.
+    const temporary=statusFile+'.'+randomBytes(4).toString('hex')+'.tmp'
+    try {
+      await mkdir(backupDirectory(),{recursive:true,mode:0o700})
+      await writeFile(temporary,JSON.stringify({status:'failed',failedAt:new Date().toISOString()}),{mode:0o600})
+      await rename(temporary,statusFile)
+    }catch{await rm(temporary,{force:true}).catch(()=>{})}
+    throw error
+  }
+}
+
+export async function dailyBackupFailure() {
+  try {
+    const status=JSON.parse(await readFile(path.join(backupDirectory(),'daily-status.json'),'utf8'))
+    return status.status==='failed' && typeof status.failedAt==='string' && Number.isFinite(Date.parse(status.failedAt)) ? {failedAt:status.failedAt} : null
+  }catch{return null}
 }

@@ -12,16 +12,122 @@ async function buildFixture(component='app/pages/payroll/payslip/index.vue',prop
   build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
   build.onLoad({filter:/.*/,namespace:'fixture'},args=>args.path==='nuxt-router-fixture'?({contents:"import {reactive} from 'vue';const route=reactive({path:'/dashboard',query:{view:'payslip'}});window.fixtureRoute=route;export const useRoute=()=>route;export const useRouter=()=>({push:value=>{route.query=typeof value==='string'?{}:value.query||{};route.path=typeof value==='string'?value:value.path}})",loader:'js',resolveDir:root}):({contents:'export const useHead = value => { document.title = value.title };export const onBeforeRouteLeave = callback => { window.portalLeaveGuard=callback }',loader:'js'}))
   build.onLoad({filter:/\.vue$/},args=>{
-   const normalized=args.path.replaceAll('\\','/');if(component==='app/pages/dashboard/index.vue'&&((normalized.includes('/app/pages/')&&!['/dashboard/index.vue','/payroll/payslip/index.vue','/employees/portal-accounts/index.vue'].some(suffix=>normalized.endsWith(suffix)))||['WorkspaceLoading.vue','PayrollRunProgress.vue','logoutalert.vue'].some(suffix=>normalized.endsWith(suffix))))return{contents:"import {h} from 'vue';export default {render:()=>h('div')}",loader:'js',resolveDir:root}
+   const normalized=args.path.replaceAll('\\','/');if(component==='app/pages/dashboard/index.vue'&&((normalized.includes('/app/pages/')&&!['/dashboard/index.vue','/payroll/payslip/index.vue','/employees/portal-accounts/index.vue','/settings/index.vue'].some(suffix=>normalized.endsWith(suffix)))||['WorkspaceLoading.vue','PayrollRunProgress.vue','logoutalert.vue'].some(suffix=>normalized.endsWith(suffix))))return{contents:"import {h} from 'vue';export default {render:()=>h('div')}",loader:'js',resolveDir:root}
    const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[])
    const id='data-v-'+require('node:crypto').createHash('sha1').update(path.relative(root,args.path)).digest('hex').slice(0,8)
-   const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'})
+   let script
+   if(descriptor.script||descriptor.scriptSetup)script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'})
+   else{const template=sfc.compileTemplate({source:descriptor.template.content,filename:args.path,id});assert.deepEqual(template.errors,[]);script={content:template.code.replace('export function render','function render')+';const __component={render}'}}
    for(const style of descriptor.styles){const compiled=sfc.compileStyle({source:style.content,filename:args.path,id,scoped:style.scoped});assert.deepEqual(compiled.errors,[]);styles.push(compiled.code)}
    return{contents:script.content+`;__component.__scopeId=${JSON.stringify(id)};export default __component;`,loader:'ts',resolveDir:path.dirname(args.path)}
   })
  }}]})
  return{script:result.outputFiles[0].text,css:styles.join('\n')}
 }
+
+test('empty department removal sends JSON only after confirmation and refreshes Team access',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/settings/index.vue',{initialSection:'users'}),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message))
+  await page.setContent('<!doctype html><base href="http://settings.test"><div id="app"></div>');await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.removed=false;window.deletes=[];window.useHead=()=>{}
+   window.$fetch=async(url,options={})=>{
+    if(url==='/api/auth/me')return{user:{id:1,firstName:'Synthetic',lastName:'Admin',userType:'Admin'}}
+    if(url==='/api/settings/access')return{isAdmin:true,modules:[],access:{}}
+    if(url==='/api/settings/backups')return{backups:[],automatic:true}
+    if(url==='/api/settings/users')return{users:[],departments:window.removed?[]:[{id:11,name:'Logistics Department',status:'Active'}]}
+    if(url==='/api/settings/departments/11'&&options.method==='DELETE'){
+     window.deletes.push(options)
+     if(!options.body||Array.isArray(options.body)||typeof options.body!=='object')throw{data:{statusMessage:'Send a JSON object.'}}
+     window.removed=true;return{success:true}
+    }
+    throw Error('Unexpected endpoint '+url)
+   }
+  });await page.addScriptTag({content:fixture.script})
+  await page.getByRole('button',{name:'Remove Logistics Department',exact:true}).click()
+  const dialog=page.getByRole('alertdialog',{name:'Remove Logistics Department?',exact:true}),remove=dialog.getByRole('button',{name:'Remove department',exact:true})
+  assert.equal(await remove.isDisabled(),true);assert.equal(await page.evaluate(()=>window.deletes.length),0)
+  await dialog.getByRole('checkbox',{name:'Yes, remove this empty department.',exact:true}).check();await remove.click();await dialog.waitFor({state:'hidden'})
+  await page.getByText('Logistics Department was removed from active departments.',{exact:true}).waitFor()
+  assert.equal(await page.getByRole('button',{name:'Remove Logistics Department',exact:true}).count(),0)
+  assert.deepEqual(await page.evaluate(()=>window.deletes),[{method:'DELETE',body:{}}]);assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
+
+test('Admin registration alert opens Team access with new inactive accounts and never grants access automatically',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/dashboard/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.on('pageerror',error=>errors.push(error.message))
+  await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><base href="http://portal.test"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0}</style><div id="app"></div>'}))
+  await page.goto('http://portal.test/dashboard');await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.calls=[];window.secondSignup=false;window.noticeRead=false;window.useHead=()=>{};window.navigateTo=()=>{}
+   window.$fetch=async(url,options={})=>{
+    window.calls.push({url,method:options.method||'GET'})
+    if(url==='/api/auth/me')return{user:{id:42,firstName:'Synthetic',lastName:'Admin',userType:'Admin',departmentName:'HR'}}
+    if(url==='/api/settings/access')return{isAdmin:true,access:{payslips:{canView:true,canEdit:true}},modules:[]}
+    if(url==='/api/payroll/payslips')return{items:[],agencies:[],accountSummary:{total:0,active:0,inactive:0,unregistered:0},pagination:{page:1,pages:1,total:0}}
+    if(url==='/api/notifications/read'){window.noticeRead=true;return{success:true}}
+    if(url==='/api/notifications')return{items:[{key:'staff-account-setup',revision:(window.secondSignup?'b':'a').repeat(64),kind:'staff-account-setup',title:'Staff accounts awaiting setup',message:'Review department, role and permissions in Team access.',severity:'info',updatedAt:null,target:{view:'settings',section:'users'},read:window.noticeRead}],unreadCount:window.noticeRead?0:1,generatedAt:new Date().toISOString()}
+    if(url==='/api/settings/users')return{departments:[{id:1,name:'Human Resources',status:'Active'}],users:[{id:1,name:'New staff member',email:'new@example.invalid',departmentId:1,role:'Viewer',status:'Inactive',access:{}},...(window.secondSignup?[{id:2,name:'Latest staff member',email:'latest@example.invalid',departmentId:null,role:'Viewer',status:'Inactive',access:{}}]:[])]}
+    if(url==='/api/settings/backups')return{backups:[],automatic:true}
+    throw Error('Unexpected endpoint '+url)
+   }
+  });await page.addScriptTag({content:fixture.script});await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor()
+  async function visit(){await page.getByRole('button',{name:'Notifications',exact:true}).click();await page.getByRole('button',{name:/Staff accounts awaiting setup/}).click();await page.getByRole('heading',{name:'Departments & users',exact:true}).waitFor()}
+  await visit();assert.equal(await page.evaluate(()=>window.fixtureRoute.query.notice),'users')
+  assert.equal(await page.getByLabel('Show inactive accounts',{exact:true}).isChecked(),true);await page.getByText('New staff member',{exact:true}).waitFor()
+  await page.getByRole('button',{name:'My account',exact:true}).click();await page.evaluate(()=>window.secondSignup=true);await visit();await page.getByText('Latest staff member',{exact:true}).waitFor()
+  const writes=await page.evaluate(()=>window.calls.filter(call=>call.method!=='GET'));assert.deepEqual(writes,[{url:'/api/notifications/read',method:'POST'}])
+  assert.equal(await page.locator('.mini-status.inactive').count(),2);assert.deepEqual(errors,[])
+  fs.mkdirSync(output,{recursive:true});await page.screenshot({path:path.join(output,'admin-account-setup-notification.png'),fullPage:true})
+ }finally{await browser.close()}
+})
+
+test('portal notification navigation requires login and preserves unsaved account changes',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/employee-portal/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage({viewport:{width:390,height:844}}),errors=[]
+  page.on('pageerror',error=>errors.push(error.message))
+  await page.route('**/*',route=>route.request().url().endsWith('/images/logo.png')?route.fulfill({path:path.join(root,'public/images/logo.png'),contentType:'image/png'}):route.abort())
+  async function load(signedIn){
+   await page.evaluate(()=>window.testApp?.unmount())
+   await page.setContent('<!doctype html><base href="http://portal.test"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0}</style><div id="app"></div>')
+   await page.addStyleTag({content:fixture.css})
+   await page.evaluate(signedIn=>{
+    window.calls=[];window.informationReads=0;window.read=false
+    window.$fetch=async(url,options={})=>{
+     window.calls.push({url,method:options.method||'GET',body:options.body})
+     if(!signedIn)throw{status:401}
+     if(url.endsWith('/me'))return{account:{AccountID:21,EmployeeID:1,EmployeeName:'Synthetic employee',Email:'test@example.invalid',ContactNumber:'09000000000',CurrentSites:[]}}
+     if(url.endsWith('/payslips'))return{payslips:[]}
+     if(url.endsWith('/archive'))return{items:[],canManage:false}
+     if(url.endsWith('/notifications/read')){window.read=true;return{success:true}}
+     if(url.endsWith('/notifications'))return{items:[{key:'own-request:1',revision:'a'.repeat(64),kind:'own-request',title:'HR replied to your information request',message:'Open My information to read it.',severity:'info',updatedAt:'2026-11-15T01:00:00.000Z',target:{view:'information'},read:window.read}],unreadCount:window.read?0:1,generatedAt:new Date().toISOString()}
+     if(url.endsWith('/information')){window.informationReads++;return{fields:[{key:'FirstName',label:'First name',section:'Personal details',value:'Synthetic'}],requestFields:[],requests:{items:[],pagination:{page:1,pages:1,total:0}}}}
+     throw Error('Unexpected request '+url)
+    }
+   },signedIn)
+   await page.addScriptTag({content:fixture.script});await page.locator('.portal-loading').waitFor({state:'hidden'})
+  }
+  await load(false);assert.equal(await page.getByRole('button',{name:'Notifications',exact:true}).count(),0)
+  assert.equal((await page.evaluate(()=>window.calls)).some(call=>call.url.includes('/notifications')),false)
+  await load(true);const bell=page.getByRole('button',{name:'Notifications',exact:true})
+  await page.getByRole('button',{name:'My account',exact:true}).click();const email=page.getByLabel('Login email',{exact:true});await email.fill('unsaved@example.invalid')
+  const visit=async()=>{await bell.click();await page.getByRole('button',{name:/HR replied to your information request/}).click()}
+  await visit();const discard=page.getByRole('alertdialog',{name:'Discard your changes?',exact:true});await discard.waitFor()
+  assert.equal(await page.evaluate(()=>window.informationReads),0)
+  await discard.getByRole('button',{name:'Keep editing',exact:true}).click();assert.equal(await email.inputValue(),'unsaved@example.invalid')
+  await visit();await discard.getByRole('button',{name:'Discard changes',exact:true}).click();await page.getByText('Synthetic',{exact:true}).waitFor()
+  assert.equal(await page.evaluate(()=>window.informationReads),1)
+  await visit();await page.waitForFunction(()=>window.informationReads===2)
+  const calls=await page.evaluate(()=>window.calls)
+  assert.ok(calls.filter(call=>call.url.includes('/notifications')).every(call=>call.url.startsWith('/api/employee-portal/notifications')))
+  const writes=calls.filter(call=>call.method==='POST');assert.equal(writes.length,1);assert.deepEqual(writes[0].body,{items:[{key:'own-request:1',revision:'a'.repeat(64)}]})
+  assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
 
 
 
@@ -227,6 +333,9 @@ test('dashboard navigation separates Portal Accounts under Employee Management f
   await page.evaluate(()=>{
    window.reads=[];window.useHead=()=>{};window.navigateTo=()=>{};window.$fetch=async(url,options={})=>{
     window.reads.push(url);if(url==='/api/auth/me')return{user:{id:42,firstName:'Synthetic',lastName:'HR',userType:'Admin',departmentName:'Human Resources'}}
+    if(url==='/api/notifications/read'){window.noticeRead=true;return{success:true}}
+    if(url==='/api/notifications')return{items:[{key:'portal-requests',revision:'a'.repeat(64),kind:'portal-requests',title:'Employee requests need a response',message:'Open the HR inbox.',severity:'info',updatedAt:null,target:{view:'employees-portal-accounts',section:'requests'},read:Boolean(window.noticeRead)}],unreadCount:window.noticeRead?0:1,generatedAt:new Date().toISOString()}
+    if(url==='/api/employees/portal-accounts/requests')return{items:[],pagination:{page:1,pages:1,total:0}}
     if(url==='/api/settings/access')return{access:{employees:{canView:true,canEdit:true},payslips:{canView:true,canEdit:true},dashboard:{canView:false,canEdit:false}}}
     const employee={EmployeeID:1,EmployeeNumber:'TEST-1',EmployeeName:'SYNTHETIC EMPLOYEE',AgencyName:'Synthetic agency',PositionName:'Guard',Status:'Active',PortalStatus:'Active',PortalEmail:'test@example.invalid',PayslipCount:2,PostedPayslipCount:1,LastCutoffEnd:'2026-09-30',PublicationStatus:'Partially posted'}
     if(url==='/api/employees/portal-accounts'||url==='/api/payroll/payslips')return{items:[employee],agencies:[],canManageAccounts:url.includes('portal-accounts'),accountSummary:{total:1,active:1,inactive:0,unregistered:0},pagination:{page:1,pages:1,total:1}}
@@ -234,5 +343,11 @@ test('dashboard navigation separates Portal Accounts under Employee Management f
    }
   });await page.addScriptTag({content:fixture.script});assert.deepEqual(errors,[]);await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor();const sidebar=page.locator('#dashboard-sidebar');await sidebar.hover();await sidebar.getByRole('button',{name:'Employee Management',exact:true}).click();await sidebar.getByRole('button',{name:'Portal Accounts',exact:true}).click();await page.getByRole('heading',{name:'Portal Accounts',exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.fixtureRoute.query.view),'employees-portal-accounts');await page.getByRole('columnheader',{name:'Portal email',exact:true}).waitFor();assert.equal(await page.getByRole('link',{name:'Manage posting',exact:true}).count(),0);await page.screenshot({path:path.join(output,'portal-accounts-navigation.png'),fullPage:true})
   await sidebar.hover();await sidebar.getByRole('button',{name:'Payroll',exact:true}).click();await sidebar.getByRole('button',{name:'Payslips',exact:true}).click();await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.fixtureRoute.query.view),'payslip');await page.getByLabel(/^Posting status/).waitFor();assert.equal(await page.getByRole('columnheader',{name:'Portal email',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Information requests',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Manage account',exact:true}).count(),0);assert.match(await page.locator('.employee-table').innerText(),/Partially posted/);await page.getByRole('link',{name:'Manage posting',exact:true}).waitFor();await page.screenshot({path:path.join(output,'payslips-navigation.png'),fullPage:true});assert.deepEqual(errors,[])
+  const openRequestAlert=async()=>{await page.getByRole('button',{name:'Notifications',exact:true}).click();await page.getByRole('button',{name:/Employee requests need a response/}).click();await page.getByRole('heading',{name:'Employee information requests',exact:true}).waitFor()}
+  await openRequestAlert();assert.equal(await page.evaluate(()=>window.fixtureRoute.query.notice),'requests')
+  await page.getByRole('button',{name:'Employee accounts',exact:true}).click();await page.getByRole('columnheader',{name:'Portal email',exact:true}).waitFor()
+  // Refreshing the account list must not undo the section the user just selected.
+  await page.locator('.payslip-page form').getByRole('button',{name:'Search',exact:true}).click();await page.getByRole('columnheader',{name:'Portal email',exact:true}).waitFor();assert.equal(await page.getByRole('heading',{name:'Employee information requests',exact:true}).count(),0)
+  await openRequestAlert();assert.deepEqual(errors,[])
  }finally{await browser.close()}
 })

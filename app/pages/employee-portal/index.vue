@@ -10,6 +10,8 @@ import ArchivedPayslipsPanel from '../../components/ArchivedPayslipsPanel.vue'
 import EmployeeInformationPanel from '../../components/EmployeeInformationPanel.vue'
 import EmployeePayslipSheet from '../../components/EmployeePayslipSheet.vue'
 import DjaAssistant from '../../components/DjaAssistant.vue'
+import NotificationBell from '../../components/NotificationBell.vue'
+import type { NotificationTarget } from '~~/shared/utils/notifications'
 import { governmentIdTypes,governmentIdType,governmentIdRule,formatGovernmentNumber } from '~~/shared/utils/governmentIds'
 import { portalAgreementVersion,portalPrivacySections } from '~~/shared/utils/employeePortal'
 import { payslipSiteNames,payslipPostedLabel } from '~~/shared/utils/payslipPresentation'
@@ -25,7 +27,8 @@ const employeeIdentity=computed(()=>{
  return number||formatEmployeeId(account.value?.EmployeeID)
 })
 const mode=ref('login'),loading=ref(true),busy=ref(false),error=ref(''),notice=ref(''),privacyOpen=ref(false),settingsOpen=ref(false)
-const informationOpen=ref(false),informationDirty=ref(false),informationBusy=ref(false)
+const informationOpen=ref(false),informationDirty=ref(false),informationBusy=ref(false),informationNoticeVersion=ref(0)
+let notificationNavigation=false
 type PortalDestination='payslips'|'information'|'settings'
 let pendingDestination:PortalDestination='payslips'
 const search=ref(''),year=ref(''),showPassword=ref(false)
@@ -60,11 +63,12 @@ const confirmationDescription=computed(()=>confirmation.value==='save'?'Review t
 const confirmationAction=computed(()=>confirmation.value==='save'?'Confirm and save':confirmation.value==='signout'?'Yes, sign out':'Discard changes')
 function clearSettings(){settings.value={email:account.value?.Email||'',contactNumber:account.value?.ContactNumber||'',currentPassword:'',password:'',confirmPassword:''}}
 function showConfirmation(action:Confirmation){if(busy.value||informationBusy.value||confirmation.value)return;confirmationError.value='';confirmation.value=action}
-function cancelConfirmation(){if(busy.value)return;confirmation.value=null;pendingSettings.value=null;confirmationError.value='';const resolve=resolveLeave;resolveLeave=null;resolve?.(false)}
-function applyDestination(destination:PortalDestination){clearSettings();settingsOpen.value=destination==='settings';informationOpen.value=destination==='information';informationDirty.value=false;selected.value=null;error.value='';notice.value=''}
+function cancelConfirmation(){if(busy.value)return;notificationNavigation=false;confirmation.value=null;pendingSettings.value=null;confirmationError.value='';const resolve=resolveLeave;resolveLeave=null;resolve?.(false)}
+function applyDestination(destination:PortalDestination){clearSettings();settingsOpen.value=destination==='settings';informationOpen.value=destination==='information';informationDirty.value=false;selected.value=null;error.value='';notice.value='';if(notificationNavigation){notificationNavigation=false;if(destination==='payslips')void loadSession();else informationNoticeVersion.value++}}
 function navigatePortal(destination:PortalDestination){if(busy.value||informationBusy.value)return;if((destination==='settings'&&settingsOpen.value)||(destination==='information'&&informationOpen.value))return;if(settingsDirty.value){pendingDestination=destination;showConfirmation('discard');return}applyDestination(destination)}
 function returnToPayslips(){navigatePortal('payslips')}
 function openInformation(){navigatePortal('information')}
+function openNotification(target:NotificationTarget){if(busy.value||informationBusy.value||confirmation.value||!['information','payslips'].includes(target.view))return;notificationNavigation=true;const destination=target.view as PortalDestination;if(settingsDirty.value){pendingDestination=destination;showConfirmation('discard')}else applyDestination(destination)}
 function brandClick(event:MouseEvent){if(account.value){event.preventDefault();returnToPayslips()}}
 function requestSignout(){showConfirmation('signout')}
 function requestSave(){
@@ -197,7 +201,7 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
  <main class="employee-portal" :data-theme="isDark ? 'dark' : 'light'">
   <header class="portal-top" :inert="modalOpen">
    <NuxtLink to="/employee-portal" class="portal-brand" @click="brandClick"><img src="/images/logo.png" alt="DJA"><div><strong>Payslip Portal</strong><small>DJA Group of Companies</small></div></NuxtLink>
-   <div class="portal-top-actions"><button type="button" class="portal-theme-toggle" :aria-pressed="isDark" :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'" @click="isDark = !isDark"><svg v-if="isDark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7Z"/></svg><svg v-else viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button><nav v-if="account" aria-label="Payslip account"><button type="button" :class="{active:informationOpen}" :disabled="busy||informationBusy" @click="openInformation">My information</button><button type="button" :class="{active:settingsOpen}" :disabled="busy||informationBusy" @click="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>My account</button><button type="button" :disabled="busy||informationBusy" @click="requestSignout">Sign out<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M14 8l4 4-4 4M9 12h11"/></svg></button></nav>
+   <div class="portal-top-actions"><NotificationBell v-if="account" :key="account.AccountID" portal @navigate="openNotification" /><button type="button" class="portal-theme-toggle" :aria-pressed="isDark" :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'" @click="isDark = !isDark"><svg v-if="isDark" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7Z"/></svg><svg v-else viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button><nav v-if="account" aria-label="Payslip account"><button type="button" :class="{active:informationOpen}" :disabled="busy||informationBusy" @click="openInformation">My information</button><button type="button" :class="{active:settingsOpen}" :disabled="busy||informationBusy" @click="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>My account</button><button type="button" :disabled="busy||informationBusy" @click="requestSignout">Sign out<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6M14 8l4 4-4 4M9 12h11"/></svg></button></nav>
    <span v-else class="portal-top-caption">EMPLOYEE SELF-SERVICE</span></div>
   </header>
   <div class="portal-content" :inert="modalOpen">
@@ -245,7 +249,7 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
      </header>
      <div class="portal-current-sites"><div class="assignment-caption"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><span class="site-caption">Current assignment</span></div><span v-for="site in account.CurrentSites || []" :key="site.SiteID+':'+site.DeploymentType" class="current-site"><strong>{{site.SiteName}}</strong><small>{{site.ClientName}} &middot; {{site.IsPermanentSite?'Fixed post':site.DeploymentType}}</small></span><small v-if="!account.CurrentSites?.length">No current site assignment recorded.</small></div>
     </div>
-    <section v-if="informationOpen" class="portal-information"><button type="button" class="portal-text" @click="returnToPayslips">&larr; Back to payslips</button><EmployeeInformationPanel :employee="account" @dirty="informationDirty=$event" @processing="informationBusy=$event"/></section>
+    <section v-if="informationOpen" class="portal-information"><button type="button" class="portal-text" @click="returnToPayslips">&larr; Back to payslips</button><EmployeeInformationPanel :key="informationNoticeVersion" :employee="account" @dirty="informationDirty=$event" @processing="informationBusy=$event"/></section>
     <section v-else-if="settingsOpen" class="portal-card portal-settings"><button type="button" class="portal-text" @click="returnToPayslips">← Back to payslips</button><p class="portal-eyebrow">ACCOUNT SETTINGS</p><h2>My account</h2><p class="portal-muted">Your employee link stays the same when your email or contact changes.</p><div class="settings-identity"><strong>{{account.EmployeeName}}</strong><small>{{employeeIdentity}}<span v-if="account.AgencyName"> &middot; {{account.AgencyName}}</span></small></div><form class="portal-form" @submit.prevent="requestSave"><p class="form-section-title">Login &amp; contact details</p><label>Login email<input v-model="settings.email" type="email" maxlength="190" required></label><label>Contact number<input v-model="settings.contactNumber" type="tel" maxlength="25" required></label><p class="form-section-title">Password &amp; security</p><label>Current password<input v-model="settings.currentPassword" type="password" autocomplete="current-password" maxlength="72" required></label><label>New password (optional)<input v-model="settings.password" type="password" autocomplete="new-password" minlength="12" maxlength="72"></label><label v-if="settings.password">Confirm new password<input v-model="settings.confirmPassword" type="password" autocomplete="new-password" maxlength="72" required></label><p v-if="settingsChanged" class="settings-pending" role="status">You have unsaved changes. Review and confirm them before they are applied.</p><button type="submit" class="portal-primary" :disabled="busy||!settingsChanged">{{busy?'Saving…':'Save account details'}}</button></form></section>
     <template v-else-if="selected">
      <div class="portal-detail-controls">

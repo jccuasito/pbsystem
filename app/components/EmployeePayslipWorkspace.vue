@@ -14,10 +14,13 @@ type Profile={employee:Employee;cutoffs:Cutoff[]}
 type Summary={total:number;active:number;inactive:number;unregistered:number}
 type List={items:Employee[];agencies:Array<{AgencyID:number;AgencyName:string}>;canManageAccounts?:boolean;accountSummary:Summary;pagination:{page:number;pages:number;total:number}}
 type AccountData={canManage:boolean;account:any;activity?:{items:Array<{EventID:number;Action:string;ActorUserID:number|null;ActorName:string;CreatedAt:string}>;pagination:{page:number;pages:number;total:number}}}
-const props=defineProps<{employee?:Employee;embedded?:boolean;mode?:'accounts'|'payslips'}>(),emit=defineEmits<{close:[]}>()
+const props=defineProps<{employee?:Employee;embedded?:boolean;mode?:'accounts'|'payslips';initialSection?:string;initialSectionRequest?:number}>(),emit=defineEmits<{close:[]}>()
 const list=ref<List>({items:[],agencies:[],accountSummary:{total:0,active:0,inactive:0,unregistered:0},pagination:{page:1,pages:1,total:0}})
 const isAccounts=computed(()=>props.mode==='accounts')
 const workspace=ref('accounts'),serviceBusy=ref(false),archiveDirty=ref(false),discardOpen=ref(false),discardSection=ref('close'),discardCancel=ref<HTMLButtonElement|null>(null)
+let pendingRequestSection=false
+function applyRequestedSection(){if(pendingRequestSection&&isAccounts.value&&list.value.canManageAccounts&&!serviceBusy.value){workspace.value='requests';pendingRequestSection=false}}
+watch(()=>[props.initialSection,props.initialSectionRequest],()=>{pendingRequestSection=props.initialSection==='requests';applyRequestedSection()},{immediate:true})
 const profileTabs=computed(()=>isAccounts.value?[{key:'account',label:'Portal account'},...(portalAccount.value?.canManage?[{key:'requests',label:'Information requests'}]:[]),{key:'activity',label:'Account activity'}]:[{key:'history',label:'Payslip history'},{key:'archive',label:'PDF archive'}])
 const search=ref(''),agencyId=ref(''),accountStatus=ref(''),postingStatus=ref(''),page=ref(1),loading=ref(false),error=ref('')
 const profile=ref<Profile|null>(null),portalAccount=ref<AccountData|null>(null),profileTab=ref(isAccounts.value?'account':'history'),profileBody=ref<HTMLElement|null>(null),profileDialog=ref<HTMLElement|null>(null)
@@ -46,7 +49,7 @@ watch(historyPages,value=>{historyPage.value=Math.min(historyPage.value,value)})
 function clearRecovery(){recoveryCode.value='';recoveryExpiresAt.value='';copyNotice.value='';if(recoveryTimer)clearTimeout(recoveryTimer);recoveryTimer=undefined}
 async function load(){
  const request=++listRequest;listAbort?.abort();listAbort=new AbortController();loading.value=true;error.value=''
- try{const result=await $fetch<List>(isAccounts.value?'/api/employees/portal-accounts':'/api/payroll/payslips',{query:{search:search.value.trim(),agencyId:agencyId.value||undefined,...(isAccounts.value?{accountStatus:accountStatus.value||undefined}:{postingStatus:postingStatus.value||undefined}),page:page.value},signal:listAbort.signal,timeout:15000,retry:0});if(request===listRequest){list.value=result;page.value=result.pagination.page}}
+ try{const result=await $fetch<List>(isAccounts.value?'/api/employees/portal-accounts':'/api/payroll/payslips',{query:{search:search.value.trim(),agencyId:agencyId.value||undefined,...(isAccounts.value?{accountStatus:accountStatus.value||undefined}:{postingStatus:postingStatus.value||undefined}),page:page.value},signal:listAbort.signal,timeout:15000,retry:0});if(request===listRequest){list.value=result;page.value=result.pagination.page;applyRequestedSection()}}
  catch(cause:any){if(request===listRequest)error.value=requestErrorMessage(cause, 'Unable to load employee accounts. Please try again.')}
  finally{if(request===listRequest)loading.value=false}
 }

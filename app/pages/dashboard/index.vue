@@ -38,6 +38,8 @@ import SettingsPage from '../settings/index.vue'
 import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
 import PayrollRunProgress from '../../components/PayrollRunProgress.vue'
 import DjaAssistant from '../../components/DjaAssistant.vue'
+import NotificationBell from '../../components/NotificationBell.vue'
+import type { NotificationTarget } from '~~/shared/utils/notifications'
 
 const route = useRoute()
 const router = useRouter()
@@ -245,6 +247,14 @@ function viewModule(view: string) {
   return view
 }
 const canViewWorkspace = (view: string) => view === 'settings' || moduleAccess.value?.[viewModule(view)]?.canView === true
+const notificationSectionRequest=ref(0)
+const notificationWorkspaceProps=computed(()=>['settings','employees-portal-accounts'].includes(activeWorkspaceView.value||'') ? {initialSection:typeof route.query.notice==='string'?route.query.notice:'',initialSectionRequest:notificationSectionRequest.value} : {})
+function openNotification(target:NotificationTarget){
+  if(!workspaceViews.has(target.view as WorkspaceView)||!canViewWorkspace(target.view))return
+  notificationSectionRequest.value++
+  isMobileNavOpen.value=false
+  router.push({path:'/dashboard',query:{view:target.view,...(target.section?{notice:target.section}:{})}})
+}
 const visibleNavGroups = computed(() => navGroups.map((group: any) => group.children
   ? { ...group, children: group.children.filter((child: any) => canViewWorkspace(child.view)) }
   : group).filter((group: any) => group.children ? group.children.length : group.label === 'Dashboard' ? moduleAccess.value?.dashboard?.canView === true : canViewWorkspace(group.view)))
@@ -551,9 +561,7 @@ onBeforeUnmount(() => {
               <svg v-if="!isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.2M19.3 12h2.2"/></svg>
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7Z"/></svg>
             </button>
-            <button type="button" class="dash-icon-btn" aria-label="Notifications">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6.5H4c.5-1 2-2.5 2-6.5Z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>
-            </button>
+            <NotificationBell v-if="moduleAccess && currentUser && !isUsingCachedData" :key="currentUser.id" @navigate="openNotification" />
             <NuxtLink to="/userprofile/viewprofile" class="dash-user-chip">
               <span class="dash-avatar">
                 <img v-if="currentUser?.image" :src="currentUser.image" alt="" />
@@ -571,7 +579,7 @@ onBeforeUnmount(() => {
           </div>
 
           <KeepAlive>
-            <component v-if="activePageComponent" :key="activeWorkspaceView" :is="activePageComponent" class="dash-workspace-page" @navigate="openWorkspaceView" />
+            <component v-if="activePageComponent" :key="activeWorkspaceView" :is="activePageComponent" v-bind="notificationWorkspaceProps" class="dash-workspace-page" @navigate="openWorkspaceView" />
           </KeepAlive>
 
           <WorkspaceLoading v-if="activeWorkspaceView && !moduleAccess && activeWorkspaceView !== 'settings'" :label="`Loading ${activeWorkspaceLabel}...`" />

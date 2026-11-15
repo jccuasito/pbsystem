@@ -11,6 +11,7 @@ type User = { id: number; name: string; email: string; image: string | null; dep
 type Department = { id: number; name: string; status: string }
 type Backup = { name: string; kind: string; createdAt: string; size: number }
 type Section = 'account' | 'users' | 'backups'
+const props=defineProps<{initialSection?:string;initialSectionRequest?:number}>()
 
 const section = ref<Section>('account')
 const account = ref<any>(null)
@@ -37,6 +38,7 @@ const restoreCandidate = ref<Backup | null>(null)
 const restoreAcknowledged = ref(false)
 const restorePhrase = ref('')
 const showBackups = ref(false)
+
 const backupLimit = ref(3)
 const showAccessDetails = ref(false)
 const uploadFile = ref<File | null>(null)
@@ -45,6 +47,24 @@ const busy = ref(false)
 const loading = ref(true)
 const error = ref('')
 const success = ref('')
+let pendingNoticeSection: 'users'|'backups'|null=null
+function applyRequestedSection(){
+  if(!pendingNoticeSection||!access.value?.isAdmin||loading.value)return
+  section.value=pendingNoticeSection
+  if(pendingNoticeSection==='backups')showBackups.value=true
+  else{
+    showInactiveUsers.value=true
+    userSearch.value=''
+    expandedGroups.value={unassigned:true,...Object.fromEntries(departments.value.map(item=>['department-'+item.id,true]))}
+  }
+  pendingNoticeSection=null
+}
+watch(()=>[props.initialSection,props.initialSectionRequest],()=>{
+  pendingNoticeSection=props.initialSection==='users'||props.initialSection==='backups'?props.initialSection:null
+  if(pendingNoticeSection==='users'&&access.value?.isAdmin&&!loading.value){
+    void refreshDirectory().catch(cause=>{error.value=errorMessage(cause)}).finally(applyRequestedSection)
+  }else applyRequestedSection()
+},{immediate:true})
 
 const isAdmin = computed(() => access.value?.isAdmin === true)
 const departmentGroups = computed(() => {
@@ -64,7 +84,7 @@ const latestBackup = computed(() => backups.value[0] || null)
 const visibleBackups = computed(() => backups.value.slice(0, backupLimit.value))
 const visibleModules = computed(() => (access.value?.modules || []).filter((item: any) => access.value?.access?.[item.key]?.canView))
 const editableModuleCount = computed(() => visibleModules.value.filter((item: any) => access.value?.access?.[item.key]?.canEdit).length)
-watch(userSearch, () => { expandedGroups.value = {} })
+watch(userSearch, () => { expandedGroups.value = {} }, {flush:'sync'})
 
 function errorMessage(cause: any) {
   return requestErrorMessage(cause, 'The request could not be completed. Please try again.')
@@ -112,7 +132,7 @@ async function loadSettings() {
       }
     }
   } catch (cause) { error.value = errorMessage(cause) }
-  finally { loading.value = false }
+  finally { loading.value = false; applyRequestedSection() }
 }
 
 async function saveUser() {
@@ -148,7 +168,7 @@ async function removeDepartment() {
   const department = departmentToRemove.value
   busy.value = true; error.value = ''; success.value = ''
   try {
-    await $fetch(`/api/settings/departments/${department.id}`, { method: 'DELETE' })
+    await $fetch(`/api/settings/departments/${department.id}`, { method: 'DELETE', body: {} })
     await refreshDirectory()
     departmentToRemove.value = null
     success.value = `${department.name} was removed from active departments.`

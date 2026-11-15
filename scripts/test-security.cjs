@@ -93,6 +93,15 @@ test('JSON / query validation and CSRF rejection cover staff and employee mutati
   assert.equal((await response.json()).body.password, "O'Brien123456")
 })
 
+test('department DELETE accepts an explicit JSON object while retaining authentication and origin checks', async () => {
+  const route=base+'/api/settings/departments/11'
+  const options={method:'DELETE',headers:{'x-test-staff':'admin','content-type':'application/json',origin:base},body:'{}'}
+  assert.equal((await fetch(route,options)).status,200)
+  assert.equal((await fetch(route,{...options,body:undefined})).status,400)
+  assert.equal((await fetch(route,{...options,headers:{...options.headers,origin:'https://attacker.example'}})).status,403)
+  assert.equal((await fetch(route,{...options,headers:{'content-type':'application/json',origin:base}})).status,401)
+})
+
 test('DTR Excel import permits employee codes and incomplete punches without bypassing other request checks', async () => {
   const route = '/api/attendance/dtr/11/records', headers = { 'x-test-staff': 'admin', origin: base }
   const body = { ImportRows: true, Rows: [

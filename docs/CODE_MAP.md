@@ -271,6 +271,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePayslipWorkspace.vue`
   - `app/components/EmployeePositionChangeModal.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/NotificationBell.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
   - `app/components/PayrollRunProgress.vue`
@@ -348,6 +349,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/employeeStatusSheet.ts`
   - `shared/utils/governmentIds.ts`
   - `shared/utils/issuanceCode.ts`
+  - `shared/utils/notifications.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
@@ -717,8 +719,10 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeeInformationPanel.vue`
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/NotificationBell.vue`
   - `app/components/RequestChatWindow.vue`
   - `app/composables/useAppTheme.ts`
+  - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/payslipImage.ts`
@@ -727,6 +731,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/djaAssistantGuides.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
+  - `shared/utils/notifications.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
   - `shared/utils/requestError.ts`
