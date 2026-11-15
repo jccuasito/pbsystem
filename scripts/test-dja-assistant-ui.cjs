@@ -2,6 +2,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),sfc=require('@vue/compiler-sfc'),esbuild=require('esbuild')
 const root=path.resolve(__dirname,'..')
 const shared=require('../shared/utils/djaAssistant.ts')
+const fixtureAccess={dashboard:{canView:true},deductions:{canView:true},employees:{canView:true},attendance:{canView:true}}
 async function fixture(){
  const styles=['base','theme','dashboard'].map(name=>fs.readFileSync(path.join(root,'assets/css',name+'.css'),'utf8'))
  const result=await esbuild.build({stdin:{resolveDir:root,loader:'ts',contents:`
@@ -31,8 +32,8 @@ test('assistant keyboard, bilingual context, navigation, errors, clear, mobile a
     if(mode==='denied')return route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({statusCode:403,statusMessage:'You do not have view access to the requested module.'})})
     if(mode==='slow')await new Promise(resolve=>setTimeout(resolve,200))
     const found=body.guideId?{guide:shared.assistantGuides.find(item=>item.id===body.guideId),unsupportedAction:false}:shared.findAssistantGuide(body.prompt,body.view,body.contextGuide)
-    if(found?.guide)return route.fulfill({contentType:'application/json',body:JSON.stringify(shared.assistantGuideReply(found.guide,shared.assistantLanguage(body.prompt,body.locale),new Date('2026-11-14T05:00:00Z'),found.unsupportedAction))})
-    if(['help','unsupported'].includes(shared.parseAssistantCommand(body.prompt,body.view,body.locale).intent))return route.fulfill({contentType:'application/json',body:JSON.stringify(shared.assistantScopeReply(shared.assistantLanguage(body.prompt,body.locale)))})
+    if(found?.guide)return route.fulfill({contentType:'application/json',body:JSON.stringify(shared.assistantGuideReply(found.guide,shared.assistantLanguage(body.prompt,body.locale),new Date('2026-11-14T05:00:00Z'),found.unsupportedAction,fixtureAccess))})
+    if(['help','unsupported'].includes(shared.parseAssistantCommand(body.prompt,body.view,body.locale).intent))return route.fulfill({contentType:'application/json',body:JSON.stringify(shared.assistantClarificationReply(body.prompt,fixtureAccess,shared.assistantLanguage(body.prompt,body.locale))||shared.assistantScopeReply(shared.assistantLanguage(body.prompt,body.locale)))})
     const answer={text:'Current Active records, including paused loans. Current page filters are not applied.',generatedAt:'2026-11-14T05:00:00Z',source:'Employee Loans & Deductions',scope:'2026-11-14 · Asia/Manila',metric:{label:body.locale==='fil'?'Active loan records ngayon':'Active loan records now',value:6,format:'count'},link:{view:'employee-loans-deductions',label:'Employee Loans & Deductions'}}
     return route.fulfill({contentType:'application/json',body:JSON.stringify(answer)})
    }
@@ -65,6 +66,22 @@ test('assistant keyboard, bilingual context, navigation, errors, clear, mobile a
   assert.equal(calls.at(-1).contextGuide,'employee-edit')
   await input.fill('ano ang english ng bakit?');await input.press('Enter');await page.getByRole('heading',{name:'Saklaw at limitasyon',exact:true}).waitFor()
   const boundary=page.locator('.dja-assistant__answer').last();assert.match(await boundary.innerText(),/Paumanhin/);assert.equal(await boundary.locator('ol,.dja-assistant__metric,.dja-assistant__link').count(),0)
+  await page.getByRole('button',{name:'Clear chat',exact:true}).click()
+  await page.evaluate(()=>window.assistantView.value='employees-portal-accounts')
+  await input.fill('ano ba muna step by step para mapatakbo tong system?');await input.press('Enter')
+  await page.getByRole('heading',{name:'Simulan ang paggamit ng payroll system nang sunod-sunod',exact:true}).waitFor()
+  assert.equal(await page.getByRole('button',{name:'Paandarin ang local system server',exact:true}).count(),0)
+  assert.equal(await page.getByRole('combobox',{name:'Help topic',exact:true}).locator('option[value="system-local-start"]').count(),0)
+  assert.match(await page.locator('.dja-assistant__steps').innerText(),/Employee List/)
+  assert.doesNotMatch(await page.locator('.dja-assistant__steps').innerText(),/Generate Billing|Site Rates|Payroll Processing/)
+  assert.equal(await page.getByRole('button',{name:'Maghanda ng billing draft',exact:true}).count(),0)
+  fs.mkdirSync('.data/assistant-tests',{recursive:true});await page.screenshot({path:'.data/assistant-tests/system-orientation.png'})
+  await page.getByRole('button',{name:'Gumawa ng employee record',exact:true}).click()
+  await page.getByRole('heading',{name:'Gumawa ng employee record',exact:true}).waitFor()
+  await input.fill('ano ang kasunod?');await input.press('Enter')
+  await page.getByRole('heading',{name:'Magdagdag ng dokumento o ID scan',exact:true}).waitFor()
+  await input.fill('How many active loans for Agency X?');await input.press('Enter')
+  await page.getByRole('heading',{name:'Linawin ang nais mong gawin',exact:true}).waitFor()
   await page.locator('.dja-assistant__browse summary').click();await page.getByRole('combobox',{name:'Help topic',exact:true}).selectOption('dtr-import')
   await page.getByRole('button',{name:'Show steps',exact:true}).click();await page.getByRole('heading',{name:'Mag-import ng attendance mula sa Excel',exact:true}).waitFor()
   assert.equal(calls.at(-1).guideId,'dtr-import');await page.locator('.dja-assistant__browse summary').click()

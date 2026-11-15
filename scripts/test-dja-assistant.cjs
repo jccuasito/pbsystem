@@ -12,22 +12,90 @@ function api(db, rights = access) {
 test('English/Filipino complete questions, prefix, explicit month and Manila year rollover',()=>{
  for(const prompt of ['Hey DJA AI, can you show me how many active loans this month?','Ilan ang active loans ngayong buwan?'])assert.equal(shared.parseAssistantCommand(prompt,'dashboard','auto',now).intent,'activeLoans')
  assert.equal(shared.parseAssistantCommand('Ilan ang active loans ngayong buwan?','dashboard','auto',now).language,'fil')
+ for(const prompt of ['ilan na ba ang active loans natin ngayong buwan?','Ilang active na loans meron tayo?','ilan ang loans ang active?'])assert.equal(shared.parseAssistantCommand(prompt,'dashboard','auto',now).intent,'activeLoans',prompt)
+ for(const prompt of ['ilan ba ang active na employees natin?','How many employees are active?'])assert.equal(shared.parseAssistantCommand(prompt,'dashboard','auto',now).intent,'activeEmployees',prompt)
+ assert.equal(shared.parseAssistantCommand('magkano ba total billing natin ngayong buwan?','dashboard','auto',now).intent,'billingTotal')
+ assert.equal(shared.assistantLanguage('paturo employee'),'fil')
  const past=shared.parseAssistantCommand('How many loans released September 2026?','dashboard','auto',now)
  assert.equal(past.intent,'issuedLoans');assert.equal(past.period.start,'2026-09-01');assert.equal(past.period.end,'2026-10-01')
  const rollover=shared.parseAssistantCommand('Total billing last month','dashboard','en',new Date('2026-12-31T17:00:00Z'))
  assert.equal(rollover.period.start,'2026-12-01');assert.equal(rollover.period.end,'2027-01-01')
  assert.equal(shared.parseAssistantCommand('Paano gamitin ito?','attendance-dtr','auto',now).intent,'help')
- for(const prompt of ['active loans for Agency X','active loans and total billing','delete all loans','SELECT * FROM user','active loans in 2024','active loans for employee 1','active loans greater than 100','active loans today except paused'])assert.equal(shared.parseAssistantCommand(prompt,'dashboard','auto',now).intent,'unsupported',prompt)
+ for(const prompt of ['active loans for Agency X','ilan ba ang active loans natin sa Agency X ngayong buwan','active loans and total billing','delete all loans','SELECT * FROM user','active loans in 2024','active loans for employee 1','active loans greater than 100','active loans today except paused'])assert.equal(shared.parseAssistantCommand(prompt,'dashboard','auto',now).intent,'unsupported',prompt)
 })
 test('every dashboard workspace has a curated help entry; suggestions respect permissions',()=>{
  const source=fs.readFileSync('app/pages/dashboard/index.vue','utf8').split('const workspaceViews')[1].split('const activeWorkspaceView')[0]
  for(const [,view] of source.matchAll(/'([a-z-]+)'/g))assert.ok(Object.hasOwn(shared.assistantPages,view),view)
  assert.equal(shared.assistantSuggestions('dashboard',{},'en').length,0)
- assert.deepEqual(shared.assistantSuggestions('employees-list',{employees:{canView:true}},'en'),['Explain this page','How to: Create an employee record?','How to: Edit employee details?','How many active employees?'])
+ assert.deepEqual(shared.assistantSuggestions('employees-list',{employees:{canView:true}},'en'),['Explain this page','How do I start using the system?','How to: Create an employee record?','How to: Edit employee details?','How many active employees?'])
  for(const [view,page] of Object.entries(shared.assistantPages))assert.ok(shared.assistantGuides.some(item=>item.view===view),`No workflow guide for ${view}`)
  assert.equal(new Set(shared.assistantGuides.map(item=>item.id)).size,shared.assistantGuides.length)
  for(const guide of shared.assistantGuides)for(const language of ['en','fil'])assert.ok(guide.steps[language].length>=3&&guide.steps[language].every(Boolean),guide.id)
  for(const guide of shared.assistantGuides)for(const language of ['en','fil'])assert.equal(shared.findAssistantGuide(`${language==='fil'?'Paano':'How to'}: ${guide.title[language]}`,guide.view)?.guide.id,guide.id,guide.title[language])
+})
+
+test('staff orientation understands the reported Taglish question from every workspace and filters steps by access',async()=>{
+ let reads=0;const server=api({execute:async()=>{reads++;throw Error('A guide must not query data')}})
+ const prompt='ano ba muna step by step para mapatakbo tong system?'
+ for(const view of Object.keys(shared.assistantPages).filter(view=>view!=='employee-portal')){
+  const answer=await server.answerAssistant(prompt,view,'auto',access,now)
+  assert.equal(answer.topic,'system-start',view);assert.match(answer.heading,/Simulan/)
+  assert.match(answer.steps.join(' '),/Organization/);assert.match(answer.steps.join(' '),/Payroll Processing/)
+ }
+ for(const question of ['Saan ako magsisimula?','Ano muna ang unang gagawin?','How do I start using the system?','Paturo naman ng buong proseso sa system','Step-by-step setup ng payroll system','Paano simulan ang paggamit ng system?']){
+  assert.equal((await server.answerAssistant(question,'employees-portal-accounts','auto',access,now)).topic,'system-start',question)
+ }
+ const limited=await server.answerAssistant(prompt,'employees-portal-accounts','fil',{employees:{canView:true}},now)
+ assert.equal(limited.topic,'system-start');assert.equal(limited.link,undefined)
+ assert.match(limited.steps.join(' '),/Employee List/)
+ assert.doesNotMatch(limited.steps.join(' '),/Payroll Processing|Generate Billing|Site Rates|Daily Time Records|Organization:/)
+ for(const item of limited.related){const guide=shared.assistantGuides.find(g=>g.id===item.id);assert.ok(shared.assistantCanReadGuide({employees:{canView:true}},guide))}
+ const explicit=await server.answerAssistant('Show steps','employees-portal-accounts','en',{employees:{canView:true}},now,undefined,{guideId:'system-start'})
+ assert.deepEqual(Array.from(explicit.steps),Array.from(shared.assistantGuideReply(shared.assistantGuides.find(g=>g.id==='system-start'),'en',now,false,{employees:{canView:true}}).steps))
+ assert.equal(reads,0)
+})
+
+test('casual workflow questions and next-step follow-ups stay within verified instructions',async()=>{
+ const server=api({execute:async()=>{throw Error('Unexpected business read')}})
+ for(const [prompt,topic] of [
+  ['paturo naman paano maidadagdag ang employee','employee-create'],
+  ['paano ko maiimport ang attendance excel','dtr-import'],
+  ['paki turo paano makapagprint ng dtr','dtr-print'],
+  ['paano ko mapalitan employee details','employee-edit']
+ ])assert.equal((await server.answerAssistant(prompt,'employees-portal-accounts','auto',access,now)).topic,topic,prompt)
+ const next=await server.answerAssistant('ano ang kasunod?','employees-list','auto',access,now,undefined,{contextGuide:'employee-create'})
+ assert.equal(next.topic,'document-create')
+ const noContext=await server.answerAssistant('Next step?','employees-portal-accounts','en',access,now)
+ assert.equal(noContext.topic,'system-start')
+ await assert.rejects(()=>server.answerAssistant('ano ang kasunod?','attendance-dtr','fil',{attendance:{canView:true}},now,undefined,{contextGuide:'dtr-edit'}),e=>e.statusCode===403)
+})
+
+test('assistant excludes local server setup from topics, orientation, replies and explicit selections',async()=>{
+ const server=api({execute:async()=>{throw Error('Unexpected business read')}})
+ assert.equal(shared.assistantGuides.some(guide=>guide.id==='system-local-start'),false)
+ for(const guide of shared.assistantGuides){
+  assert.doesNotMatch(JSON.stringify(guide),/system-local-start|npm run dev|xampp|localhost|local server|local system server/i)
+ }
+ for(const prompt of ['How do I start the Nuxt local server?','paano paandarin yung xampp mysql at system','ayaw gumana ng localhost ano gagawin','Start the local system server']){
+  const reply=await server.answerAssistant(prompt,'dashboard','auto',access,now)
+  assert.equal(reply.steps,undefined);assert.equal(reply.related,undefined);assert.equal(reply.topic,undefined)
+ }
+ await assert.rejects(()=>server.queryAssistant({body:{prompt:'Show steps',guideId:'system-local-start'}}),e=>e.statusCode===400)
+ const orientation=await server.answerAssistant('How do I start using the system?','dashboard','en',access,now)
+ assert.equal(orientation.topic,'system-start');assert.match(orientation.steps.join(' '),/Employee List/)
+})
+
+test('unrecognized system requests ask for clarification without silently running a filtered data query',async()=>{
+ let reads=0;const server=api({execute:async()=>{reads++;return[[{value:99}]]}})
+ const reply=await server.answerAssistant('How many active loans for Agency X?','employees-portal-accounts','en',access,now)
+ assert.equal(reply.heading,'Please clarify the task');assert.ok(reply.related.length)
+ assert.equal(reply.metric,undefined);assert.equal(reply.steps,undefined);assert.equal(reads,0)
+ const denied=await server.answerAssistant('How many active loans for Agency X?','dashboard','en',{employees:{canView:true}},now)
+ assert.equal(denied.related,undefined);assert.equal(denied.metric,undefined);assert.equal(reads,0)
+ for(const prompt of ['ano ba muna step by step para mapatakbo tong system?','How do I start the local server?','Next step?']){
+  const portal=shared.portalAssistantReply(prompt,'en')
+  assert.equal(portal.topic,undefined);assert.equal(portal.steps,undefined);assert.equal(portal.related,undefined)
+ }
 })
 
 test('resignation counts use dated periods and explicitly exclude legacy undated records',async()=>{

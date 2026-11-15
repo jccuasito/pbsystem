@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useAppTheme } from '~/composables/useAppTheme'
 import DjaAssistantMark from './DjaAssistantMark.vue'
-import { assistantPages, assistantSuggestions, assistantGuides, assistantCanView, portalAssistantReply, type AssistantAccess, type AssistantReply } from '~~/shared/utils/djaAssistant'
+import { assistantPages, assistantSuggestions, assistantGuides, assistantCanView, assistantCanReadGuide, portalAssistantReply, type AssistantAccess, type AssistantReply } from '~~/shared/utils/djaAssistant'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 const props = defineProps<{ view: string; access: AssistantAccess; portal?: boolean }>()
@@ -16,7 +16,7 @@ const messages = ref<{ id: number; question: string; page: string; answer?: Assi
 let sequence = 0, generation = 0, controller: AbortController | undefined
 const pageTitle = computed(() => assistantPages[props.portal ? 'employee-portal' : props.view]?.title || 'Dashboard')
 const suggestions = computed(() => assistantSuggestions(props.portal ? 'employee-portal' : props.view, props.portal ? {portal:{canView:true}} : props.access, locale.value === 'fil' ? 'fil' : 'en'))
-const guideOptions = computed(() => assistantGuides.filter(item => props.portal ? item.view === 'employee-portal' : assistantCanView(props.access, assistantPages[item.view].module)))
+const guideOptions = computed(() => assistantGuides.filter(item => props.portal ? item.view === 'employee-portal' : assistantCanReadGuide(props.access,item)))
 watch(() => props.view, () => { lastTopic.value = undefined; selectedGuide.value = '' })
 async function show() { open.value = true; await nextTick(); input.value?.focus() }
 async function close() { open.value = false; await nextTick(); launcher.value?.focus() }

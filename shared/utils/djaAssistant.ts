@@ -1,5 +1,5 @@
 /** Curated system help and bounded bilingual commands. No prompt becomes SQL or HTML. */
-import { assistantGuides, findAssistantGuide, findPortalAssistantGuide, normalizeAssistantQuestion, type AssistantGuide } from './djaAssistantGuides.ts'
+import { assistantGuides, findAssistantGuide, findPortalAssistantGuide, normalizeAssistantQuestion, assistantTopicOptions, type AssistantGuide } from './djaAssistantGuides.ts'
 export { assistantGuides, findAssistantGuide } from './djaAssistantGuides.ts'
 export type AssistantLanguage = 'en' | 'fil'
 export type AssistantAccess = Record<string, { canView: boolean; canEdit?: boolean }>
@@ -46,6 +46,10 @@ export const assistantPages: Record<string, AssistantPage> = {
 export function assistantCanView(access: AssistantAccess, module: string) {
   return module === 'settings' || access[module]?.canView === true || (module === 'portal' && access.employees?.canView === true)
 }
+export function assistantCanReadGuide(access: AssistantAccess, guide: AssistantGuide) {
+  // The general staff orientation contains only steps filtered by module access.
+  return guide.id==='system-start' || assistantCanView(access,assistantPages[guide.view].module)
+}
 export type AssistantIntent = 'help' | 'activeLoans' | 'issuedLoans' | 'activeEmployees' | 'hiredEmployees' | 'resignedEmployees' | 'pendingPayroll' | 'billingTotal' | 'presentToday' | 'unsupported'
 export type AssistantCommand = { intent: AssistantIntent; language: AssistantLanguage; view: string; period: { start: string; end: string; label: string }; historical: boolean; dated: boolean }
 export type AssistantReply = { text: string; generatedAt: string; source?: string; scope?: string; heading?: string; steps?: string[]; topic?: string; related?: { id: string; label: string }[]; metric?: { label: string; value: number; format: 'count' | 'php' }; link?: { view: string; label: string } }
@@ -59,14 +63,36 @@ export function assistantScopeReply(language: AssistantLanguage, now = new Date(
   }
 }
 export function assistantLanguage(prompt: string, locale: 'auto' | AssistantLanguage = 'auto'): AssistantLanguage {
-  return locale === 'auto' ? /\b(ilan|ilang|magkano|ngayong|nakaraang|paano|pano|papano|ano|bakit|saan|pakita|ipakita|empleyado|pahiram|tulong|gumawa|magdagdag)\b/.test(normalizeAssistantQuestion(prompt)) ? 'fil' : 'en' : locale
+  return locale === 'auto' ? /\b(ilan|ilang|magkano|ngayong|nakaraang|paano|pano|papano|ano|bakit|saan|pakita|ipakita|empleyado|pahiram|tulong|gumawa|magdagdag|naman|muna|meron|natin|kasunod|susunod|simulan|paandarin|gamitin)\b/.test(normalizeAssistantQuestion(prompt)) || /\b(?:paturo|pakituro|turuan|idagdag|maidadagdag|maiimport|mapalitan)\b/i.test(prompt) ? 'fil' : 'en' : locale
 }
-export function assistantGuideReply(guide: AssistantGuide, language: AssistantLanguage, now = new Date(), unsupportedAction = false): AssistantReply {
+export function assistantGuideReply(guide: AssistantGuide, language: AssistantLanguage, now = new Date(), unsupportedAction = false, access?: AssistantAccess): AssistantReply {
   const page = assistantPages[guide.view], fil = language === 'fil'
   const text = unsupportedAction
     ? fil ? 'Wala pang verified steps para sa partikular na action na iyan. Narito ang available page guide; piliin ang kaugnay na topic kung ito ang kailangan mo.' : 'Verified steps for that particular action are not available yet. Here is the available page guide; choose a related topic if that is what you need.'
     : fil ? 'Narito ang proseso sa system. Gagawin mo ang mga hakbang gamit ang existing controls at permissions mo; walang record na binago ng assistant.' : 'Here are the steps in the system. Use the existing controls with your permissions; the assistant has not changed any records.'
-  return { text, generatedAt: now.toISOString(), heading: guide.title[language], steps: guide.steps[language], topic: guide.id, scope: page.title, source: 'DJA workflow guide', related: assistantGuides.filter(item => item.view === guide.view && item.id !== guide.id).map(item => ({ id: item.id, label: item.title[language] })), ...(guide.view === 'employee-portal' ? {} : { link: { view: guide.view, label: page.title } }) }
+  const steps=guide.steps[language].filter((_,index)=>{
+    const stepGuide=assistantGuides.find(item=>item.id===guide.stepGuideIds?.[index])
+    return !access || !guide.stepGuideIds || Boolean(stepGuide && assistantCanReadGuide(access,stepGuide))
+  })
+  const related=(guide.relatedIds ? guide.relatedIds.map(id=>assistantGuides.find(item=>item.id===id)).filter((item):item is AssistantGuide=>Boolean(item)) : assistantGuides.filter(item=>item.view===guide.view && item.id!==guide.id))
+    .filter(item=>!access || assistantCanReadGuide(access,item)).map(item=>({id:item.id,label:item.title[language]}))
+  const orientation=guide.id==='system-start'
+  const scope=orientation ? (fil?'Pangkalahatang gabay sa system':'System workflow') : page.title
+  const canNavigate=guide.view!=='employee-portal' && (!access || assistantCanView(access,page.module))
+  return {
+    text:orientation ? (fil ? 'Narito ang karaniwang pagkakasunod-sunod ng paggamit ng system. Ang ipinakitang module steps ay ayon sa View access mo; hindi ito pagsusuri kung kumpleto na ang aktuwal na setup. May hiwalay na gabay sa bawat hakbang sa ibaba. Sundin ang Edit/approval permissions mo bago mag-save o mag-finalize.' : 'Here is the usual system workflow. Module steps shown reflect your View access; this is not a check of the actual setup state. Detailed guides are available below. Follow your Edit/approval permissions before saving or finalizing.') : text,
+    generatedAt:now.toISOString(),heading:guide.title[language],steps,topic:guide.id,scope,source:'DJA workflow guide',related,
+    ...(canNavigate ? {link:{view:guide.view,label:page.title}} : {})
+  }
+}
+export function assistantClarificationReply(prompt:string,access:AssistantAccess,language:AssistantLanguage,now=new Date()):AssistantReply|null {
+  const options=assistantTopicOptions(prompt).filter(item=>assistantCanReadGuide(access,item))
+  if(!options.length) return null
+  return {
+    heading:language==='fil'?'Linawin ang nais mong gawin':'Please clarify the task',
+    text:language==='fil'?'Kaugnay ng system ang paksang ito, ngunit hindi ko pa matukoy ang eksaktong gawain o suportadong buod na kailangan mo. Pakilinaw ang gusto mong gawin o pumili ng gabay sa ibaba. Hindi ako nanghuhula ng datos o nagsasagawa ng pagbabago sa records.':'This topic relates to the system, but I could not identify the exact task or supported summary you need. Please describe what you want to do or choose a guide below. I do not infer data or change records.',
+    source:'DJA Assistant',generatedAt:now.toISOString(),related:options.map(item=>({id:item.id,label:item.title[language]}))
+  }
 }
 /** Portal help runs locally and can only return public portal instructions, never staff data. */
 export function portalAssistantReply(prompt: string, locale: 'auto' | AssistantLanguage, guideId?: string, contextGuide?: string, now = new Date()): AssistantReply {
@@ -102,14 +128,19 @@ export function parseAssistantCommand(prompt: string, view = 'dashboard', locale
     const match = /\s+(?:in |noong |sa )?(january|february|march|april|may|june|july|august|september|october|november|december) (20\d{2})$/.exec(text)
     if (match) { dated = true; month = ['january','february','march','april','may','june','july','august','september','october','november','december'].indexOf(match[1]) + 1; year = Number(match[2]); text = text.slice(0, match.index) }
   }
+  // Remove only conversational particles around a complete supported metric.
+  // Agency/person/amount filters remain in the text and cannot be silently dropped.
+  text=text.replace(/^(?:ilan|ilang) (?:(?:na|ba|po|ang) )*/,'ilan ang ')
+    .replace(/^magkano (?:(?:na|ba|po|ang) )*/,'magkano ang ')
+    .replace(/ (?:natin|meron tayo|ang meron tayo)$/,'')
   const start = `${year}-${String(month).padStart(2,'0')}-01`
   const end = `${month === 12 ? year + 1 : year}-${String(month === 12 ? 1 : month + 1).padStart(2,'0')}-01`
   const label = new Intl.DateTimeFormat(language === 'fil' ? 'fil-PH' : 'en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(start + 'T00:00:00Z'))
   let intent: AssistantIntent = 'unsupported'
   if (/^(?:help|help me|explain this page|how do i use this page|paano gamitin ito|paano gamitin ang page na ito|ano ang page na ito|tulong)$/.test(text) && !dated) intent = 'help'
-  else if (/^(?:(?:how many|number of|ilan ang|ilang) )?active loans(?: are there)?$/.test(text)) intent = 'activeLoans'
+  else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:active loans|active na loans|aktibong utang|loans (?:ang )?(?:active|aktibo))(?: are there)?$/.test(text)) intent = 'activeLoans'
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:loans (?:issued|released)|na release na loans)$/.test(text)) intent = 'issuedLoans'
-  else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:active employees|aktibong empleyado)(?: are there)?$/.test(text)) intent = 'activeEmployees'
+  else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:active employees|active na employees|aktibong empleyado|(?:employees|empleyado) (?:are |ang )?(?:active|aktibo))(?: are there)?$/.test(text)) intent = 'activeEmployees'
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:employees hired|bagong empleyado)$/.test(text)) intent = 'hiredEmployees'
   else if (resignationQuestion.test(text)) intent = 'resignedEmployees'
   else if (/^(?:(?:how many|number of|ilan ang|ilang) )?(?:pending payroll|payroll for approval)(?: are there)?$/.test(text)) intent = 'pendingPayroll'
@@ -120,11 +151,13 @@ export function parseAssistantCommand(prompt: string, view = 'dashboard', locale
 
 export function assistantSuggestions(view: string, access: AssistantAccess, language: AssistantLanguage) {
   const fil = language === 'fil'
-  const local = assistantGuides.filter(item => item.view === view).slice(0, 2).map(item => ({ module: assistantPages[view]?.module || 'dashboard', text: `${fil ? 'Paano: ' : 'How to: '}${item.title[language]}?` }))
+  const local = assistantGuides.filter(item => item.view === view && !item.id.startsWith('system-')).slice(0, 2).map(item => ({ module: assistantPages[view]?.module || 'dashboard', text: `${fil ? 'Paano: ' : 'How to: '}${item.title[language]}?` }))
   const items = [{ module: assistantPages[view]?.module || 'dashboard', text: fil ? 'Paano gamitin ito?' : 'Explain this page' }, ...local,
     { module: 'deductions', text: fil ? 'Ilan ang active loans ngayong buwan?' : 'How many active loans this month?' },
     { module: 'employees', text: fil ? 'Ilan ang active employees?' : 'How many active employees?' },
     { module: 'billing', text: fil ? 'Magkano ang total billing ngayong buwan?' : 'Total billing this month' },
     { module: 'payroll', text: fil ? 'Ilan ang pending payroll?' : 'How many pending payroll?' }]
-  return items.filter(item => assistantCanView(access, item.module)).map(item => item.text)
+  const result=items.filter(item => assistantCanView(access, item.module)).map(item => item.text)
+  if(view!=='employee-portal' && result.length) result.splice(1,0,fil?'Paano simulan ang paggamit ng system?':'How do I start using the system?')
+  return result
 }

@@ -24,7 +24,7 @@ export function calendarDate(value: unknown, label: string) {
 }
 
 /** Structural limits shared by every JSON API, including the employee portal. Never mutates values. */
-export function validateRequestObject(value: unknown, options: { dtrImportRows?: boolean } = {}) {
+export function validateRequestObject(value: unknown, options: { dtrImportRows?: boolean; assistantGuideId?: boolean } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Send a JSON object.')
   let nodes = 0
   const visit = (entry: unknown, depth: number, key = '', dtrImportRow = false) => {
@@ -34,7 +34,12 @@ export function validateRequestObject(value: unknown, options: { dtrImportRows?:
     // Spreadsheet Employee ID cells may contain EMP-0011 or an external badge
     // number such as DJA-0001. The DTR importer resolves these to enrolled IDs.
     const employeeCode = dtrImportRow && depth === 3 && key === 'EmployeeID'
-    if (employeeCode && entry != null) {
+    // Assistant topic IDs are named slugs, not database primary keys. The
+    // exact POST route opts in, and its handler still checks the known topics.
+    const assistantGuide = options.assistantGuideId === true && depth === 1 && key === 'guideId'
+    if (assistantGuide && entry != null) {
+      if (typeof entry !== 'string' || !/^[a-z][a-z0-9-]{0,99}$/.test(entry)) return invalid('Select a valid help topic.')
+    } else if (employeeCode && entry != null) {
       if (!['string', 'number'].includes(typeof entry) || String(entry).length > 190) return invalid('Employee ID / Employee No. must contain plain text of up to 190 characters.')
     } else if (/(?:^id$|ID$|Id$)/.test(key) && key !== 'googleId' && entry != null && entry !== '') {
       if (!['string', 'number'].includes(typeof entry) || !/^\d+$/.test(String(entry)) || !Number.isSafeInteger(Number(entry))) return invalid('Identifiers must be whole numbers.')

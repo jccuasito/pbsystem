@@ -96,7 +96,8 @@ export async function secureApiRequest(event: any, path: string) {
     try { body = JSON.parse(raw.toString('utf8')) } catch { throw createError({ statusCode: 400, statusMessage: 'Send valid JSON.' }) }
     const dtrImportRows = (event.method || event.node.req.method) === 'POST'
       && /^\/api\/attendance\/dtr\/[1-9]\d*\/records$/.test(path) && body?.ImportRows === true
-    validateRequestObject(body, { dtrImportRows })
+    const assistantGuideId = (event.method || event.node.req.method) === 'POST' && path === '/api/assistant/query'
+    validateRequestObject(body, { dtrImportRows, assistantGuideId })
   }
   limitAuthentication(event, path, body)
 }

@@ -1,7 +1,36 @@
 /** Verified workflow knowledge. Instructions only: nothing here executes an action. */
-export type AssistantGuide = { id: string; view: string; title: { en: string; fil: string }; actions: string[]; steps: { en: string[]; fil: string[] } }
+export type AssistantGuide = { id: string; view: string; title: { en: string; fil: string }; actions: string[]; steps: { en: string[]; fil: string[] }; stepGuideIds?: string[]; relatedIds?: string[] }
 const guide = (id: string, view: string, en: string, fil: string, actions: string[], english: string[], filipino: string[]): AssistantGuide => ({ id, view, title: { en, fil }, actions, steps: { en: english, fil: filipino } })
 export const assistantGuides: AssistantGuide[] = [
+  {
+    ...guide('system-start','dashboard','Start using the payroll system step by step','Simulan ang paggamit ng payroll system nang sunod-sunod',['use','setup'],[
+      'Start in Settings > Workspace access to check your View/Edit permissions. Complete the steps assigned to your role and coordinate the remaining setup with the authorized staff.',
+      'Prepare Organization: agencies and positions, regions, clients, sites and site accounts. Verify the correct agency/client/site relationships before encoding employees and attendance.',
+      'Create the employee profiles in Employee List and complete their applicable documents in Employee Documents. Review duplicate notices and the employee agency/position.',
+      'Set up the applicable Payroll Rates and Billing Rates, then link them through Site Rates. Check effective dates and agency/position matches.',
+      'Prepare the agency Shift Codes and applicable Holiday Manager dates before importing biometric attendance.',
+      'If applicable, prepare the Loan & Deduction Catalog, employee issuances and agency/position contribution or recurring plans. Review repayment dates and cutoff settings.',
+      'In Daily Time Records, select the correct site and cutoff, create/open the DTR and add the employees as Regular / Fixed or Reliever. Import Excel or encode attendance, manually correct missing punches and unknown shifts, and record BTR when applicable. Review before Compute to payroll.',
+      'In Payroll Processing, Review the site cutoff, rates, hours, earnings and deductions. An authorized user finalizes after resolving warnings. Finalization does not pay salary or post payslips.',
+      'In Payslips by Site Account, review finalized payroll sources and Post selected payslips. Only valid Posted payslips become visible in the employee portal.',
+      'In Portal Accounts, review employee portal access and assist with account/recovery concerns through the existing authorized controls. An employee uses their own portal account to view posted payslips.',
+      'For client billing, use Generate Billing to review applicable sources, rates and charges, then save/review/finalize through the available controls. Use Billing History to review saved bills.'
+    ],[
+      'Magsimula sa Settings > Workspace access para makita ang View/Edit permissions mo. Gawin ang nakatalaga sa role mo at makipag-ugnayan sa authorized staff para sa natitirang setup.',
+      'Ihanda ang Organization: agencies at positions, regions, clients, sites at site accounts. Tiyakin ang tamang agency/client/site relationships bago mag-encode ng employees at attendance.',
+      'Gumawa ng employee profiles sa Employee List at kumpletuhin ang applicable documents sa Employee Documents. Suriin ang duplicate notices at agency/position ng employee.',
+      'I-set up ang applicable Payroll Rates at Billing Rates, saka i-link sa Site Rates. Tiyakin ang effective dates at tugmang agency/position.',
+      'Ihanda ang agency Shift Codes at applicable dates sa Holiday Manager bago mag-import ng biometric attendance.',
+      'Kung applicable, ihanda ang Loan & Deduction Catalog, employee issuances at agency/position contribution o recurring plans. Suriin ang repayment dates at cutoff settings.',
+      'Sa Daily Time Records, piliin ang tamang site at cutoff, gumawa/buksan ang DTR at idagdag ang employees bilang Regular / Fixed o Reliever. Mag-import ng Excel o mag-encode, mano-manong ayusin ang kulang na punches at unknown shifts, at mag-record ng BTR kung kailangan. I-review bago Compute to payroll.',
+      'Sa Payroll Processing, i-Review ang site cutoff, rates, hours, earnings at deductions. Authorized user ang magfa-finalize matapos maayos ang warnings. Hindi salary payment o payslip posting ang finalization.',
+      'Sa Payslips by Site Account, suriin ang finalized payroll sources at piliin ang Post selected payslips. Valid na Posted payslips lang ang nakikita sa employee portal.',
+      'Sa Portal Accounts, suriin ang employee portal access at tumulong sa account/recovery concerns gamit ang authorized controls. Sariling portal account ng employee ang para sa kanyang posted payslips.',
+      'Para sa client billing, gamitin ang Generate Billing: suriin ang applicable sources, rates at charges bago mag-save/review/finalize sa available controls. Sa Billing History makikita ang saved bills.'
+    ]),
+    stepGuideIds:['settings-account','organization-agency-manage','employee-create','site-rate-link','shift-create','loan-create','dtr-create','payroll-process','payslip-post','portal-admin','billing-create'],
+    relatedIds:['organization-agency-manage','employee-create','site-rate-link','shift-create','dtr-import','payroll-process','payslip-post','portal-admin','billing-create']
+  },
   guide('dashboard-use','dashboard','Read the dashboard','Basahin ang dashboard',['use'],[
     'Review the overview cards. Current-status cards are snapshots, while billing uses its labelled month.',
     'Select a payroll cutoff in Payroll Run Progress to inspect finalized, pending and missing-DTR sites.',
@@ -260,9 +289,30 @@ export const assistantGuideAliases: Record<string,string[]> = {
 }
 
 export function normalizeAssistantQuestion(value: string) {
-  return value.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}]/gu,' ').replace(/\b(?:pano|papano|paano)\b/g,'paano').replace(/\b(?:mag|i|ipa)\s*(create|add|edit|update|import|upload|export|print|post|compute|delete|register|save)\b/g,'$1').replace(/\s+/g,' ').trim()
+  return value.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}]/gu,' ').replace(/\b(?:pano|papano|paano)\b/g,'paano')
+    .replace(/\b(?:paturo|paturuan|pakituro|pakituruan|turuan|ituro)\b/g,'guide')
+    .replace(/\b(?:maidadagdag|makapagdagdag|idagdag|magdadagdag)\b/g,'add')
+    .replace(/\b(?:maedit|maiupdate|maiaupdate|iupdate|iedit|mapalitan|palitan)\b/g,'edit')
+    .replace(/\b(?:maimport|maiimport|makapagimport|iimport)\b/g,'import')
+    .replace(/\b(?:makapagprint|maiprint|iprint)\b/g,'print')
+    .replace(/\b(?:mag|i|ipa)\s*(create|add|edit|update|import|upload|export|print|post|compute|delete|register|save)\b/g,'$1').replace(/\s+/g,' ').trim()
 }
 function contains(text: string, phrase: string) { return (` ${text} `).includes(` ${phrase} `) }
+function unrelatedQuestion(text: string) {
+  // Infrastructure setup belongs to the deployment operator, not the app helper.
+  if (/\b(?:xampp|mysql|nuxt|localhost|server|terminal|npm|hosting|cpanel|namecheap)\b/.test(text)) return true
+  return /\b(?:translate|translation|how (?:do i |to )?say|meaning (?:ng|of)|english (?:ng|of|for)|tagalog (?:ng|of|for)|spell|spelling|synonym|antonym|weather|forecast|umuulan|panahon|jokes?|biro|recipes?|cook|cooking|luto|magluto|pizza|cake|movies?|songs?|music|sports?|basketball|horoscope|politics|javascript|python)\b/.test(text)
+}
+function guideReferences(text: string) {
+  return Object.entries(assistantGuideAliases).flatMap(([view,aliases])=>aliases.filter(alias=>contains(text,alias)).map(alias=>({view,score:alias.split(' ').length*100+alias.length,position:(` ${text} `).indexOf(` ${alias} `)}))).sort((a,b)=>b.score-a.score)
+}
+/** A recognized system subject can need clarification without being outside scope. */
+export function assistantTopicOptions(prompt: string) {
+  const text=normalizeAssistantQuestion(prompt)
+  if (unrelatedQuestion(text)) return []
+  const reference=guideReferences(text).sort((a,b)=>a.position-b.position || b.score-a.score)[0]
+  return reference ? assistantGuides.filter(item=>item.view===reference.view).slice(0,4) : []
+}
 /** Public portal instructions only. Never fall back from a staff question to a portal topic. */
 export function findPortalAssistantGuide(prompt: string, contextGuide?: string) {
   const text=normalizeAssistantQuestion(prompt).replace(/^(?:hey )?dja (?:assistant|ai) /,'')
@@ -289,12 +339,19 @@ export function findAssistantGuide(prompt: string, currentView: string, contextG
   const text=normalizeAssistantQuestion(prompt)
   // A question word or an unrelated pronoun does not establish a system topic.
   // These common general-assistant requests must not match a stray module name.
-  if (/\b(?:translate|translation|how (?:do i |to )?say|meaning (?:ng|of)|english (?:ng|of|for)|tagalog (?:ng|of|for)|spell|spelling|synonym|antonym|weather|forecast|umuulan|panahon|jokes?|biro|recipes?|cook|cooking|luto|movies?|songs?|music|sports?|basketball|horoscope|politics|javascript|python)\b/.test(text)) return null
+  if (unrelatedQuestion(text)) return null
   if (/\b(?:how many|how much|ilan|ilang|magkano|number of)\b/.test(text)) return null
-  if (!/\b(?:paano|how|where|saan|ano|what|why|bakit|help|guide|steps|turo|explain|create|add|edit|import|export|print|post|setup|set up|register|requirements|kailangan|gumawa|magdagdag|baguhin|delete|deactivate|pause|resume|compute|backup|recovery|forgot)\b/.test(text)) return null
+  const knownGuide=(id: string)=>({guide:assistantGuides.find(item=>item.id===id)!,unsupportedAction:false,action:'use'})
+  const wholeSystem=/\b(?:system|sistema|overall workflow|whole workflow|buong proseso|buong flow)\b/.test(text)
+  if ((wholeSystem && /\b(?:step by step|steps|guide|workflow|flow|process|proseso|gamitin|use|setup|set up|start|begin|mapatakbo|patakbuhin|paandarin|simulan|magsimula|umpisahan|paggamit|paano)\b/.test(text)) || /^(?:(?:saan|paano|where|how) (?:ba |po |ako |muna |do i |to )*(?:magsisimula|magsimula|mag uumpisa|mag umpisa|start|begin)|ano (?:ba |po |ang |muna )*(?:unang gagawin|uunahin|una)|(?:getting started|get started))(?: (?:dito|po|sa system|sa sistema|naman))*$/.test(text)) return knownGuide('system-start')
+  if (/^(?:ano (?:ang |yung |po |na )?(?:kasunod|susunod|next)(?: na (?:step|gagawin))?|(?:tapos|pagkatapos)(?: ano| naman)?|next(?: step| steps)?|what(?: is| s)? next)(?: (?:po|naman|dito|na))*$/.test(text)) {
+    const next:Record<string,string>={'employee-create':'document-create','rates-payroll-manage':'site-rate-link','site-rate-link':'shift-create','shift-create':'dtr-create','dtr-create':'dtr-import','dtr-import':'dtr-edit','dtr-edit':'payroll-process','payroll-process':'payslip-post','payslip-post':'portal-admin','billing-create':'billing-history-use'}
+    return knownGuide(contextGuide && next[contextGuide] || 'system-start')
+  }
   const exactTopic=assistantGuides.flatMap(item=>Object.values(item.title).map(title=>({guide:item,title:normalizeAssistantQuestion(title)}))).filter(item=>contains(text,item.title)).sort((a,b)=>b.title.length-a.title.length)[0]
   if (exactTopic) return {guide:exactTopic.guide,unsupportedAction:false,action:'use'}
-  const references=Object.entries(assistantGuideAliases).flatMap(([view,aliases])=>aliases.filter(alias=>contains(text,alias)).map(alias=>({view,score:alias.split(' ').length*100+alias.length}))).sort((a,b)=>b.score-a.score)
+  if (!/\b(?:paano|how|where|saan|ano|what|why|bakit|help|guide|steps|turo|explain|create|add|edit|import|export|print|post|setup|set up|register|requirements|kailangan|gumawa|magdagdag|baguhin|delete|deactivate|pause|resume|compute|backup|recovery|forgot)\b/.test(text)) return null
+  const references=guideReferences(text)
   const pageHelp=/^(?:help|help me|guide|steps|explain this page|how do i use this page|paano gamitin ito|paano gamitin ang page na ito|ano ang page na ito|tulong)$/.test(text)
   const followUp=assistantGuides.some(item=>item.id===contextGuide && item.view!=='employee-portal') && /^(?:paano|how(?: do i| to)?) (?:mag )?(?:create|add|edit|update|import|export|print|save|post|compute|delete|deactivate|pause|resume|recover|change|baguhin)(?: (?:ng|ang))? (?:it|this|that|ito|nito|iyan|niyan|iyon|yun)(?: naman)?$/.test(text)
   if (!references.length && !pageHelp && !followUp) return null
@@ -305,7 +362,7 @@ export function findAssistantGuide(prompt: string, currentView: string, contextG
   if (/\b(?:payslip|payslips)\b/.test(text) && /\b(?:employee|employees)\b/.test(text) && !/\bportal\b/.test(text)) view='payslip'
   if (/\b(?:payslip|payslips)\b/.test(text) && /\b(?:post|publish)\b/.test(text)) view='payslip-sites'
   if (!references.length && followUp) view=assistantGuides.find(item=>item.id===contextGuide)?.view||view
-  const topics=assistantGuides.filter(item=>item.view===view)
+  const topics=assistantGuides.filter(item=>item.view===view && !item.id.startsWith('system-'))
   if (!topics.length) return null
   let action='use'
   const actions:[string,RegExp][]=[['resign',/\b(?:resign|resigned|resignation|nagresign)\b/],['btr',/\b(?:btr|break time reliever)\b/],['backup',/\b(?:backup|back up|restore)\b/],['access',/\b(?:permission|permissions|team access|staff access)\b/],['recovery',/\b(?:recovery|forgot|nakalimutan|recover)\b/],['position',/\b(?:change position|promotion|promote|palit ng position)\b/],['transfer',/\b(?:transfer|ilipat|lipat)\b/],['people',/\b(?:add|create|dagdag|magdagdag)\b.*\b(?:employee|employees|tao)\b.*\bdtr\b/],['import',/\b(?:import)\b/],['upload',/\b(?:upload|attach|scan)\b/],['print',/\b(?:print|pdf|png)\b/],['export',/\b(?:export|download)\b/],['post',/\b(?:post|publish|publication)\b/],['pause',/\b(?:pause|skip)\b/],['resume',/\b(?:resume)\b/],['delete',/\b(?:delete|remove|burahin)\b/],['deactivate',/\b(?:deactivate|disable)\b/],['approve',/\b(?:approve|finalize|finalise|reject)\b/],['compute',/\b(?:compute|calculate|kalkulahin|computation)\b/],['edit',/\b(?:edit|update|change|correct|baguhin|itama)\b/],['requirements',/\b(?:requirements|required|fields|kailangan)\b/],['create',/\b(?:create|add|new|gumawa|magdagdag|register|encode)\b/],['summary',/\b(?:summary|history)\b/]]

@@ -2,7 +2,7 @@ import { createError, readBody, setHeader } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { currentActor, accessForUser } from './settingsAccess'
-import { assistantPages, assistantCanView, parseAssistantCommand, assistantGuides, findAssistantGuide, assistantGuideReply, assistantScopeReply, type AssistantAccess, type AssistantReply } from '../../shared/utils/djaAssistant'
+import { assistantPages, assistantCanView, assistantCanReadGuide, parseAssistantCommand, assistantGuides, findAssistantGuide, assistantGuideReply, assistantScopeReply, assistantClarificationReply, type AssistantAccess, type AssistantReply } from '../../shared/utils/djaAssistant'
 
 const limits = new Map<number, { count: number; expires: number }>()
 function limitUser(event: any, id: number) {
@@ -41,11 +41,11 @@ export async function answerAssistant(prompt: string, view: string, locale: 'aut
       ? (explicitSelection || resolved?.guide.id===options.guideId ? {guide:assistantGuides.find(item=>item.id===options.guideId),unsupportedAction:false} : null)
       : resolved
     if (found?.guide) {
-      if (!assistantCanView(access, assistantPages[found.guide.view].module)) throw createError({ statusCode: 403, statusMessage: 'You do not have access to this page.' })
-      return assistantGuideReply(found.guide, command.language, now, found.unsupportedAction)
+      if (!assistantCanReadGuide(access,found.guide)) throw createError({ statusCode: 403, statusMessage: 'You do not have access to this page.' })
+      return assistantGuideReply(found.guide, command.language, now, found.unsupportedAction,access)
     }
   }
-  if (command.intent === 'unsupported' || command.intent === 'help') return assistantScopeReply(command.language,now)
+  if (command.intent === 'unsupported' || command.intent === 'help') return assistantClarificationReply(prompt,access,command.language,now) || assistantScopeReply(command.language,now)
   const tool = assistantTools[command.intent]
   if (!assistantCanView(access, tool.module)) throw createError({ statusCode: 403, statusMessage: 'You do not have view access to the requested module.' })
   if (!tool.monthly && command.dated && (command.historical || command.intent !== 'activeLoans')) {
