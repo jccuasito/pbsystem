@@ -15,18 +15,19 @@ async function fixture() {
       import Progress from './app/components/PayrollRunProgress.vue';
       import Result from './app/components/DtrImportResultModal.vue';
       import Portal from './app/pages/employee-portal/index.vue';
+      import Landing from './app/pages/funnelpage/index.vue';
       import DateField from './components/ModernDateField.vue';
       import TimeField from './components/ModernTimeField.vue';
       import CompactDtr from './app/components/DtrCompactPrintView.vue';
       import Btr from './app/components/DtrBtrModal.vue';
       const app=createApp({setup(){
-        const {isDark,toggleTheme}=provideAppTheme(),scene=ref('workspace'),result=ref(null);
+        const {isDark,toggleTheme}=provideAppTheme(),scene=ref('landing'),result=ref(null);
         window.themeTest={scene,result,toggleTheme};
         watchEffect(()=>document.documentElement.dataset.theme=isDark.value?'dark':'light');
         const dtr=window.themeDtrFixture;
         const renderDtr=()=>h('div',{class:'page dash-page','data-theme':isDark.value?'dark':'light'},h('div',{class:'dash-workspace-page'},scene.value==='compact'?h(CompactDtr,{data:dtr}):h(Btr,{dtr:dtr.batch})));
         const renderPortal=()=>h(Portal);
-        return()=>scene.value==='portal'?renderPortal():['compact','btr'].includes(scene.value)?renderDtr():h('div',{class:'page dash-page','data-theme':isDark.value?'dark':'light'},[
+        return()=>scene.value==='landing'?h(Landing):scene.value==='portal'?renderPortal():['compact','btr'].includes(scene.value)?renderDtr():h('div',{class:'page dash-page','data-theme':isDark.value?'dark':'light'},[
           h('button',{onClick:toggleTheme},'Toggle theme'),h(Progress),
           h('div',{class:'dash-workspace-page'},[h(DateField,{modelValue:'2026-12-25',label:'Holiday date'}),h(TimeField,{modelValue:'07:00',label:'Time in'})]),
           h('button',{onClick:()=>result.value={imported:2,updated:1,skipped:1,blank:3,issues:[{row:21,reason:'Shift code TEST is missing.'}]}},'Show import result'),
@@ -35,6 +36,7 @@ async function fixture() {
       app.component('NuxtLink',{props:['to'],setup:(p,{slots})=>()=>h('a',{href:p.to},slots.default?.())});app.mount('#app');
     ` },
     bundle: true, write: false, format: 'iife', platform: 'browser',
+    nodePaths: (process.env.NODE_PATH || '').split(path.delimiter).filter(Boolean),
     alias: { '~~': root, '~': path.join(root, 'app') },
     define: { 'process.env.NODE_ENV': '"production"' },
     plugins: [{ name: 'theme-fixture', setup(build) {
@@ -44,7 +46,13 @@ async function fixture() {
         const { descriptor, errors } = sfc.parse(fs.readFileSync(args.path, 'utf8'), { filename: args.path })
         assert.deepEqual(errors, [])
         const id = 'data-v-' + crypto.createHash('sha1').update(args.path).digest('hex').slice(0, 8)
-        const script = sfc.compileScript(descriptor, { id, inlineTemplate: true, genDefaultAs: 'Component' })
+        let script
+        if (descriptor.script || descriptor.scriptSetup) script = sfc.compileScript(descriptor, { id, inlineTemplate: true, genDefaultAs: 'Component' })
+        else {
+          const template = sfc.compileTemplate({source: descriptor.template.content, filename: args.path, id})
+          assert.deepEqual(template.errors, [])
+          script = {content: template.code.replace('export function render', 'function render') + ';const Component={render}'}
+        }
         for (const style of descriptor.styles) {
           const compiled = sfc.compileStyle({ source: style.content, filename: args.path, id, scoped: style.scoped })
           assert.deepEqual(compiled.errors, [])
@@ -89,7 +97,27 @@ test('theme persists across views; DTR paper stays fixed, BTR adapts, and paysli
       const rgb = await page.locator(selector).first().evaluate(el => getComputedStyle(el).backgroundColor.match(/\d+/g).slice(0, 3).map(Number))
       assert.ok(dark ? Math.max(...rgb) < 120 : Math.min(...rgb) > 210, `${selector}: ${rgb}`)
     }
+    // New visitors see the real landing page in light mode even on a dark OS.
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light')
+    await assertSurface('.page', false)
+    assert.equal(await page.evaluate(() => localStorage.getItem('dja-theme')), null)
+    await page.getByRole('button', { name: 'Toggle dark mode' }).click()
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark')
+    assert.equal(await page.evaluate(() => localStorage.getItem('dja-theme')), 'dark')
+    const restored = await context.newPage()
+    await restored.goto('http://theme.test');await restored.addStyleTag({content: built.css})
+    await restored.addScriptTag({content: built.script})
+    await restored.waitForFunction(() => document.documentElement.dataset.theme === 'dark')
+    await restored.close()
+    const blockedStorage = await context.newPage()
+    await blockedStorage.goto('http://theme.test');await blockedStorage.addStyleTag({content: built.css})
+    await blockedStorage.evaluate(() => Object.defineProperty(window, 'localStorage', {configurable:true,get(){throw new Error('Storage disabled for test')}}))
+    await blockedStorage.addScriptTag({content: built.script})
+    await blockedStorage.waitForFunction(() => document.documentElement.dataset.theme === 'light')
+    await blockedStorage.getByRole('button', {name:'Toggle dark mode'}).click()
+    await blockedStorage.waitForFunction(() => document.documentElement.dataset.theme === 'dark')
+    await blockedStorage.close()
+    await page.evaluate(() => window.themeTest.scene.value = 'workspace')
     await assertSurface('.payroll-run-progress')
     await page.locator('.modern-date-field__trigger').click()
     await assertSurface('.modern-date-field__panel')
@@ -169,12 +197,16 @@ test('theme persists across views; DTR paper stays fixed, BTR adapts, and paysli
     await otherTab.evaluate(() => localStorage.setItem('dja-theme', 'light'))
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light')
     await otherTab.evaluate(() => localStorage.removeItem('dja-theme'))
-    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark')
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light')
     await otherTab.close()
     await page.emulateMedia({ colorScheme: 'light' })
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light')
     assert.equal(await page.evaluate(() => localStorage.getItem('dja-theme')), null)
     await page.emulateMedia({ colorScheme: 'dark' })
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light')
+    assert.equal(await page.evaluate(() => localStorage.getItem('dja-theme')), null)
+    // Deliberately turn dark mode back on for the signed-out portal contrast check.
+    await page.evaluate(() => window.themeTest.toggleTheme())
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark')
     // Return to signed-out portal to check its intentionally bright action button.
     await page.evaluate(() => { window.portalAnonymous = true; window.themeTest.scene.value = 'workspace' })
