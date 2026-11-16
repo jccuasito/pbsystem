@@ -12,14 +12,17 @@ const currentYear = Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ma
 const year = ref(currentYear), agencyId = ref(''), search = ref(''), status = ref('all'), tab = ref('computation')
 const years = Array.from({ length: currentYear - 1998 }, (_, index) => currentYear + 1 - index)
 const data = ref<any>({ year: currentYear, items: [], agencies: [], permissions: {} })
-const loading = ref(false), busy = ref(false), error = ref(''), message = ref(''), dialogError = ref('')
+const loading = ref(false), refreshing = ref(false), busy = ref(false), error = ref(''), message = ref(''), dialogError = ref('')
 const key = ref(''), mode = ref('details'), modal = ref<HTMLElement | null>(null)
 const form = ref<any>({}), detailForm = ref<any>(null), importRows = ref<any[]>([]), actionId = ref(0)
 let requestId = 0, releaseScroll = () => {}, previousFocus: HTMLElement | null = null
 let wasDeactivated = false
+let viewActive = true, controller: AbortController | null = null, pending: Promise<void> | null = null, pendingKey = '', lastLoadedKey = '', lastLoadedAt = 0
+let pendingFresh = false
 const selected = computed<any>(() => data.value.items.find((row: any) => `${row.EmployeeID}:${row.AgencyID}` === key.value))
 const draft = computed(() => !selected.value?.header || selected.value.header.Status === 'Draft')
-const money = (value: unknown) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0))
+const moneyFormat = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' })
+const money = (value: unknown) => moneyFormat.format(Number(value || 0))
 const date = (value: string) => value ? new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '-'
 const month = (value: number) => new Date(Date.UTC(year.value, value - 1, 1)).toLocaleString('en-PH', { month: 'long', timeZone: 'UTC' })
 const state = (row: any) => (row.sourceChanged && row.header?.Status !== 'Draft') || row.summary.balance < 0 ? 'Needs review' : row.header?.Status || 'Not computed'
@@ -27,17 +30,52 @@ const filtered = computed<any[]>(() => data.value.items.filter((row: any) => {
   return `${row.EmployeeID} EMP-${String(row.EmployeeID).padStart(4, '0')} ${row.EmployeeNumber || ''} ${row.EmployeeName} ${row.AgencyName}`.toLowerCase().includes(search.value.toLowerCase().trim()) && (status.value === 'all' || state(row) === status.value)
 }))
 const history = computed(() => filtered.value.filter(row => row.header && (row.header.Status !== 'Draft' || row.releases.length)))
+const rowBatchSize = 25, visibleCount = ref(rowBatchSize)
+const loadMoreSentinel = ref<HTMLElement | null>(null)
+let rowsObserver: IntersectionObserver | null = null
+const listedRows = computed(() => tab.value === 'computation' ? filtered.value : history.value)
+const visibleRows = computed(() => listedRows.value.slice(0, visibleCount.value))
+const hasMoreRows = computed(() => visibleRows.value.length < listedRows.value.length)
+watch([search, status, tab, year, agencyId], () => { visibleCount.value = rowBatchSize })
+watch(() => listedRows.value.length, count => { visibleCount.value = Math.max(rowBatchSize, Math.min(visibleCount.value, count)) })
+function loadMoreRows() {
+  if (!viewActive || loading.value || busy.value || key.value || !hasMoreRows.value) return
+  visibleCount.value = Math.min(visibleCount.value + rowBatchSize, listedRows.value.length)
+}
+function observeRows() {
+  rowsObserver?.disconnect(); rowsObserver = null
+  if (!viewActive || loading.value || busy.value || key.value || !hasMoreRows.value || !loadMoreSentinel.value || typeof IntersectionObserver === 'undefined') return
+  rowsObserver = new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) loadMoreRows()
+  }, { rootMargin: '300px 0px' })
+  rowsObserver.observe(loadMoreSentinel.value)
+}
+watch([loadMoreSentinel, loading, busy, key, hasMoreRows, visibleCount], observeRows, { flush: 'post' })
 const totals = computed(() => filtered.value.reduce((sum, row) => ({ basic: sum.basic + Math.round(row.summary.basicEarned * 100), benefit: sum.benefit + Math.round(row.summary.entitlement * 100), paid: sum.paid + Math.round(row.summary.paid * 100), review: sum.review + Number(Boolean(row.summary.gaps.length || row.summary.issues.length || row.sourceChanged)) }), { basic: 0, benefit: 0, paid: 0, review: 0 }))
 const preview = computed(() => selected.value ? annualSummary(selected.value.sources, form.value.coverageStart || selected.value.coverageStart, form.value.coverageEnd || selected.value.coverageEnd, selected.value.releases) : null)
-async function load() {
+function load(options: { background?: boolean; fresh?: boolean } = {}): Promise<void> {
+  if (!viewActive) return Promise.resolve()
+  const filterKey = `${year.value}:${agencyId.value}`
+  if (pending && pendingKey === filterKey && (!options.fresh || pendingFresh)) return pending
+  controller?.abort()
+  const ownController = new AbortController()
+  controller = ownController; pendingKey = filterKey; pendingFresh = Boolean(options.fresh)
   const request = ++requestId
-  loading.value = true; error.value = ''
-  try {
-    const result = await $fetch<any>('/api/payroll/thirteenth-month', { query: { year: year.value, agencyId: agencyId.value || undefined } })
-    if (request === requestId) data.value = result
-  } catch (caught: any) { if (request === requestId) error.value = requestErrorMessage(caught, 'Unable to load 13th-month earnings.') }
-  finally { if (request === requestId) loading.value = false }
+  loading.value = !options.background; refreshing.value = true; error.value = ''
+  const query = { year: year.value, agencyId: agencyId.value || undefined, fresh: options.fresh ? '1' : undefined }
+  pending = Promise.resolve().then(async () => {
+    try {
+      const result = await $fetch<any>('/api/payroll/thirteenth-month', { query, signal: ownController.signal, timeout: 30000, retry: 0 })
+      if (request === requestId && !ownController.signal.aborted && (!options.background || !key.value)) {
+        data.value = result; lastLoadedKey = filterKey; lastLoadedAt = Date.now()
+      }
+    } catch (caught: any) { if (request === requestId && !ownController.signal.aborted) error.value = requestErrorMessage(caught, 'Unable to load 13th-month earnings.') }
+    finally { if (request === requestId) { loading.value = false; refreshing.value = false; pending = null; controller = null } }
+  })
+  return pending
 }
+function cancelLoad() { requestId++; controller?.abort(); controller = null; pending = null; loading.value = false; refreshing.value = false }
+function backgroundLoad() { return `${year.value}:${agencyId.value}` === lastLoadedKey && Date.now() - lastLoadedAt < 45000 ? Promise.resolve() : load({ background: true }) }
 function filterChanged() { key.value = ''; data.value.items = []; load() }
 function resetDetail() { detailForm.value = null; if (selected.value) form.value = { coverageStart: selected.value.coverageStart, coverageEnd: selected.value.coverageEnd, reason: selected.value.header?.ReviewNote || '', eligibilityConfirmed: Boolean(selected.value.header?.EligibilityConfirmed) } }
 function open(row: any) { previousFocus = document.activeElement as HTMLElement; key.value = `${row.EmployeeID}:${row.AgencyID}`; mode.value = 'details'; dialogError.value = ''; resetDetail() }
@@ -54,6 +92,7 @@ function show(target: string, row?: any) {
 }
 async function submit(action: string) {
   if (busy.value || loading.value || !selected.value || data.value.year !== year.value) return
+  cancelLoad()
   busy.value = true; dialogError.value = ''; message.value = ''
   const restoreForm = ['import', 'remove-import', 'classify'].includes(action) && detailForm.value ? { ...detailForm.value } : null
   try {
@@ -61,7 +100,8 @@ async function submit(action: string) {
       expectedHash: selected.value.sourceHash, revision: selected.value.header?.Revision, rows: action === 'import' ? importRows.value : undefined, earningId: actionId.value, releaseId: actionId.value, lineId: actionId.value,
       included: mode.value === 'classify' && form.value.included !== '' ? form.value.included === '1' : undefined } })
     message.value = action === 'release' || action === 'previous-payment' ? 'Payment recorded. No money was transferred by the system.' : '13th-month record updated.'
-    await load(); mode.value = 'details'; resetDetail(); if (restoreForm) form.value = restoreForm
+    lastLoadedAt = 0
+    await load({ fresh: true }); mode.value = 'details'; resetDetail(); if (restoreForm) form.value = restoreForm
     if (error.value) dialogError.value = 'Saved successfully, but the latest data could not be loaded. Close this window and refresh before another action.'
   } catch (caught: any) { dialogError.value = requestErrorMessage(caught, 'Unable to save. Please try again.') }
   finally { busy.value = false }
@@ -106,16 +146,16 @@ function keys(event: KeyboardEvent) {
 }
 watch(key, async value => { releaseScroll(); if (value) { releaseScroll = lockBodyScroll(); await nextTick(); modal.value?.focus() } })
 watch(mode, async () => { await nextTick(); modal.value?.focus() })
-onMounted(load)
-onDeactivated(() => { wasDeactivated = true; requestId++; loading.value = false; key.value = ''; releaseScroll() })
-onActivated(() => { if (wasDeactivated) { wasDeactivated = false; void load() } })
-onBeforeUnmount(() => { requestId++; releaseScroll() })
-useRealtimeRefresh(load, { intervalMs: 60000, shouldRefresh: () => !key.value && !busy.value && !loading.value })
+onMounted(() => { void load(); observeRows() })
+onDeactivated(() => { viewActive = false; wasDeactivated = true; rowsObserver?.disconnect(); cancelLoad(); key.value = ''; releaseScroll() })
+onActivated(() => { viewActive = true; observeRows(); if (wasDeactivated) { wasDeactivated = false; void backgroundLoad() } })
+onBeforeUnmount(() => { viewActive = false; rowsObserver?.disconnect(); cancelLoad(); releaseScroll() })
+useRealtimeRefresh(backgroundLoad, { intervalMs: 60000, shouldRefresh: () => !key.value && !busy.value && !loading.value && !refreshing.value })
 </script>
 
 <template>
   <section class="annual-page">
-    <header class="page-head"><div><p class="eyebrow">PAYROLL</p><h1>13th-Month Pay</h1><p>Review basic earnings, approve computations, and track employee payments.</p></div><div class="buttons"><button class="secondary" :disabled="busy || loading" @click="load">Refresh</button><button class="primary" :disabled="busy || loading || !filtered.length" @click="exportExcel">Export Excel</button></div></header>
+    <header class="page-head"><div><p class="eyebrow">PAYROLL</p><h1>13th-Month Pay</h1><p>Review basic earnings, approve computations, and track employee payments.</p></div><div class="buttons"><button class="secondary" :disabled="busy || loading" @click="load({ fresh: true })">Refresh</button><button class="primary" :disabled="busy || loading || !filtered.length" @click="exportExcel">Export Excel</button></div></header>
     <aside class="development-banner" role="note" aria-label="Development status">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M10.3 4.8 2.8 18a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0Z"/><path d="M12 9v5m0 3v.1" stroke-linecap="round"/></svg>
       <div><strong>For testing only &middot; Under development</strong><p>13th-month pay functions are still being tested and may change. Do not use this module for official computations or payment releases yet.</p></div>
@@ -126,10 +166,11 @@ useRealtimeRefresh(load, { intervalMs: 60000, shouldRefresh: () => !key.value &&
     <div class="summary"><div><span>Basic earnings</span><strong>{{ money(totals.basic / 100) }}</strong></div><div><span>Computed entitlement</span><strong>{{ money(totals.benefit / 100) }}</strong></div><div><span>Gross benefit paid</span><strong>{{ money(totals.paid / 100) }}</strong></div><div><span>Employees needing review</span><strong>{{ totals.review }}</strong></div></div>
     <p class="notice">Basic earnings &divide; 12. OT, night differential, and other non-basic items are excluded. Missing periods need review; they are not assumed to be zero.</p>
     <template v-if="tab === 'computation'"><div class="section-heading"><h2>Annual computation <span>{{ year }}</span></h2><small>{{ filtered.length }} employee-agency records</small></div>
-      <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Agency</th><th>Basic earned</th><th>Entitlement / 12</th><th>Gross paid</th><th>Status</th><th>Action</th></tr></thead><tbody><tr v-for="row in filtered" :key="`${row.EmployeeID}:${row.AgencyID}`"><td><strong>{{ row.EmployeeName }}</strong><small>EMP-{{ String(row.EmployeeID).padStart(4, '0') }} &middot; {{ row.EmployeeNumber || 'No employee number' }}</small></td><td>{{ row.AgencyName }}</td><td>{{ money(row.summary.basicEarned) }}</td><td><strong>{{ money(row.summary.entitlement) }}</strong><small v-if="row.summary.gaps.length">Incomplete coverage</small></td><td>{{ money(row.summary.paid) }}</td><td><span class="badge" :class="state(row).toLowerCase().replaceAll(' ', '-')">{{ state(row) }}</span><small v-if="row.sourceChanged">Earnings basis changed</small></td><td><button class="secondary" :disabled="loading" @click="open(row)">Review earnings</button></td></tr><tr v-if="!filtered.length"><td colspan="7" class="empty">{{ loading ? 'Loading earnings...' : 'No employees match your filters.' }}</td></tr></tbody></table></div>
-      <div class="mobile-cards"><article v-for="row in filtered" :key="`${row.EmployeeID}:${row.AgencyID}`"><strong>{{ row.EmployeeName }}</strong><small>{{ row.AgencyName }}</small><p>Basic earned <b>{{ money(row.summary.basicEarned) }}</b></p><p>Entitlement <b>{{ money(row.summary.entitlement) }}</b></p><footer><span class="badge">{{ state(row) }}</span><button class="secondary" :disabled="loading" @click="open(row)">Review earnings</button></footer></article><p v-if="!filtered.length" class="empty">{{ loading ? 'Loading earnings...' : 'No employees match your filters.' }}</p></div>
+      <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Agency</th><th>Basic earned</th><th>Entitlement / 12</th><th>Gross paid</th><th>Status</th><th>Action</th></tr></thead><tbody><tr v-for="row in visibleRows" :key="`${row.EmployeeID}:${row.AgencyID}`"><td><strong>{{ row.EmployeeName }}</strong><small>EMP-{{ String(row.EmployeeID).padStart(4, '0') }} &middot; {{ row.EmployeeNumber || 'No employee number' }}</small></td><td>{{ row.AgencyName }}</td><td>{{ money(row.summary.basicEarned) }}</td><td><strong>{{ money(row.summary.entitlement) }}</strong><small v-if="row.summary.gaps.length">Incomplete coverage</small></td><td>{{ money(row.summary.paid) }}</td><td><span class="badge" :class="state(row).toLowerCase().replaceAll(' ', '-')">{{ state(row) }}</span><small v-if="row.sourceChanged">Earnings basis changed</small></td><td><button class="secondary" :disabled="loading" @click="open(row)">Review earnings</button></td></tr><tr v-if="!filtered.length"><td colspan="7" class="empty">{{ loading ? 'Loading earnings...' : 'No employees match your filters.' }}</td></tr></tbody></table></div>
+      <div class="mobile-cards"><article v-for="row in visibleRows" :key="`${row.EmployeeID}:${row.AgencyID}`"><strong>{{ row.EmployeeName }}</strong><small>{{ row.AgencyName }}</small><p>Basic earned <b>{{ money(row.summary.basicEarned) }}</b></p><p>Entitlement <b>{{ money(row.summary.entitlement) }}</b></p><footer><span class="badge">{{ state(row) }}</span><button class="secondary" :disabled="loading" @click="open(row)">Review earnings</button></footer></article><p v-if="!filtered.length" class="empty">{{ loading ? 'Loading earnings...' : 'No employees match your filters.' }}</p></div>
     </template>
-    <template v-else><div class="section-heading"><h2>Approval and payment records</h2><small>{{ history.length }} records</small></div><p v-if="!history.length" class="empty">No approved computations or recorded payments match your filters.</p><div class="history-cards"><article v-for="row in history" :key="row.header.ThirteenthMonthID"><div><strong>{{ row.EmployeeName }}</strong><small>{{ row.AgencyName }} &middot; {{ year }} &middot; {{ state(row) }}</small><small>Saved entitlement: {{ money(row.header.ThirteenthMonthAmount) }} &middot; Gross paid: {{ money(row.summary.paid) }}</small><small v-if="row.sourceChanged" class="warning-text">New or changed earnings require reconciliation.</small></div><button class="secondary" :disabled="loading" @click="open(row)">View record</button></article></div></template>
+    <template v-else><div class="section-heading"><h2>Approval and payment records</h2><small>{{ history.length }} records</small></div><p v-if="!history.length" class="empty">No approved computations or recorded payments match your filters.</p><div class="history-cards"><article v-for="row in visibleRows" :key="row.header.ThirteenthMonthID"><div><strong>{{ row.EmployeeName }}</strong><small>{{ row.AgencyName }} &middot; {{ year }} &middot; {{ state(row) }}</small><small>Saved entitlement: {{ money(row.header.ThirteenthMonthAmount) }} &middot; Gross paid: {{ money(row.summary.paid) }}</small><small v-if="row.sourceChanged" class="warning-text">New or changed earnings require reconciliation.</small></div><button class="secondary" :disabled="loading" @click="open(row)">View record</button></article></div></template>
+    <div v-if="listedRows.length" class="record-loading"><span>Showing {{ visibleRows.length }} of {{ listedRows.length }} records</span><button v-if="hasMoreRows" ref="loadMoreSentinel" class="secondary" :disabled="loading || busy || Boolean(key)" @click="loadMoreRows">Load more records</button></div>
     <Teleport to="body"><div v-if="key && selected" class="annual-backdrop" @click.self="close"><section ref="modal" class="annual-modal" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="annual-dialog-title" @keydown="keys"><header><div><p class="eyebrow">13TH-MONTH PAY &middot; {{ year }}</p><h2 id="annual-dialog-title">{{ selected.EmployeeName }}</h2><p>{{ selected.AgencyName }} &middot; EMP-{{ String(selected.EmployeeID).padStart(4, '0') }}</p></div><button class="close" aria-label="Close employee computation" :disabled="busy" @click="close">&times;</button></header>
       <div class="dialog-body"><button v-if="mode !== 'details'" class="back-link" :disabled="busy" @click="show('details')">&larr; Back to computation</button><p v-if="dialogError" class="error" role="alert">{{ dialogError }}</p>
         <template v-if="mode === 'details' && preview">
@@ -159,6 +200,7 @@ useRealtimeRefresh(load, { intervalMs: 60000, shouldRefresh: () => !key.value &&
 </template>
 
 <style scoped>
+.record-loading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:18px 0;color:var(--theme-muted,#627b9d);font-size:.82rem}
 .development-banner{display:flex;align-items:flex-start;gap:12px;margin:0 0 24px;padding:16px 18px;border:1px solid #f1d28c;border-radius:11px;background:#fff8e8;color:#805213;font-size:.82rem;line-height:1.6}.development-banner svg{width:23px;height:23px;flex:none;margin-top:1px}.development-banner strong{display:block;font-weight:750}.development-banner p{margin:4px 0 0;overflow-wrap:anywhere}
 .annual-page{padding:32px;max-width:1700px;margin:auto;color:var(--theme-ink,#173457);font-family:Inter,system-ui,sans-serif}.page-head,.section-heading,.dialog-toolbar{display:flex;justify-content:space-between;align-items:center;gap:16px}.page-head{align-items:flex-start;margin-bottom:24px}.eyebrow{color:var(--theme-accent,#3263d6)!important;font-size:.75rem!important;letter-spacing:.08em;font-weight:750;margin:0 0 7px!important}.page-head h1{font-size:1.9rem;margin:0 0 8px}.page-head p,.annual-modal header p{margin:6px 0;color:var(--theme-muted,#7287a6)}.buttons{display:flex;align-items:center;gap:9px;flex-wrap:wrap}button,.file-button{font:inherit;cursor:pointer}.primary,.secondary,.file-button{padding:11px 16px;min-height:42px;border-radius:9px;font-size:.82rem;font-weight:700;white-space:nowrap}.primary{background:#2858ed;border:1px solid #2858ed;color:#fff}.secondary,.file-button{background:var(--theme-surface,#fff);border:1px solid var(--theme-line,#cddcf0);color:var(--theme-accent,#2e578e)}button:disabled{opacity:.5;cursor:not-allowed}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #a9c5f8;outline-offset:2px}.tabs{display:flex;gap:5px;padding:5px;background:var(--theme-soft,#edf2fa);border:1px solid var(--theme-line,#d6e1f1);border-radius:11px;width:fit-content;margin-bottom:22px}.tabs button{border:0;background:transparent;color:var(--theme-muted,#627b9d);padding:12px 19px;border-radius:8px;font-weight:700}.tabs button.active{color:var(--theme-accent,#214bdb);background:var(--theme-surface,white);box-shadow:0 1px 4px #cdd7e4}.filters{display:grid;grid-template-columns:130px minmax(200px,1fr) minmax(240px,1.5fr) 190px;gap:16px;padding:20px;background:var(--theme-surface,white);border:1px solid var(--theme-line,#d8e3f2);border-radius:13px}label{display:flex;flex-direction:column;gap:8px;font-size:.82rem;font-weight:650;color:var(--theme-muted,#546d91)}input,select,textarea{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--theme-line,#cbd9ec);border-radius:9px;padding:12px;background:var(--theme-surface,white);color:var(--theme-ink,#173457);font:inherit;font-weight:500}textarea{resize:vertical}fieldset{border:0;padding:0;margin:0;min-width:0}.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:22px 0}.summary>div{background:var(--theme-surface,white);border:1px solid var(--theme-line,#d9e4f2);border-radius:11px;padding:18px}.summary span{display:block;font-size:.74rem;color:var(--theme-muted,#7085a3);margin-bottom:8px}.summary strong{font-size:1.25rem;overflow-wrap:anywhere}.notice,.warning,.error,.success{padding:14px 17px;border-radius:9px;font-size:.82rem;line-height:1.65}.notice{background:var(--theme-soft,#eef4ff);color:var(--theme-muted,#55749e)}.warning{background:#fff6e7;color:#87571f}.warning p{margin:6px 0}.warning-text{color:#9b651c!important}.error{background:#fff0f0;color:#b32626}.success{background:#eaf8f0;color:#187144}.section-heading h2{font-size:1rem;margin:10px 0 16px}.section-heading h2 span{color:var(--theme-muted,#6b83a6);margin-left:7px}.section-heading small{color:var(--theme-muted,#7185a3)}.table-wrap,.inner-table{overflow:auto;border:1px solid var(--theme-line,#d9e3f2);border-radius:12px;background:var(--theme-surface,#fff)}table{width:100%;border-collapse:collapse;min-width:1000px;font-size:.82rem}th{text-align:left;background:var(--theme-soft,#f5f8fc);color:var(--theme-muted,#627b9d);font-size:.68rem;text-transform:uppercase;letter-spacing:.025em;padding:15px}td{border-top:1px solid var(--theme-line,#e4ebf6);padding:17px 15px;vertical-align:middle}td strong{font-size:.83rem}small{display:block;color:var(--theme-muted,#7b8da7);font-size:.72rem;line-height:1.6;margin-top:5px}.badge{display:inline-block;border-radius:20px;background:var(--theme-soft,#eef2fa);color:var(--theme-muted,#557099);padding:5px 10px;font-size:.72rem;font-weight:700;white-space:nowrap}.badge.approved{background:var(--theme-soft,#e5edff);color:var(--theme-accent,#2856b4)}.badge.released{background:#dcf8e9;color:#19714b}.badge.needs-review{background:#fff0d3;color:#91611f}.empty{text-align:center;padding:30px;color:var(--theme-muted,#7588a2);background:var(--theme-surface,#fff);border:1px solid var(--theme-line,#e1e8f3);border-radius:10px;font-size:.86rem}.mobile-cards{display:none}.history-cards{display:grid;gap:13px}.history-cards article{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:22px;background:var(--theme-surface,#fff);border:1px solid var(--theme-line,#d9e4f2);border-radius:12px}.annual-backdrop{position:fixed;inset:0;z-index:1200;background:#13223c80;display:flex;align-items:center;justify-content:center;padding:24px;font-family:Inter,system-ui,sans-serif;color:var(--theme-ink,#173457)}.annual-modal{background:var(--theme-soft,#f7f9fc);border-radius:18px;width:1150px;max-width:100%;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 65px #172a4b33;outline:none}.annual-modal>header{padding:25px 30px;display:flex;justify-content:space-between;gap:20px;background:var(--theme-surface,white);border-bottom:1px solid var(--theme-line,#e0e8f4)}.annual-modal h2{font-size:1.45rem;margin:0}.annual-modal header p{font-size:.85rem}.close{border:0;background:transparent;color:var(--theme-muted,#55739a);font-size:1.7rem;padding:0 8px;align-self:flex-start}.dialog-body{overflow:auto;min-height:0;padding:25px 30px}.form-section{background:var(--theme-surface,white);border:1px solid var(--theme-line,#dae4f3);border-radius:12px;padding:20px;margin:18px 0}.form-section h3{margin:0 0 12px;font-size:1rem}.form-section p,.dialog-body>p{font-size:.82rem;color:var(--theme-muted,#7186a3);line-height:1.6}.form-section summary{font-size:.86rem;font-weight:700;cursor:pointer}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:end}.checkbox{flex-direction:row;align-items:flex-start;font-weight:500;line-height:1.6;margin:20px 0}.checkbox input{width:17px;height:17px;flex:none;margin:2px 0 0}.inner-table table{min-width:670px}.inner-table td{padding:11px;font-size:.78rem}.source{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:16px 0;border-top:1px solid var(--theme-line,#e7edf6);font-size:.82rem}.source:first-of-type{margin-top:14px}.source>strong{white-space:nowrap}.annual-modal>footer{padding:18px 30px;background:var(--theme-surface,white);border-top:1px solid var(--theme-line,#d9e4f2);display:flex;justify-content:space-between;align-items:center;gap:15px}.footer-note{font-size:.74rem;color:var(--theme-muted,#7185a3)}.back-link{border:0;padding:0;background:transparent;color:var(--theme-accent,#3563b5);margin-bottom:18px;font-size:.82rem}.file-button{display:inline-flex;flex-direction:row;align-items:center}.file-button input{display:none}.import-row{padding:18px 0;border-bottom:1px solid var(--theme-line,#dfe7f3);margin-bottom:16px}
 @media(max-width:1150px){.filters{grid-template-columns:130px 1fr 1fr}.filters .search{grid-column:1/3}.table-wrap{display:none}.mobile-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.mobile-cards article{padding:20px;background:var(--theme-surface,#fff);border:1px solid var(--theme-line,#d9e4f2);border-radius:12px}.mobile-cards p{display:flex;justify-content:space-between;gap:15px;font-size:.82rem}.mobile-cards footer{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:20px}.summary{grid-template-columns:repeat(2,minmax(0,1fr))}}

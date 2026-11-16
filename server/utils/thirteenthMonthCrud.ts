@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { createError, getQuery, readBody, setHeader } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { coalesceRead } from './requestCapacity'
 import { annualBasic, annualCents, annualDate, annualOverlap, annualSummary, type AnnualSource } from '../../shared/utils/thirteenthMonth'
 
 const fail = (message: string, statusCode = 400): never => { throw createError({ statusCode, statusMessage: message }) }
@@ -20,10 +21,9 @@ export async function thirteenthMonthData(year: number, agencyId = 0, connection
     FROM employee e LEFT JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
     LEFT JOIN \`position\` p ON p.PositionID=ap.PositionID ORDER BY e.LastName,e.FirstName,e.EmployeeID`)
   const [payrolls] = await connection.execute(`SELECT py.PayrollID,py.EmployeeID,d.AgencyID,d.BatchID,s.SiteName,
-    DATE_FORMAT(py.StartDate,'%Y-%m-%d') AS PeriodStart,DATE_FORMAT(py.EndDate,'%Y-%m-%d') AS PeriodEnd,r.SnapshotJson
+    DATE_FORMAT(py.StartDate,'%Y-%m-%d') AS PeriodStart,DATE_FORMAT(py.EndDate,'%Y-%m-%d') AS PeriodEnd
     FROM payroll_processing_posting pp INNER JOIN payroll py ON py.PayrollID=pp.PayrollID
     INNER JOIN attendance_dtr d ON d.BatchID=pp.BatchID INNER JOIN site s ON s.SiteID=d.SiteID
-    LEFT JOIN payroll_processing_review r ON r.BatchID=d.BatchID
     WHERE pp.Status='Active' AND py.Status IN ('Approved','Released') AND py.PayrollType='Regular'
       AND py.StartDate<=? AND py.EndDate>=? AND (?=0 OR d.AgencyID=?) ORDER BY py.PayrollID`, [end, start, agencyId, agencyId])
   const [imports] = await connection.execute(`SELECT *,DATE_FORMAT(PeriodStart,'%Y-%m-%d') AS PeriodStart,
@@ -39,31 +39,55 @@ export async function thirteenthMonthData(year: number, agencyId = 0, connection
     INNER JOIN thirteenth_month_pay h ON h.ThirteenthMonthID=ev.ThirteenthMonthID LEFT JOIN \`user\` u ON u.UserID=ev.ActorID
     WHERE h.PayYear=? AND (?=0 OR h.AgencyID=?) ORDER BY ev.EventID DESC`, [year, agencyId, agencyId])
   const [adjustments] = await connection.execute(`SELECT pal.AdjustmentLineID,pal.ComponentCode,pal.Description,pal.Direction,pal.Amount,
-    pa.EmployeeID,py.PayrollID,d.AgencyID,r.SnapshotJson,cr.IncludedInBasic,cr.Reason AS ClassificationReason,
+    pa.EmployeeID,py.PayrollID,d.AgencyID,d.BatchID,cr.IncludedInBasic,cr.Reason AS ClassificationReason,
     DATE_FORMAT(COALESCE(cr.EarnedDate,pal.SourceDate,py.StartDate),'%Y-%m-%d') AS EarnedDate
     FROM payroll_adjustment pa INNER JOIN payroll_adjustment_line pal ON pal.AdjustmentID=pa.AdjustmentID
     INNER JOIN payroll py ON py.PayrollID=pa.TargetPayrollID
     INNER JOIN payroll_processing_posting pp ON pp.PayrollID=py.PayrollID AND pp.Status='Active'
-    INNER JOIN attendance_dtr d ON d.BatchID=pp.BatchID LEFT JOIN payroll_processing_review r ON r.BatchID=d.BatchID
+    INNER JOIN attendance_dtr d ON d.BatchID=pp.BatchID
     LEFT JOIN thirteenth_month_review cr ON cr.AdjustmentLineID=pal.AdjustmentLineID
     WHERE pa.Status='Applied' AND py.Status IN ('Approved','Released')
       AND COALESCE(cr.EarnedDate,pal.SourceDate,py.StartDate) BETWEEN ? AND ? AND (?=0 OR d.AgencyID=?)
     ORDER BY pal.AdjustmentLineID`, [start, end, agencyId, agencyId])
 
+  // A finalized snapshot contains the whole DTR. Transfer and parse it once per
+  // batch, rather than once per employee/payroll/adjustment joined to that batch.
+  const snapshots = new Map<number, Map<number, any>>()
+  const batchIds = [...new Set<number>([...payrolls, ...adjustments].map((row: any) => Number(row.BatchID)))]
+  for (let offset = 0; offset < batchIds.length; offset += 500) {
+    const ids = batchIds.slice(offset, offset + 500)
+    const [rows] = await connection.execute(`SELECT BatchID,SnapshotJson FROM payroll_processing_review WHERE BatchID IN (${ids.map(() => '?').join(',')})`, ids)
+    for (const row of rows) {
+      const people = parse(row.SnapshotJson)?.employees
+      const byEmployee = new Map<number, any>()
+      if (Array.isArray(people)) for (const person of people) if (!byEmployee.has(Number(person.EmployeeID))) byEmployee.set(Number(person.EmployeeID), person)
+      snapshots.set(Number(row.BatchID), byEmployee)
+    }
+  }
+  const pairKey = (row: any) => `${Number(row.EmployeeID)}:${Number(row.AgencyID)}`
+  const group = (rows: any[], key: (row: any) => any) => {
+    const groups = new Map<any, any[]>()
+    for (const row of rows) { const value = key(row); if (!groups.has(value)) groups.set(value, []); groups.get(value)!.push(row) }
+    return groups
+  }
+  const employeeById = new Map<number, any>(employees.map((row: any) => [Number(row.EmployeeID), row]))
+  const agencyById = new Map<number, any>(agencies.map((row: any) => [Number(row.AgencyID), row]))
+  const headerByPair = group(headers, pairKey), importsByPair = group(imports, pairKey), adjustmentsByPair = group(adjustments, pairKey)
+  const releasesByHeader = group(releases, row => row.ThirteenthMonthID), eventsByHeader = group(events, row => row.ThirteenthMonthID)
   const pairs = new Map<string, any>()
   const add = (employeeId: number, ag: number) => {
     if (!ag || (agencyId && Number(ag) !== agencyId)) return
-    const employee = employees.find((row: any) => Number(row.EmployeeID) === Number(employeeId))
+    const employee = employeeById.get(Number(employeeId))
     if (!employee) return
     const key = `${employeeId}:${ag}`
-    if (!pairs.has(key)) pairs.set(key, { ...employee, AgencyID: Number(ag), AgencyName: agencies.find((row: any) => Number(row.AgencyID) === Number(ag))?.AgencyName || '', sources: [] as AnnualSource[] })
+    if (!pairs.has(key)) pairs.set(key, { ...employee, AgencyID: Number(ag), AgencyName: agencyById.get(Number(ag))?.AgencyName || '', sources: [] as AnnualSource[] })
   }
   employees.forEach((row: any) => { if (!row.DateHired || row.DateHired <= end) add(row.EmployeeID, row.AgencyID) })
   ;[...payrolls, ...imports, ...headers, ...adjustments].forEach((row: any) => add(row.EmployeeID, row.AgencyID))
   for (const row of payrolls) {
     const person = pairs.get(`${row.EmployeeID}:${row.AgencyID}`)
     if (!person) continue
-    const frozen = parse(row.SnapshotJson)?.employees?.find((item: any) => Number(item.EmployeeID) === Number(row.EmployeeID))
+    const frozen = snapshots.get(Number(row.BatchID))?.get(Number(row.EmployeeID))
     const values = annualBasic(Array.isArray(frozen?.components) ? frozen.components : [])
     if (!frozen || !Array.isArray(frozen.components)) values.issues.push('Finalized earnings snapshot is missing. Do not substitute gross or net pay.')
     values.excluded += Number(frozen?.allowance || 0)
@@ -81,7 +105,7 @@ export async function thirteenthMonthData(year: number, agencyId = 0, connection
   for (const row of adjustments) {
     const person = pairs.get(`${row.EmployeeID}:${row.AgencyID}`)
     if (!person) continue
-    const frozen = parse(row.SnapshotJson)?.employees?.find((item: any) => Number(item.EmployeeID) === Number(row.EmployeeID))?.adjustments?.find((item: any) => Number(item.lineId) === Number(row.AdjustmentLineID))
+    const frozen = snapshots.get(Number(row.BatchID))?.get(Number(row.EmployeeID))?.adjustments?.find((item: any) => Number(item.lineId) === Number(row.AdjustmentLineID))
     const values = annualBasic([], [{ code: row.ComponentCode, lineId: row.AdjustmentLineID, description: row.Description,
       amount: frozen?.amount ?? row.Amount, direction: frozen?.direction ?? row.Direction, included: row.IncludedInBasic == null ? null : Boolean(row.IncludedInBasic) }])
     if (!frozen) values.issues.push('Applied adjustment is missing from the finalized snapshot.')
@@ -89,19 +113,19 @@ export async function thirteenthMonthData(year: number, agencyId = 0, connection
     person.sources.push({ id: `adjustment:${row.AdjustmentLineID}`, start: row.EarnedDate, end: row.EarnedDate, reference: `Adjustment #${row.AdjustmentLineID} / Payroll #${row.PayrollID}`, site: row.Description, kind: 'Basic adjustment', ...values })
   }
   const items = [...pairs.values()].map(person => {
-    const header = headers.find((row: any) => Number(row.EmployeeID) === Number(person.EmployeeID) && Number(row.AgencyID) === Number(person.AgencyID)) || null
+    const header = headerByPair.get(pairKey(person))?.[0] || null
     const saved = parse(header?.SnapshotJson)
     const coverageStart = header?.CoverageStart || (person.DateHired && person.DateHired > start ? person.DateHired : start)
     const coverageEnd = header?.CoverageEnd || end
-    const payments = releases.filter((row: any) => row.ThirteenthMonthID === header?.ThirteenthMonthID)
+    const payments = releasesByHeader.get(header?.ThirteenthMonthID) || []
     person.sources.sort((a: AnnualSource, b: AnnualSource) => a.start.localeCompare(b.start) || a.id.localeCompare(b.id))
     const sourceHash = crypto.createHash('sha256').update(JSON.stringify(person.sources)).digest('hex')
     const { SnapshotJson, ...safeHeader } = header || {}
     return { ...person, header: header ? safeHeader : null, saved, sourceHash, sourceChanged: Boolean(header?.SourceHash && header.SourceHash !== sourceHash), coverageStart, coverageEnd,
       summary: annualSummary(person.sources, coverageStart, coverageEnd, payments), releases: payments,
-      imports: imports.filter((row: any) => Number(row.EmployeeID) === Number(person.EmployeeID) && Number(row.AgencyID) === Number(person.AgencyID)),
-      adjustmentReviews: adjustments.filter((row: any) => Number(row.EmployeeID) === Number(person.EmployeeID) && Number(row.AgencyID) === Number(person.AgencyID)).map(({ SnapshotJson, ...row }: any) => row),
-      events: events.filter((row: any) => row.ThirteenthMonthID === header?.ThirteenthMonthID) }
+      imports: importsByPair.get(pairKey(person)) || [],
+      adjustmentReviews: (adjustmentsByPair.get(pairKey(person)) || []).map(({ BatchID, ...row }: any) => row),
+      events: eventsByHeader.get(header?.ThirteenthMonthID) || [] }
   })
   return { year, agencies, items }
 }
@@ -112,7 +136,10 @@ export async function listThirteenthMonth(event: any) {
   const query = getQuery(event)
   const year = yearValue(query.year || today().slice(0, 4))
   const agencyId = query.agencyId ? id(query.agencyId) : 0
-  const data = await thirteenthMonthData(year, agencyId)
+  if (query.fresh !== undefined && query.fresh !== '1') fail('Use fresh=1 to request a fresh report.')
+  // A post-save/manual reload must not join a GET that started before the write.
+  const data = query.fresh === '1' ? await thirteenthMonthData(year, agencyId)
+    : await coalesceRead(`thirteenth-month:${year}:${agencyId}`, () => thirteenthMonthData(year, agencyId))
   return { ...data, permissions: { canEdit: session.userType !== 'Viewer' && event.context?.moduleCanEdit !== false,
     canApprove: ['Admin', 'Supervisor'].includes(session.userType) && event.context?.moduleCanEdit !== false } }
 }

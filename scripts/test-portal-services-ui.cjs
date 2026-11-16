@@ -85,6 +85,36 @@ test('Admin registration alert opens all Team access accounts and never changes 
  }finally{await browser.close()}
 })
 
+test('dashboard fetches overview only when opened and reuses a recent overview on quick returns',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/dashboard/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.on('pageerror',error=>errors.push(error.message))
+  await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><div id="app"></div>'}));await page.goto('http://portal.test/dashboard')
+  await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.calls=[];window.useHead=()=>{};window.navigateTo=()=>{}
+   window.$fetch=async(url,options={})=>{
+    window.calls.push({url,timeout:options.timeout,retry:options.retry})
+    if(url==='/api/auth/me')return{user:{id:42,firstName:'Synthetic',lastName:'Admin',userType:'Admin'}}
+    if(url==='/api/settings/access')return{access:{payslips:{canView:true,canEdit:true},dashboard:{canView:true,canEdit:true}}}
+    if(url==='/api/notifications')return{items:[],unreadCount:0,generatedAt:new Date().toISOString()}
+    if(url==='/api/payroll/payslips')return{items:[],agencies:[],pagination:{page:1,pages:1,total:0}}
+    if(url==='/api/dashboard/stats')return{stats:[]}
+    if(url==='/api/dashboard/recent-payroll')return{payroll:[]}
+    if(url==='/api/dashboard/recent-activity')return{activities:[]}
+    throw Error('Unexpected endpoint '+url)
+   }
+  });await page.addScriptTag({content:fixture.script});await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor()
+  const overview=()=>page.evaluate(()=>window.calls.filter(call=>call.url.startsWith('/api/dashboard/')))
+  assert.equal((await overview()).length,0,'No overview queries while another workspace is open')
+  await page.evaluate(()=>{window.fixtureRoute.query={}});await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor()
+  await page.waitForFunction(()=>window.calls.filter(call=>call.url.startsWith('/api/dashboard/')).length===3)
+  await page.evaluate(()=>{window.fixtureRoute.query={view:'payslip'}});await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor()
+  await page.evaluate(()=>{window.fixtureRoute.query={}});await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor()
+  const reads=await overview();assert.equal(reads.length,3);assert.ok(reads.every(call=>call.timeout===15000&&call.retry===0));assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
+
 test('staff signup email failure shows saved account and resend instead of duplicate creation',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
  const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/signupscreen/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
  try{

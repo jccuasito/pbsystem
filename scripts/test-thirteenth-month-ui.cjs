@@ -1,8 +1,10 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),esbuild=require('esbuild'),sfc=require('@vue/compiler-sfc');const root=process.cwd(),out=path.join(root,'.data','thirteenth-month-ui');fs.mkdirSync(out,{recursive:true});
-async function build(file){const css=[];const result=await esbuild.build({stdin:{contents:`import {createApp,h,KeepAlive,ref} from 'vue';import Page from './${file}';window.annualVisible=ref(true);createApp({setup:()=>()=>h(KeepAlive,{},()=>window.annualVisible.value?h(Page):h('div','Other workspace'))}).mount('#app')`,loader:'js',resolveDir:root},bundle:true,write:false,platform:'browser',format:'iife',define:{'import.meta.client':'true',__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'vue-fixture',setup(b){b.onResolve({filter:/^(~~\/|~\/)/},args=>{const p=path.resolve(root,args.path.startsWith('~~/')?args.path.slice(3):'app/'+args.path.slice(2));return{path:path.extname(p)?p:p+'.ts'}});b.onLoad({filter:/\.vue$/},args=>{const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[]);const id='data-v-'+require('node:crypto').createHash('sha1').update(args.path).digest('hex').slice(0,8);const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'});for(const style of descriptor.styles)css.push(sfc.compileStyle({source:style.content,filename:args.path,id,scoped:style.scoped}).code);return{contents:script.content+`;__component.__scopeId='${id}';export default __component`,loader:'ts',resolveDir:path.dirname(args.path)}})}}]});return{script:result.outputFiles[0].text,css:css.join('\n')}}
+async function build(file){const css=[];const result=await esbuild.build({stdin:{contents:`import {createApp,h,KeepAlive,ref} from 'vue';import Page from './${file}';window.annualVisible=ref(true);createApp({setup:()=>()=>h(KeepAlive,{},()=>window.annualVisible.value?h(Page):h('div','Other workspace'))}).mount('#app')`,loader:'js',resolveDir:root},bundle:true,write:false,nodePaths:(process.env.NODE_PATH||'').split(path.delimiter).filter(Boolean),platform:'browser',format:'iife',define:{'import.meta.client':'true',__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'vue-fixture',setup(b){b.onResolve({filter:/^(~~\/|~\/)/},args=>{const p=path.resolve(root,args.path.startsWith('~~/')?args.path.slice(3):'app/'+args.path.slice(2));return{path:path.extname(p)?p:p+'.ts'}});b.onLoad({filter:/\.vue$/},args=>{const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[]);const id='data-v-'+require('node:crypto').createHash('sha1').update(args.path).digest('hex').slice(0,8);const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'});for(const style of descriptor.styles)css.push(sfc.compileStyle({source:style.content,filename:args.path,id,scoped:style.scoped}).code);return{contents:script.content+`;__component.__scopeId='${id}';export default __component`,loader:'ts',resolveDir:path.dirname(args.path)}})}}]});return{script:result.outputFiles[0].text,css:css.join('\n')}}
+
+module.exports={build}
 
 // UI requests are synthetic; the companion integration test exercises real SQL on temporary tables.
-(async()=>{
+if(require.main===module)(async()=>{
  const fixture=JSON.parse(fs.readFileSync('.data/thirteenth-month-fixture.json','utf8'))
  const {chromium}=require('playwright'),browser=await chromium.launch({executablePath:process.env.CHROME_BIN||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true})
  try{
@@ -12,7 +14,7 @@ async function build(file){const css=[];const result=await esbuild.build({stdin:
   await page.evaluate(initial=>{
    window.fixture=initial;window.calls=[];window.failNext=false
    window.$fetch=async(url,options={})=>{
-    window.calls.push({url,...structuredClone(options)})
+    window.calls.push({url,...structuredClone({...options,signal:undefined})})
     if(options.method==='POST'){
      await new Promise(r=>setTimeout(r,25))
      if(window.failNext){window.failNext=false;throw{data:{statusMessage:'Synthetic connection error; your entries are retained.'}}}

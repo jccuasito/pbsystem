@@ -41,8 +41,9 @@ function importsFrom(file) {
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
     const match = line.match(/^\s*import(?:\s+type)?(?:\s+.+?\s+from)?\s*['"]([^'"]+)['"]/) || line.match(/^\s*export(?:\s+type)?\s+.+?\s+from\s*['"]([^'"]+)['"]/) 
     if (match) specs.push(match[1])
+    for (const dynamic of line.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)) specs.push(dynamic[1])
   }
-  return specs.map(specifier => resolveLocalImport(file, specifier)).filter(Boolean)
+  return [...new Set(specs.map(specifier => resolveLocalImport(file, specifier)).filter(Boolean))]
 }
 
 function dependencyClosure(entry, allowed) {

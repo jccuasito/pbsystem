@@ -1,45 +1,53 @@
 <script setup lang="ts">
 import { useAppTheme } from '~/composables/useAppTheme'
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, defineAsyncComponent, h } from 'vue'
 import { useRoute, useRouter } from '#app'
 import LogoutAlert from '../../../components/alertmessage/logoutalert.vue'
-import EmployeeListPage from '../employees/index.vue'
-import DeploymentHistoryPage from '../employees/deployment-history/index.vue'
-import EmployeeDocumentsPage from '../employees/documents/index.vue'
-import EmployeeStatusPage from '../employees/status/index.vue'
-import AgencyPage from '../organization/agency/index.vue'
-import PositionPage from '../organization/position/index.vue'
-import ClientPage from '../organization/client/index.vue'
-import SitePage from '../organization/site/index.vue'
-import SiteAccountsPage from '../organization/site-accounts/index.vue'
-import RegionPage from '../organization/region/index.vue'
-import PayrollRatePage from '../rates/payroll/index.vue'
-import BillingRatePage from '../rates/billing/index.vue'
-import GenerateBillingPage from '../billing/generate/index.vue'
-import BillingHistoryPage from '../billing/history/index.vue'
-import SiteRatePage from '../rates/site/index.vue'
-import DailyTimeRecordsPage from '../attendance/daily-time-records/index.vue'
-import DtrRelieverPage from '../attendance/dtr-reliever/index.vue'
-import ShiftCodePage from '../attendance/shift-code/index.vue'
-import HolidayManagerPage from '../attendance/holiday-manager/index.vue'
-import DeductionLoanCatalogPage from '../deductions-loans/catalog/index.vue'
-import EmployeeLoanDeductionPage from '../deductions-loans/employees/index.vue'
-import AgencyContributionsPage from '../deductions-loans/contributions/index.vue'
-import EmployeeAccountTransactionsPage from '../deductions-loans/transactions/index.vue'
-import PayrollAdjustmentsPage from '../payroll/adjustments/index.vue'
-import PayrollProcessingPage from '../payroll/processing/index.vue'
-import ThirteenthMonthPage from '../payroll/thirteenth-month/index.vue'
-import PayslipPage from '../payroll/payslip/index.vue'
-import PortalAccountsPage from '../employees/portal-accounts/index.vue'
-import PayslipSitesPage from '../payroll/payslip-sites/index.vue'
-import PayrollHistoryPage from '../payroll/history/index.vue'
-import PayrollSummaryPage from '../payroll/summary/index.vue'
-import SettingsPage from '../settings/index.vue'
 import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
 import PayrollRunProgress from '../../components/PayrollRunProgress.vue'
 import DjaAssistant from '../../components/DjaAssistant.vue'
 import NotificationBell from '../../components/NotificationBell.vue'
 import type { NotificationTarget } from '~~/shared/utils/notifications'
+
+// Load only the workspace being opened; keep the shell and navigation responsive.
+function lazyPage(loader: () => Promise<any>) {
+  return defineAsyncComponent({ loader: () => loader().then(module => module.default), delay: 100,
+    loadingComponent: { render: () => h(WorkspaceLoading, { label: 'Loading workspace...' }) },
+    errorComponent: { render: () => h('p', { role: 'alert' }, 'Unable to load this workspace. Please refresh the page.') }
+  })
+}
+const EmployeeListPage = lazyPage(() => import('../employees/index.vue'))
+const DeploymentHistoryPage = lazyPage(() => import('../employees/deployment-history/index.vue'))
+const EmployeeDocumentsPage = lazyPage(() => import('../employees/documents/index.vue'))
+const EmployeeStatusPage = lazyPage(() => import('../employees/status/index.vue'))
+const AgencyPage = lazyPage(() => import('../organization/agency/index.vue'))
+const PositionPage = lazyPage(() => import('../organization/position/index.vue'))
+const ClientPage = lazyPage(() => import('../organization/client/index.vue'))
+const SitePage = lazyPage(() => import('../organization/site/index.vue'))
+const SiteAccountsPage = lazyPage(() => import('../organization/site-accounts/index.vue'))
+const RegionPage = lazyPage(() => import('../organization/region/index.vue'))
+const PayrollRatePage = lazyPage(() => import('../rates/payroll/index.vue'))
+const BillingRatePage = lazyPage(() => import('../rates/billing/index.vue'))
+const GenerateBillingPage = lazyPage(() => import('../billing/generate/index.vue'))
+const BillingHistoryPage = lazyPage(() => import('../billing/history/index.vue'))
+const SiteRatePage = lazyPage(() => import('../rates/site/index.vue'))
+const DailyTimeRecordsPage = lazyPage(() => import('../attendance/daily-time-records/index.vue'))
+const DtrRelieverPage = lazyPage(() => import('../attendance/dtr-reliever/index.vue'))
+const ShiftCodePage = lazyPage(() => import('../attendance/shift-code/index.vue'))
+const HolidayManagerPage = lazyPage(() => import('../attendance/holiday-manager/index.vue'))
+const DeductionLoanCatalogPage = lazyPage(() => import('../deductions-loans/catalog/index.vue'))
+const EmployeeLoanDeductionPage = lazyPage(() => import('../deductions-loans/employees/index.vue'))
+const AgencyContributionsPage = lazyPage(() => import('../deductions-loans/contributions/index.vue'))
+const EmployeeAccountTransactionsPage = lazyPage(() => import('../deductions-loans/transactions/index.vue'))
+const PayrollAdjustmentsPage = lazyPage(() => import('../payroll/adjustments/index.vue'))
+const PayrollProcessingPage = lazyPage(() => import('../payroll/processing/index.vue'))
+const ThirteenthMonthPage = lazyPage(() => import('../payroll/thirteenth-month/index.vue'))
+const PayslipPage = lazyPage(() => import('../payroll/payslip/index.vue'))
+const PortalAccountsPage = lazyPage(() => import('../employees/portal-accounts/index.vue'))
+const PayslipSitesPage = lazyPage(() => import('../payroll/payslip-sites/index.vue'))
+const PayrollHistoryPage = lazyPage(() => import('../payroll/history/index.vue'))
+const PayrollSummaryPage = lazyPage(() => import('../payroll/summary/index.vue'))
+const SettingsPage = lazyPage(() => import('../settings/index.vue'))
 
 const route = useRoute()
 const router = useRouter()
@@ -356,23 +364,34 @@ function formatStatValue(stat: { label?: string; value?: unknown }) {
   return stat.label === "This Month's Billing" ? pesoFormat.format(safeValue) : numberFormat.format(safeValue)
 }
 
-async function refreshDashboardData() {
-  try {
-    const [statsResponse, payrollResponse, activityResponse] = await Promise.all([
-      $fetch<any>('/api/dashboard/stats'),
-      $fetch<any>('/api/dashboard/recent-payroll'),
-      $fetch<any>('/api/dashboard/recent-activity')
-    ])
-    stats.value = statsResponse.stats
-    recentPayroll.value = payrollResponse.payroll
-    recentActivity.value = activityResponse.activities
-    saveCache(CACHE_KEYS.stats, stats.value)
-    saveCache(CACHE_KEYS.recentPayroll, recentPayroll.value)
-    saveCache(CACHE_KEYS.recentActivity, recentActivity.value)
-  } catch (error) {
-    console.warn('Failed to refresh dashboard data; showing cached data when available.', error)
-  }
+let dashboardRequest: Promise<void> | null = null
+let dashboardUpdatedAt = 0
+function refreshDashboardData(): Promise<void> {
+  if (activeWorkspaceView.value || !moduleAccess.value?.dashboard?.canView) return Promise.resolve()
+  if (dashboardRequest) return dashboardRequest
+  if (Date.now() - dashboardUpdatedAt < 30000) return Promise.resolve()
+  dashboardRequest = Promise.resolve().then(async () => {
+    try {
+      const options = { timeout: 15000, retry: 0 }
+      const [statsResponse, payrollResponse, activityResponse] = await Promise.all([
+        $fetch<any>('/api/dashboard/stats', options),
+        $fetch<any>('/api/dashboard/recent-payroll', options),
+        $fetch<any>('/api/dashboard/recent-activity', options)
+      ])
+      stats.value = statsResponse.stats
+      recentPayroll.value = payrollResponse.payroll
+      recentActivity.value = activityResponse.activities
+      saveCache(CACHE_KEYS.stats, stats.value)
+      saveCache(CACHE_KEYS.recentPayroll, recentPayroll.value)
+      saveCache(CACHE_KEYS.recentActivity, recentActivity.value)
+      dashboardUpdatedAt = Date.now()
+    } catch (error) {
+      console.warn('Failed to refresh dashboard data; showing cached data when available.', error)
+    } finally { dashboardRequest = null }
+  })
+  return dashboardRequest
 }
+watch([activeWorkspaceView, () => moduleAccess.value?.dashboard?.canView], () => { void refreshDashboardData() })
 
 const statusClass = (status) => 'status-badge status-badge--' + status.toLowerCase().replace(/\s+/g, '-')
 
@@ -431,7 +450,7 @@ onMounted(async () => {
     }
   }
 
-  if (moduleAccess.value?.dashboard?.canView) await refreshDashboardData()
+
 
   isBooting.value = false
 
