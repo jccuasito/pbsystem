@@ -27,10 +27,8 @@ export async function googleSignIn(event: any, google: { googleId: string; email
       await connection.execute('UPDATE `user` SET GoogleID = ?, AuthProvider = \'google\', EmailVerified = 1, VerificationToken = NULL, VerificationTokenExpiry = NULL WHERE UserID = ?', [google.googleId, user.UserID])
     } else {
       const first = textInput(google.firstName, 'first name (complete signup if missing)', 100), last = textInput(google.lastName, 'last name (complete signup if missing)', 100)
-      await connection.execute('INSERT INTO `user` (FirstName, LastName, Gender, Email, AuthProvider, GoogleID, EmailVerified, UserType, Status) VALUES (?, ?, \'Prefer not to say\', ?, \'google\', ?, 1, \'Viewer\', \'Inactive\')', [first, last, email, google.googleId])
-      await connection.commit()
-      committed = true
-      throw createError({ statusCode: 403, statusMessage: 'Your staff account was created. An administrator must activate it and assign access before you can sign in.' })
+      const [created] = await connection.execute<any>('INSERT INTO `user` (FirstName, LastName, Gender, Email, AuthProvider, GoogleID, EmailVerified, UserType, Status) VALUES (?, ?, \'Prefer not to say\', ?, \'google\', ?, 1, \'Viewer\', \'Active\')', [first, last, email, google.googleId])
+      user = { UserID: created.insertId, FirstName: first, LastName: last, Email: email, DepartmentID: null, UserType: 'Viewer', Status: 'Active', GoogleID: google.googleId }
     }
     const [history] = await connection.execute<any>('INSERT INTO user_history (UserID, LoginDateTime, IPAddress, Device) VALUES (?, UTC_TIMESTAMP(), ?, ?)', [user.UserID, event.node.req.socket.remoteAddress || null, event.node.req.headers['user-agent']?.slice(0, 100) || null])
     await connection.commit()

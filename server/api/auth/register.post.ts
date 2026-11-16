@@ -1,6 +1,6 @@
 import { createError, getCookie, readBody, setCookie } from 'h3'
 import pool from '../../connection/dbconnect'
-import { assertPassword, hashPassword, hashToken, normalizeEmail, randomVerificationCode } from '../../utils/auth'
+import { assertPassword, hashPassword, hashToken, normalizeEmail, randomToken } from '../../utils/auth'
 import { verifyToken } from '../../utils/jwt'
 import { sendVerificationEmail } from '../../utils/mailer'
 import { textInput } from '../../utils/inputValidation'
@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
   if (pendingGoogle) { try { google = verifyToken(pendingGoogle) as any } catch { /* expired Google signup proof */ } }
   if (google?.signup !== true || google.email !== email) google = null
   const connection = await pool.getConnection()
-  const code = randomVerificationCode()
+  const token = randomToken()
   try {
     await connection.beginTransaction()
     let departmentId: number | null = null
@@ -28,16 +28,20 @@ export default defineEventHandler(async (event) => {
     }
     const passwordHash = await hashPassword(body.password)
     if (google?.completeUserId) {
-      const [result] = await connection.execute<any>('UPDATE `user` SET FirstName = ?, LastName = ?, Gender = ?, Password = ?, AuthProvider = \'google\', GoogleID = ?, EmailVerified = 0, VerificationToken = ?, VerificationTokenExpiry = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 15 MINUTE), DepartmentID = ? WHERE UserID = ? AND Email = ?', [firstName, lastName, body.gender, passwordHash, google.googleId, hashToken(code), departmentId, google.completeUserId, email])
+      const [result] = await connection.execute<any>('UPDATE `user` SET FirstName = ?, LastName = ?, Gender = ?, Password = ?, AuthProvider = \'google\', GoogleID = ?, EmailVerified = 0, VerificationToken = ?, VerificationTokenExpiry = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 15 MINUTE), DepartmentID = ? WHERE UserID = ? AND Email = ? AND Password IS NULL', [firstName, lastName, body.gender, passwordHash, google.googleId, hashToken(token), departmentId, google.completeUserId, email])
       if (!result.affectedRows) throw createError({ statusCode: 409, statusMessage: 'Your Google signup session expired. Please select Google again.' })
     } else {
       const [existing] = await connection.execute<any[]>('SELECT UserID FROM `user` WHERE Email = ? LIMIT 1 FOR UPDATE', [email])
-      if (existing.length) throw createError({ statusCode: 409, statusMessage: 'An account already exists for this email.' })
-      await connection.execute('INSERT INTO `user` (FirstName, LastName, Gender, Email, Password, AuthProvider, GoogleID, EmailVerified, VerificationToken, VerificationTokenExpiry, DepartmentID, UserType, Status) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 15 MINUTE), ?, \'Viewer\', \'Inactive\')', [firstName, lastName, body.gender, email, passwordHash, google ? 'google' : 'local', google?.googleId || null, hashToken(code), departmentId])
+      if (existing.length) throw createError({ statusCode: 409, statusMessage: 'An account already exists for this email. Log in or resend your verification link below.' })
+      await connection.execute('INSERT INTO `user` (FirstName, LastName, Gender, Email, Password, AuthProvider, GoogleID, EmailVerified, VerificationToken, VerificationTokenExpiry, DepartmentID, UserType, Status) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 15 MINUTE), ?, \'Viewer\', \'Active\')', [firstName, lastName, body.gender, email, passwordHash, google ? 'google' : 'local', google?.googleId || null, hashToken(token), departmentId])
     }
     await connection.commit()
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
   if (google) setCookie(event, 'pbs_google_signup', '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 0 })
-  try { await sendVerificationEmail(email, code) } catch (error) { console.error('[auth] Verification email could not be sent', error); return { message: 'Account created, but the verification email could not be sent. Configure Gmail SMTP, then resend verification.', requiresVerification: false } }
-  return { message: 'We sent a 6-digit verification code to your email. An administrator must activate your staff account and assign access before you can sign in.', requiresVerification: true, email }
+  try { await sendVerificationEmail(email, token) }
+  catch {
+    console.error('[auth] Verification email delivery failed; check the server mail configuration.')
+    return { message: 'Your account was created, but we could not send the verification link. Try Resend verification link. If it still fails, contact your administrator.', accountCreated: true, requiresVerification: true, emailSent: false, email }
+  }
+  return { message: 'Your account was created. Open the verification link in your email to sign in. The link expires in 15 minutes.', accountCreated: true, requiresVerification: true, emailSent: true, email }
 })

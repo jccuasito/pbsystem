@@ -55,14 +55,14 @@ export function notificationPublicationCte(owned=false) {
 export async function staffNotificationItems(actor:{UserID:number;UserType:string},access:Record<string,{canView:boolean;canEdit?:boolean}>,db:Db=pool,day=today(),backup=dailyBackupFailure) {
   const tasks:Promise<SystemNotification[]>[]=[]
   if(actor.UserType==='Admin')tasks.push((async()=>{
-    // Team access writes permissions on initial activation. Previously configured
+    // Team access writes explicit permissions on review. Previously configured
     // or previously signed-in accounts must not be treated as new registrations.
     const [row]=await source(db,'staff-account-setup',`SELECT COUNT(*) AS Total,
       SUM(CRC32(CONCAT(u.UserID,':',u.CreatedAt))) AS Fingerprint,${iso('MAX(u.CreatedAt)')} AS ChangedAt
       FROM \`user\` u WHERE u.Status=?
       AND NOT EXISTS(SELECT 1 FROM user_module_permission p WHERE p.UserID=u.UserID)
-      AND NOT EXISTS(SELECT 1 FROM user_history h WHERE h.UserID=u.UserID)`,['Inactive'])
-    return positive(row?.Total)?[notice('staff-account-setup','staff-account-setup','Staff accounts awaiting setup',`${row.Total} staff account(s) await initial activation and access setup. Review their department, role and module permissions in Team access.`,'info',row.ChangedAt,{view:'settings',section:'users'},[row.Total,row.Fingerprint])]:[]
+      AND NOT EXISTS(SELECT 1 FROM user_history h WHERE h.UserID=u.UserID)`,['Active'])
+    return positive(row?.Total)?[notice('staff-account-setup','staff-account-setup','New staff accounts',`${row.Total} new staff account(s) are registered. Review their department, role and module permissions in Team access.`,'info',row.ChangedAt,{view:'settings',section:'users'},[row.Total,row.Fingerprint])]:[]
   })())
   if(access.attendance?.canView)tasks.push((async()=>{
     const [row]=await source(db,'dtr:'+day,`SELECT COUNT(*) AS Total,MAX(d.BatchID) AS Latest,

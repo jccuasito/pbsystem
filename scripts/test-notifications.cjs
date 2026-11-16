@@ -46,7 +46,7 @@ test('staff and portal notifications require their own authenticated session',as
 })
 
 test('actual notification queries, per-user read state, source validity and ownership',{skip:process.env.NOTIFICATIONS_TEST_DATABASE!=='1'},async()=>{
- const env={...require('node:util').parseEnv(fs.readFileSync('.env','utf8')),...process.env}
+ const env={...require('node:util').parseEnv(fs.existsSync('.env')?fs.readFileSync('.env','utf8'):''),...process.env}
  const c=await require('mysql2/promise').createConnection({host:env.DB_HOST||'127.0.0.1',port:Number(env.DB_PORT||3306),user:env.DB_USER||'root',password:env.DB_PASSWORD,database:env.DB_NAME||'pbsystem',dateStrings:true})
  try{
   // Every mutated table shadows its persistent counterpart on this connection.
@@ -72,7 +72,7 @@ test('actual notification queries, per-user read state, source validity and owne
    employee_notification_read:'AccountID INT,NotificationKey VARCHAR(100),Revision CHAR(64),ReadAt DATETIME,PRIMARY KEY(AccountID,NotificationKey)'
   }
   for(const [name,columns]of Object.entries(tables))await c.query('CREATE TEMPORARY TABLE `'+name+'` ('+columns+') ENGINE=InnoDB')
-  await c.query("INSERT INTO user VALUES(100,'Inactive',NOW()),(200,'Inactive',NOW()),(300,'Inactive',NOW()),(400,'Active',NOW())")
+  await c.query("INSERT INTO user VALUES(100,'Active',NOW()),(200,'Active',NOW()),(300,'Active',NOW()),(400,'Inactive',NOW())")
   await c.query("INSERT INTO user_module_permission VALUES(200,'dashboard')")
   await c.query('INSERT INTO user_history VALUES(300)')
   await c.query("INSERT INTO employee VALUES(1,'Active'),(2,'Active'),(3,'Inactive')")
@@ -96,14 +96,14 @@ test('actual notification queries, per-user read state, source validity and owne
   rights=all();const service=api(db)
   const admin=await service.listStaffNotifications({role:'Admin'})
   const setup=admin.items.find(item=>item.key==='staff-account-setup')
-  assert.match(setup.message,/1 staff account/,'Excludes Active, configured and previously signed-in accounts')
+  assert.match(setup.message,/1 new staff account/,'Excludes Inactive, configured and previously signed-in accounts')
   assert.deepEqual(setup.target,{view:'settings',section:'users'})
   await service.readStaffNotifications({role:'Admin',body:{items:[{key:setup.key,revision:setup.revision}]}})
   assert.equal((await service.listStaffNotifications({role:'Admin'})).items.find(item=>item.key===setup.key).read,true)
   await assert.rejects(()=>service.readStaffNotifications({role:'Supervisor',body:{items:[{key:setup.key,revision:setup.revision}]}}),e=>e.statusCode===409)
-  await c.query("INSERT INTO user VALUES(101,'Inactive',NOW())")
+  await c.query("INSERT INTO user VALUES(101,'Active',NOW())")
   assert.equal((await service.listStaffNotifications({role:'Admin'})).items.find(item=>item.key===setup.key).read,false)
-  await c.query("UPDATE user SET Status='Active' WHERE UserID IN (100,101)")
+  await c.query("INSERT INTO user_module_permission VALUES(100,'dashboard'),(101,'dashboard')")
   assert.equal((await service.listStaffNotifications({role:'Admin'})).items.some(item=>item.key===setup.key),false)
   const first=await service.listStaffNotifications({role:'Supervisor'})
   assert.equal(first.items.length,5)

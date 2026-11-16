@@ -555,6 +555,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/requestSecurity.ts`
   - `server/utils/settingsAccess.ts`
   - `server/utils/siteAccountSummary.ts`
+  - `server/utils/staffAccountDeletion.ts`
   - `server/utils/thirteenthMonthCrud.ts`
   - `shared/utils/attendanceFieldControls.ts`
   - `shared/utils/attendanceStatuses.ts`
@@ -1579,6 +1580,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/privateProfileImages.mjs`
   - `server/utils/requestCapacity.ts`
   - `server/utils/settingsAccess.ts`
+  - `server/utils/staffAccountDeletion.ts`
 - Static assets:
   - None detected.
 - Links to: none detected.
@@ -1589,13 +1591,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
-  - `components/modals/emailverification.vue`
   - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/auth/departments` → `server/api/auth/departments.get.ts`
   - `POST /api/auth/google-code` → `server/api/auth/google-code.post.ts`
   - `POST /api/auth/register` → `server/api/auth/register.post.ts`
-  - `POST /api/auth/verify-email` → `server/api/auth/verify-email.post.ts`
+  - `POST /api/auth/resend-verification` → `server/api/auth/resend-verification.post.ts`
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`

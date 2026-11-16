@@ -6,7 +6,7 @@ const esbuild=require('esbuild'),sfc=require('@vue/compiler-sfc')
 const root=path.resolve(__dirname,'..'),output=path.join(root,'.data','portal-services-tests')
 async function buildFixture(component='app/pages/payroll/payslip/index.vue',props={}){
  const styles=component==='app/pages/dashboard/index.vue'?['base','theme','components','dashboard'].map(name=>fs.readFileSync(path.join(root,'assets/css',name+'.css'),'utf8')):[]
- const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './${component}';const app=createApp(Portal,${JSON.stringify(props)});app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});window.testApp=app;app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,format:'iife',platform:'browser',define:{'import.meta.client':'true','import.meta.server':'false',__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
+ const result=await esbuild.build({stdin:{contents:`import {createApp,h} from 'vue';import Portal from './${component}';const app=createApp(Portal,${JSON.stringify(props)});app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())});window.testApp=app;app.mount('#app');`,resolveDir:root,loader:'js'},bundle:true,write:false,nodePaths:(process.env.NODE_PATH||'').split(path.delimiter).filter(Boolean),format:'iife',platform:'browser',define:{'import.meta.client':'true','import.meta.server':'false',__VUE_OPTIONS_API__:'true',__VUE_PROD_DEVTOOLS__:'false',__VUE_PROD_HYDRATION_MISMATCH_DETAILS__:'false'},plugins:[{name:'portal-fixture',setup(build){
   build.onResolve({filter:/^(~~\/|~\/)/},args=>({path:path.resolve(root,args.path.startsWith('~~/')?args.path.slice(3):'app/'+args.path.slice(2))+'.ts'}))
   build.onResolve({filter:/^#app$/},()=>({path:'nuxt-router-fixture',namespace:'fixture'}))
   build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
@@ -55,7 +55,7 @@ test('empty department removal sends JSON only after confirmation and refreshes 
  }finally{await browser.close()}
 })
 
-test('Admin registration alert opens Team access with new inactive accounts and never grants access automatically',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+test('Admin registration alert opens all Team access accounts and never changes access automatically',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
  const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/dashboard/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
  try{
   const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.on('pageerror',error=>errors.push(error.message))
@@ -69,19 +69,112 @@ test('Admin registration alert opens Team access with new inactive accounts and 
     if(url==='/api/settings/access')return{isAdmin:true,access:{payslips:{canView:true,canEdit:true}},modules:[]}
     if(url==='/api/payroll/payslips')return{items:[],agencies:[],accountSummary:{total:0,active:0,inactive:0,unregistered:0},pagination:{page:1,pages:1,total:0}}
     if(url==='/api/notifications/read'){window.noticeRead=true;return{success:true}}
-    if(url==='/api/notifications')return{items:[{key:'staff-account-setup',revision:(window.secondSignup?'b':'a').repeat(64),kind:'staff-account-setup',title:'Staff accounts awaiting setup',message:'Review department, role and permissions in Team access.',severity:'info',updatedAt:null,target:{view:'settings',section:'users'},read:window.noticeRead}],unreadCount:window.noticeRead?0:1,generatedAt:new Date().toISOString()}
+    if(url==='/api/notifications')return{items:[{key:'staff-account-setup',revision:(window.secondSignup?'b':'a').repeat(64),kind:'staff-account-setup',title:'New staff accounts',message:'Review department, role and permissions in Team access.',severity:'info',updatedAt:null,target:{view:'settings',section:'users'},read:window.noticeRead}],unreadCount:window.noticeRead?0:1,generatedAt:new Date().toISOString()}
     if(url==='/api/settings/users')return{departments:[{id:1,name:'Human Resources',status:'Active'}],users:[{id:1,name:'New staff member',email:'new@example.invalid',departmentId:1,role:'Viewer',status:'Inactive',access:{}},...(window.secondSignup?[{id:2,name:'Latest staff member',email:'latest@example.invalid',departmentId:null,role:'Viewer',status:'Inactive',access:{}}]:[])]}
     if(url==='/api/settings/backups')return{backups:[],automatic:true}
     throw Error('Unexpected endpoint '+url)
    }
   });await page.addScriptTag({content:fixture.script});await page.getByRole('heading',{name:'Payslips',exact:true}).waitFor()
-  async function visit(){await page.getByRole('button',{name:'Notifications',exact:true}).click();await page.getByRole('button',{name:/Staff accounts awaiting setup/}).click();await page.getByRole('heading',{name:'Departments & users',exact:true}).waitFor()}
+  async function visit(){await page.getByRole('button',{name:'Notifications',exact:true}).click();await page.getByRole('button',{name:/New staff accounts/}).click();await page.getByRole('heading',{name:'Departments & users',exact:true}).waitFor()}
   await visit();assert.equal(await page.evaluate(()=>window.fixtureRoute.query.notice),'users')
-  assert.equal(await page.getByLabel('Show inactive accounts',{exact:true}).isChecked(),true);await page.getByText('New staff member',{exact:true}).waitFor()
+  assert.equal(await page.getByLabel('Show inactive accounts',{exact:true}).count(),0);await page.getByText('New staff member',{exact:true}).waitFor()
   await page.getByRole('button',{name:'My account',exact:true}).click();await page.evaluate(()=>window.secondSignup=true);await visit();await page.getByText('Latest staff member',{exact:true}).waitFor()
   const writes=await page.evaluate(()=>window.calls.filter(call=>call.method!=='GET'));assert.deepEqual(writes,[{url:'/api/notifications/read',method:'POST'}])
   assert.equal(await page.locator('.mini-status.inactive').count(),2);assert.deepEqual(errors,[])
   fs.mkdirSync(output,{recursive:true});await page.screenshot({path:path.join(output,'admin-account-setup-notification.png'),fullPage:true})
+ }finally{await browser.close()}
+})
+
+test('staff signup email failure shows saved account and resend instead of duplicate creation',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/signupscreen/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage({viewport:{width:390,height:844}}),errors=[];page.on('pageerror',error=>errors.push(error.message))
+  await page.route('**/*',route=>route.abort())
+  await page.setContent('<!doctype html><base href="http://signup.test"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="app"></div>')
+  if(fixture.css)await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.calls=[];window.useRoute=()=>({query:{}});window.useRuntimeConfig=()=>({public:{googleClientId:''}})
+   window.$fetch=async(url,options={})=>{
+    window.calls.push({url,method:options.method||'GET'})
+    if(url==='/api/auth/departments')return{departments:[]}
+    if(url==='/api/auth/register')return{accountCreated:true,requiresVerification:true,emailSent:false,email:options.body.email,message:'Your account was created, but we could not send the verification link. Try Resend verification link.'}
+    if(url==='/api/auth/resend-verification')return{message:'If this email belongs to an account that needs verification, we sent a new link.'}
+    throw Error('Unexpected endpoint '+url)
+   }
+  });await page.addScriptTag({content:fixture.script})
+  await page.getByLabel('First name',{exact:true}).fill('Synthetic');await page.getByLabel('Last name',{exact:true}).fill('Signup')
+  await page.getByLabel('Gender',{exact:true}).selectOption('Male');await page.getByLabel('Email address',{exact:true}).fill('synthetic@example.invalid')
+  await page.getByLabel('Password',{exact:true}).fill('Synthetic-test-password123');await page.getByLabel('Confirm password',{exact:true}).fill('Synthetic-test-password123')
+  await page.getByRole('button',{name:'Create account',exact:false}).click()
+  await page.getByRole('heading',{name:'Check your email',exact:true}).waitFor()
+  assert.equal(await page.getByRole('button',{name:'Create account',exact:false}).count(),0)
+  assert.equal(await page.locator('input[autocomplete="new-password"]').count(),0)
+  assert.equal(await page.getByLabel('Verification email',{exact:true}).inputValue(),'synthetic@example.invalid')
+  await page.getByRole('button',{name:'Resend verification link',exact:true}).click()
+  await page.getByRole('status').filter({hasText:'we sent a new link'}).waitFor()
+  assert.deepEqual(await page.evaluate(()=>window.calls.filter(call=>call.method==='POST')),[{url:'/api/auth/register',method:'POST'},{url:'/api/auth/resend-verification',method:'POST'}])
+  assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
+
+test('Admin can confirm history-preserving deletion of Active and Inactive accounts without an inactive filter',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/settings/index.vue',{initialSection:'users'}),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:950}}),errors=[];page.on('pageerror',error=>errors.push(error.message))
+  await page.setContent('<!doctype html><base href="http://settings.test"><div id="app"></div>');await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.useHead=()=>{};window.deletes=[]
+   window.staff=[{id:2,name:'Synthetic Active',email:'active@example.invalid',departmentId:1,role:'Viewer',status:'Active',access:{}},{id:3,name:'Synthetic Inactive',email:'inactive@example.invalid',departmentId:1,role:'Viewer',status:'Inactive',access:{}}]
+   window.$fetch=async(url,options={})=>{
+    if(url==='/api/auth/me')return{user:{id:1,firstName:'Synthetic',lastName:'Admin',userType:'Admin'}}
+    if(url==='/api/settings/access')return{isAdmin:true,modules:[],access:{}}
+    if(url==='/api/settings/backups')return{backups:[],automatic:true}
+    if(url==='/api/settings/users')return{users:window.staff,departments:[{id:1,name:'Synthetic department',status:'Active'}]}
+    if(options.method==='DELETE'&&/^\/api\/settings\/users\/\d+$/.test(url)){
+     window.deletes.push({url,body:options.body});window.staff=window.staff.filter(user=>user.id!==Number(url.split('/').at(-1)));return{success:true}
+    }
+    throw Error('Unexpected endpoint '+url)
+   }
+  });await page.addScriptTag({content:fixture.script})
+  await page.getByRole('heading',{name:'Departments & users',exact:true}).waitFor()
+  assert.equal(await page.getByLabel('Show inactive accounts',{exact:true}).count(),0)
+  for(const name of ['Synthetic Active','Synthetic Inactive']){
+   const row=page.locator('.directory-user-row').filter({hasText:name})
+   await row.getByRole('button',{name:'Manage',exact:true}).click()
+   await page.getByRole('dialog').getByRole('button',{name:'Delete user',exact:true}).click()
+   const dialog=page.getByRole('alertdialog'),remove=dialog.getByRole('button',{name:'Delete user',exact:true})
+   assert.match(await dialog.innerText(),/Sign-in history, payroll records, and the name attached to past actions will be preserved/)
+   assert.equal(await remove.isDisabled(),true)
+   await dialog.getByRole('textbox').fill('DELETE');await remove.click();await dialog.waitFor({state:'hidden'})
+   assert.equal(await page.locator('.directory-user-row').filter({hasText:name}).count(),0)
+  }
+  assert.deepEqual(await page.evaluate(()=>window.deletes),[{url:'/api/settings/users/2',body:{confirmation:'DELETE'}},{url:'/api/settings/users/3',body:{confirmation:'DELETE'}}])
+  assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
+
+test('self-delete explains preserved history, requires confirmation and signs out after success',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture('app/pages/settings/index.vue'),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ try{
+  const page=await browser.newPage(),deletes=[],errors=[];page.on('pageerror',error=>errors.push(error.message))
+  await page.exposeFunction('recordSyntheticDeletion',body=>deletes.push(body))
+  await page.route('http://settings.test/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><div id="app"></div>'}))
+  await page.goto('http://settings.test/');await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.useHead=()=>{}
+   window.$fetch=async(url,options={})=>{
+    if(url==='/api/auth/me')return{user:{id:2,firstName:'Synthetic',lastName:'Member',email:'self@example.invalid',userType:'Viewer'}}
+    if(url==='/api/settings/access')return{isAdmin:false,modules:[],access:{}}
+    if(url==='/api/auth/account'&&options.method==='DELETE'){await window.recordSyntheticDeletion(options.body);return{success:true}}
+    throw Error('Unexpected endpoint '+url)
+   }
+  });await page.addScriptTag({content:fixture.script})
+  await page.getByRole('button',{name:'Delete account',exact:true}).click()
+  const dialog=page.getByRole('alertdialog',{name:'Delete your account?',exact:true}),remove=dialog.getByRole('button',{name:'Delete account',exact:true})
+  assert.equal(await remove.isDisabled(),true);assert.match(await dialog.innerText(),/Your history and past actions will remain under your original account/)
+  await dialog.getByRole('textbox').fill('DELETE')
+  await Promise.all([page.waitForURL('http://settings.test/loginscreen'),remove.click()])
+  assert.deepEqual(deletes,[{confirmation:'DELETE'}]);assert.deepEqual(errors,[])
  }finally{await browser.close()}
 })
 

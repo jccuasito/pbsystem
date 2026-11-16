@@ -23,7 +23,6 @@ const automatic = ref(false)
 const selectedUserId = ref<number | null>(null)
 const draft = ref<User | null>(null)
 const userSearch = ref('')
-const showInactiveUsers = ref(false)
 const expandedGroups = ref<Record<string, boolean>>({})
 const newDepartmentName = ref('')
 const showAddDepartment = ref(false)
@@ -53,7 +52,6 @@ function applyRequestedSection(){
   section.value=pendingNoticeSection
   if(pendingNoticeSection==='backups')showBackups.value=true
   else{
-    showInactiveUsers.value=true
     userSearch.value=''
     expandedGroups.value={unassigned:true,...Object.fromEntries(departments.value.map(item=>['department-'+item.id,true]))}
   }
@@ -68,7 +66,7 @@ watch(()=>[props.initialSection,props.initialSectionRequest],()=>{
 
 const isAdmin = computed(() => access.value?.isAdmin === true)
 const departmentGroups = computed(() => {
-  const listedUsers = users.value.filter(user => showInactiveUsers.value || user.status === 'Active')
+  const listedUsers = users.value
   const groups = departments.value.map(department => ({ key: `department-${department.id}`, id: department.id as number | null, name: department.name, status: department.status, users: listedUsers.filter(user => user.departmentId === department.id) }))
   const unassigned = listedUsers.filter(user => !departments.value.some(department => department.id === user.departmentId))
   if (unassigned.length) groups.push({ key: 'unassigned', id: null, name: 'Unassigned users', status: '', users: unassigned })
@@ -184,7 +182,7 @@ async function deleteUser() {
     await $fetch(`/api/settings/users/${user.id}`, { method: 'DELETE', body: { confirmation: deletePhrase.value } })
     await refreshDirectory()
     userToDelete.value = null; deletePhrase.value = ''
-    success.value = `${user.name}'s account was deleted. Their historical records remain available.`
+    success.value = `${user.name}'s account was deleted. Their history is preserved, and the email can be used for a new signup.`
   } catch (cause) { error.value = errorMessage(cause) }
   finally { busy.value = false }
 }
@@ -275,14 +273,14 @@ onMounted(() => { loadSettings() })
           <div v-if="!isAdmin && showAccessDetails" class="access-list"><div v-for="module in visibleModules" :key="module.key"><span>{{ module.label }}</span><span class="access-tag">{{ access?.access?.[module.key]?.canEdit ? 'Can edit' : 'View only' }}</span></div></div>
         </article>
         <article class="panel settings-list">
-          <div class="list-title"><div><h3>Delete account</h3><p>Disable your sign-in while keeping payroll and audit history.</p></div><button class="button danger-outline" type="button" @click="showDeleteAccount = true; deletePhrase = ''; error = ''">Delete account</button></div>
+          <div class="list-title"><div><h3>Delete account</h3><p>Remove your account and release its email while keeping payroll and audit history.</p></div><button class="button danger-outline" type="button" @click="showDeleteAccount = true; deletePhrase = ''; error = ''">Delete account</button></div>
         </article>
       </div>
 
       <div v-else-if="section === 'users' && isAdmin" class="section-stack">
         <div class="section-intro section-intro-actions"><div><span class="panel-kicker">ACCESS MANAGEMENT</span><h2>Departments &amp; users</h2><p>Manage departments and account permissions in one list.</p></div><button class="button primary" type="button" @click="showAddDepartment = true; error = ''; success = ''">Add department</button></div>
         <div class="directory-summary">{{ departments.length }} departments <span>·</span> {{ users.filter(user => user.status === 'Active').length }} active accounts <span>·</span> {{ adminCount }} admins</div>
-        <div class="list-toolbar"><label class="sr-only" for="team-search">Search departments or users</label><input id="team-search" v-model="userSearch" class="search" placeholder="Search department, name, or role" /><label class="inactive-toggle"><input v-model="showInactiveUsers" type="checkbox" /> Show inactive accounts</label></div>
+        <div class="list-toolbar"><label class="sr-only" for="team-search">Search departments or users</label><input id="team-search" v-model="userSearch" class="search" placeholder="Search department, name, or role" /></div>
         <div class="panel directory-list">
           <div class="directory-columns"><span>Department / user</span><span>Role</span><span>Status</span><span>Action</span></div>
           <div v-if="!departmentGroups.length" class="empty">No matching departments or users.</div>
@@ -346,13 +344,13 @@ onMounted(() => { loadSettings() })
           <div class="permission-head"><strong>Section</strong><strong>Can view</strong><strong>Can edit</strong></div>
           <div v-for="module in access?.modules" :key="module.key" class="permission-row"><span>{{ module.label }}</span><label><input v-model="draft.access[module.key].canView" type="checkbox" :disabled="draft.role === 'Admin'" @change="!draft!.access[module.key].canView && (draft!.access[module.key].canEdit = false)" /><span class="sr-only">Can view {{ module.label }}</span></label><label><input v-model="draft.access[module.key].canEdit" type="checkbox" :disabled="draft.role === 'Admin' || !draft.access[module.key].canView" /><span class="sr-only">Can edit {{ module.label }}</span></label></div>
         </div>
-        <footer class="user-dialog-footer"><button v-if="draft.id !== account?.id && draft.status === 'Active'" class="button danger-outline user-delete-button" type="button" :disabled="busy" @click="askDeleteUser">Delete user</button><button class="button secondary" type="button" :disabled="busy" @click="closeUser">Cancel</button><button v-if="draft.status === 'Active'" class="button primary" type="button" :disabled="busy" @click="saveUser">{{ busy ? 'Saving...' : 'Save changes' }}</button><button v-else class="button primary" type="button" :disabled="busy" @click="reactivateUser">{{ busy ? 'Saving...' : 'Reactivate account' }}</button></footer>
+        <footer class="user-dialog-footer"><button v-if="isAdmin && draft.id !== account?.id" class="button danger-outline user-delete-button" type="button" :disabled="busy" @click="askDeleteUser">Delete user</button><button class="button secondary" type="button" :disabled="busy" @click="closeUser">Cancel</button><button v-if="draft.status === 'Active'" class="button primary" type="button" :disabled="busy" @click="saveUser">{{ busy ? 'Saving...' : 'Save changes' }}</button><button v-else class="button primary" type="button" :disabled="busy" @click="reactivateUser">{{ busy ? 'Saving...' : 'Reactivate account' }}</button></footer>
       </section>
     </div>
     <div v-if="userToDelete" class="modal-backdrop" role="presentation" @click.self="closeDeleteUser">
       <section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-user-title">
         <span class="panel-kicker">DELETE USER</span><h2 id="delete-user-title">Delete {{ userToDelete.name }}?</h2>
-        <p>This account will lose sign-in access. Payroll and audit records will be preserved.</p>
+        <p>This removes the account from Team access, ends its access, and frees its email for signup. Sign-in history, payroll records, and the name attached to past actions will be preserved. The deleted account cannot be reactivated.</p>
         <div v-if="error" class="notice error" role="alert">{{ error }}</div>
         <label class="restore-phrase">Type DELETE to confirm<input v-model.trim="deletePhrase" autocomplete="off" spellcheck="false" placeholder="DELETE" /></label>
         <div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeDeleteUser">Cancel</button><button class="button danger" type="button" :disabled="busy || deletePhrase !== 'DELETE'" @click="deleteUser">{{ busy ? 'Deleting...' : 'Delete user' }}</button></div>
@@ -361,7 +359,7 @@ onMounted(() => { loadSettings() })
     <div v-if="showDeleteAccount" class="modal-backdrop" role="presentation" @click.self="closeDeleteAccount">
       <section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-account-title">
         <span class="panel-kicker">DELETE ACCOUNT</span><h2 id="delete-account-title">Delete your account?</h2>
-        <p>You will be signed out and will no longer be able to sign in. Payroll and audit history will be preserved. If you are the last active admin, first assign another admin.</p>
+        <p>You will be signed out, your account will be removed from Team access, and its email will be available for a new signup. Your history and past actions will remain under your original account. The deleted account cannot be reactivated. If you are the last active admin, first assign another admin.</p>
         <div v-if="error" class="notice error" role="alert">{{ error }}</div>
         <label class="restore-phrase">Type DELETE to confirm<input v-model.trim="deletePhrase" autocomplete="off" spellcheck="false" placeholder="DELETE" /></label>
         <div class="dialog-actions"><button class="button secondary" type="button" :disabled="busy" @click="closeDeleteAccount">Cancel</button><button class="button danger" type="button" :disabled="busy || deletePhrase !== 'DELETE'" @click="deleteAccount">{{ busy ? 'Deleting...' : 'Delete account' }}</button></div>
@@ -402,7 +400,7 @@ onMounted(() => { loadSettings() })
 @media(max-width:560px){.settings-page{padding-top:22px}.section-nav{gap:18px;overflow-x:auto}.section-nav button{white-space:nowrap;font-size:.83rem}.section-intro-actions{align-items:stretch;flex-direction:column}.section-intro-actions .button{align-self:flex-start}.directory-summary{flex-wrap:wrap}.directory-name{flex-wrap:wrap}.directory-name .member-count{width:100%;padding-left:43px}.directory-user-row{padding-left:17px}.directory-empty{padding-left:17px}.setting-row,.setting-facts>div{align-items:flex-start}.setting-row-action{align-items:flex-end;flex-direction:column;gap:8px}.list-title{padding:17px}.profile-list-identity{padding:17px}.setting-facts>div,.setting-row{padding:14px 17px}}
 .directory-expand{display:flex;align-items:center;gap:11px;min-width:0;flex:1;border:0;background:transparent;color:var(--ink);padding:0;text-align:left;font:inherit;cursor:pointer}.directory-expand strong{font-size:.88rem}.directory-expand:hover strong{color:var(--theme-accent,#235bc9)}.directory-expand:focus-visible{outline:3px solid #96b6fa;outline-offset:5px;border-radius:6px}.directory-chevron{width:18px;height:18px;margin-left:auto;flex:none;fill:none;stroke:var(--theme-muted,#607da9);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .16s}.directory-chevron.open{transform:rotate(180deg)}.directory-group-head:has(.directory-expand):hover{background:var(--theme-soft,#f3f7ff)}.directory-members{background:var(--surface)}
 .directory-group-head{min-height:60px}.directory-group-head .department-icon{width:32px;height:32px;flex:0 0 32px;border-radius:9px;font-size:.78rem;line-height:1}
-.inactive-toggle{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.8rem;cursor:pointer}.inactive-toggle input{width:17px;height:17px;accent-color:#2862e9}.status-field{display:grid;gap:7px;font-size:.88rem;font-weight:700}.status-field .mini-status{justify-self:start}
+.status-field{display:grid;gap:7px;font-size:.88rem;font-weight:700}.status-field .mini-status{justify-self:start}
 @media(max-width:560px){.directory-expand{flex-wrap:wrap}.directory-expand .member-count{width:100%;padding-left:43px}.directory-expand .directory-chevron{position:absolute;right:17px}.directory-group-head{position:relative}}
 .danger-outline{border:1px solid #edc1c1;background:var(--surface);color:#a62828}.user-department-label{display:grid;gap:7px;font-size:.88rem;font-weight:700}.user-department-label select{width:100%;min-height:44px;border:1px solid var(--theme-line,#cbdaf5);border-radius:10px;background:var(--surface);color:var(--ink);padding:0 12px;font:inherit}.field-hint{margin:7px 0 0!important;color:var(--muted);font-size:.8rem}.user-delete-button{margin-right:auto}@media(max-width:540px){.user-dialog-footer{flex-wrap:wrap}.user-delete-button{width:100%;margin-right:0}}
 .avatar img,.member-avatar img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}

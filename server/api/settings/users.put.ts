@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
       const [department] = await connection.execute<any[]>('SELECT DepartmentID FROM department WHERE DepartmentID = ? AND Status = \'Active\' LIMIT 1 FOR UPDATE', [departmentId])
       if (!department.length) throw createError({ statusCode: 400, statusMessage: 'Select an available department.' })
     }
-    const [existing] = await connection.execute<any[]>('SELECT UserID, Status FROM `user` WHERE UserID = ? FOR UPDATE', [userId])
+    const [existing] = await connection.execute<any[]>('SELECT UserID, Status FROM `user` WHERE UserID = ? AND DeletedAt IS NULL FOR UPDATE', [userId])
     if (!existing.length) throw createError({ statusCode: 404, statusMessage: 'User not found.' })
     await connection.execute('UPDATE `user` SET UserType = ?, Status = ?, DepartmentID = ? WHERE UserID = ?', [role, status, departmentId, userId])
     for (const module of MODULES) {

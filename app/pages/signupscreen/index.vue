@@ -3,7 +3,6 @@ import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { useAppTheme } from '~/composables/useAppTheme'
 import { ref, onMounted } from 'vue'
-import EmailVerification from '../../../components/modals/emailverification.vue'
 
 const isDark = useAppTheme()
 const form = ref({ firstName: '', lastName: '', gender: '', departmentId: null as number | null, email: '', password: '', confirmPassword: '' })
@@ -12,20 +11,41 @@ const error = ref(''); const message = ref(''); const busy = ref(false)
 const showPassword = ref(false); const showConfirmPassword = ref(false)
 const googleReady = ref(false)
 const googleCodeClient = ref<any>(null)
-const googleSelected = ref(false); const showVerification = ref(false); const verificationMessage = ref(''); const verifyingCode = ref(false)
+const googleSelected = ref(false)
+const accountCreated = ref(false)
+const needsVerification = ref(useRoute().query.verification === '1')
+const verificationEmail = ref(''); const resending = ref(false)
 async function register() {
+  if (busy.value || accountCreated.value) return
   error.value = ''; message.value = ''
   if (!form.value.firstName.trim() || !form.value.lastName.trim() || !form.value.gender || !form.value.email.trim() || !form.value.password) { error.value = 'First name, last name, gender, email, and password are required.'; return }
   if (form.value.password.length < 12 || !/[a-z]/i.test(form.value.password) || !/\d/.test(form.value.password)) { error.value = 'Password must have at least 12 characters and include letters and numbers.'; return }
   if (form.value.password !== form.value.confirmPassword) { error.value = 'Passwords do not match.'; return }
   busy.value = true
-  try { const result: any = await $fetch('/api/auth/register', { method: 'POST', body: form.value }); message.value = result.message; showVerification.value = Boolean(result.requiresVerification) }
-  catch (e: any) { console.error('Signup failed:', e); error.value = requestErrorMessage(e, 'Unable to create account.') }
+  try {
+    const result: any = await $fetch('/api/auth/register', { method: 'POST', body: form.value })
+    message.value = result.message
+    accountCreated.value = Boolean(result.accountCreated)
+    verificationEmail.value = result.email || form.value.email
+    needsVerification.value = Boolean(result.requiresVerification)
+    form.value.password = ''; form.value.confirmPassword = ''
+  }
+  catch (e: any) {
+    error.value = requestErrorMessage(e, 'Unable to create account.')
+    if (e.statusCode === 409 || e.response?.status === 409) { needsVerification.value = true; verificationEmail.value = form.value.email }
+  }
   finally { busy.value = false }
 }
 async function googleSignup(response: { code?: string; error?: string }) { if (!response.code) { error.value = response.error || 'Google sign-up was cancelled.'; return }; error.value = ''; busy.value = true; try { const result: any = await $fetch('/api/auth/google-code', { method: 'POST', body: { code: response.code, intent: 'signup' } }); form.value.firstName = result.profile.firstName; form.value.lastName = result.profile.lastName; form.value.email = result.profile.email; googleSelected.value = true; message.value = 'Google account selected. Complete the remaining fields, then create your account.' } catch (e: any) { error.value = requestErrorMessage(e, 'Google sign-up failed.') } finally { busy.value = false } }
-async function verifyEmail(code: string) { verificationMessage.value = ''; verifyingCode.value = true; try { verificationMessage.value = (await $fetch<any>('/api/auth/verify-email', { method: 'POST', body: { email: form.value.email, code } })).message; setTimeout(() => navigateTo('/loginscreen'), 900) } catch (e: any) { verificationMessage.value = requestErrorMessage(e, 'Unable to verify code.') } finally { verifyingCode.value = false } }
-function openVerification() { if (!form.value.email.trim()) { error.value = 'Enter the email address where the verification code was sent.'; return }; verificationMessage.value = ''; showVerification.value = true }
+async function resendVerification() {
+  if (resending.value) return
+  error.value = ''; message.value = ''
+  if (!/^\S+@\S+\.\S+$/.test(verificationEmail.value.trim())) { error.value = 'Enter your account email address to resend the verification link.'; return }
+  resending.value = true
+  try { message.value = (await $fetch<any>('/api/auth/resend-verification', { method: 'POST', body: { email: verificationEmail.value } })).message }
+  catch (e: any) { error.value = requestErrorMessage(e, 'Unable to resend the verification link.') }
+  finally { resending.value = false }
+}
 function startGoogle() { error.value = ''; if (!googleReady.value || !googleCodeClient.value) { error.value = 'Google sign-in is still loading. Please try again.'; return }; googleCodeClient.value.requestCode() }
 
 onMounted(async () => {
@@ -57,9 +77,11 @@ onMounted(async () => {
       <main class="auth-card auth-card--signup">
         <section class="auth-panel" aria-labelledby="signup-title">
           <div class="auth-panel__inner">
-            <h2 id="signup-title">Create your account</h2>
-            <p class="auth-panel__lead">Set up your secure DJA Payroll access.</p>
-            <form class="auth-form" novalidate @submit.prevent="register">
+            <h2 id="signup-title">{{ accountCreated ? 'Check your email' : 'Create your account' }}</h2>
+            <p class="auth-panel__lead">{{ accountCreated ? 'Your account is saved. Verify your email before signing in.' : 'Set up your secure DJA Payroll access.' }}</p>
+            <p v-if="error" role="alert" aria-live="polite" style="color:#ffb4aa">{{ error }}</p>
+            <p v-if="message" role="status" aria-live="polite" style="color:#8ff0bc">{{ message }}</p>
+            <form v-if="!accountCreated" class="auth-form" novalidate @submit.prevent="register">
               <div class="auth-form__grid"><div class="auth-field"><label for="first-name">First name</label><input id="first-name" v-model="form.firstName" autocomplete="given-name" placeholder="Juan" required /></div><div class="auth-field"><label for="last-name">Last name</label><input id="last-name" v-model="form.lastName" autocomplete="family-name" placeholder="Dela Cruz" required /></div></div>
               <div class="auth-form__grid"><div class="auth-field"><label for="gender">Gender</label><select id="gender" v-model="form.gender" required><option value="" disabled>Select</option><option>Female</option><option>Male</option><option>Prefer not to say</option></select></div><div class="auth-field"><label for="department">Department (optional)</label><select id="department" v-model="form.departmentId"><option :value="null">No department</option><option v-for="department in departments" :key="department.DepartmentID" :value="department.DepartmentID">{{ department.DepartmentName }}</option></select></div></div>
               <div class="auth-field"><label for="signup-email">Email address</label><input id="signup-email" v-model="form.email" type="email" autocomplete="email" placeholder="name@company.com" required /></div>
@@ -83,10 +105,18 @@ onMounted(async () => {
                   </button>
                 </div>
               </div>
-              <p v-if="error" role="alert" aria-live="polite" style="color:#ffb4aa">{{ error }}</p><p v-if="message" aria-live="polite" style="color:#8ff0bc">{{ message }}</p><button v-if="message.includes('verification code')" type="button" class="auth-verify-link" @click="openVerification">Enter verification code</button><button type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Creating…' : 'Create account' }} <span>&rarr;</span></button>
+              <button type="submit" class="auth-submit" :disabled="busy">{{ busy ? 'Creating...' : 'Create account' }} <span>&rarr;</span></button>
             </form>
-            <div class="auth-divider">or</div>
-            <button type="button" class="auth-google-btn" :disabled="busy" @click="startGoogle">
+            <details :open="accountCreated || needsVerification" class="verification-recovery">
+              <summary>Already registered? Resend verification link</summary>
+              <form class="auth-form" novalidate @submit.prevent="resendVerification">
+                <p>Enter your account email. Check your inbox and spam folder, then open the newest link within 15 minutes.</p>
+                <div class="auth-field"><label for="verification-email">Verification email</label><input id="verification-email" v-model="verificationEmail" type="email" autocomplete="email" required /></div>
+                <button type="submit" class="auth-submit" :disabled="resending">{{ resending ? 'Sending...' : 'Resend verification link' }}</button>
+              </form>
+            </details>
+            <div v-if="!accountCreated" class="auth-divider">or</div>
+            <button v-if="!accountCreated" type="button" class="auth-google-btn" :disabled="busy" @click="startGoogle">
               <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/><path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/><path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/></svg>
               Sign up with Google
             </button>
@@ -100,7 +130,6 @@ onMounted(async () => {
           <div class="auth-line"></div><div class="auth-orb"></div>
         </section>
       </main>
-      <EmailVerification v-model="showVerification" :email="form.email" :error="verificationMessage" :busy="verifyingCode" @verify="verifyEmail" />
     </div>
   </div>
 </template>

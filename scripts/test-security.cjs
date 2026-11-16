@@ -156,28 +156,29 @@ test('SQL injection payload remains a bind value in the DTR search, never SQL sy
   assert.ok(search); assert.ok(!search[0].includes(attack)); assert.deepEqual(search[1], ['%' + attack + '%', '%' + attack + '%', '%' + attack + '%'])
 })
 
-test('public staff registration cannot select its own role or activate itself', async () => {
+test('public staff registration is Active but cannot select its own role or bypass email verification', async () => {
   const calls = [], body = { firstName: "Niño O'Brien", lastName: 'Test', gender: 'Male', email: 'new-staff@example.com', password: 'Valid-testing-password123', departmentId: '', UserType: 'Admin', Status: 'Active' }
   const connection = { beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {}, execute: async (sql, args) => { calls.push([sql, args]); return sql.startsWith('SELECT') ? [[]] : [{ insertId: 1 }] } }
   const handler = load('server/api/auth/register.post.ts', {
     h3: { ...h3, readBody: async () => body, getCookie: () => null },
     '../../connection/dbconnect': { getConnection: async () => connection },
-    '../../utils/auth': { assertPassword: () => {}, normalizeEmail: validation.emailInput, hashPassword: async () => 'synthetic-hash', randomVerificationCode: () => '123456', hashToken: token => 'hashed-' + token },
+    '../../utils/auth': { assertPassword: () => {}, normalizeEmail: validation.emailInput, hashPassword: async () => 'synthetic-hash', randomToken: () => 'a'.repeat(64), hashToken: token => 'hashed-' + token },
     '../../utils/mailer': { sendVerificationEmail: async () => {} }, '../../utils/jwt': {}
   }).default
   const result = await handler({})
   const insert = calls.find(([sql]) => sql.startsWith('INSERT'))
-  assert.ok(insert[0].includes("'Viewer', 'Inactive'")); assert.ok(!insert[0].includes(body.firstName)); assert.equal(insert[1][0], body.firstName)
-  assert.match(result.message, /administrator must activate/)
+  assert.ok(insert[0].includes("'Viewer', 'Active'")); assert.ok(!insert[0].includes(body.firstName)); assert.equal(insert[1][0], body.firstName)
+  assert.equal(result.requiresVerification,true); assert.equal(result.accountCreated,true); assert.equal(result.emailSent,true)
 })
 
-test('new Google staff account stays inactive with no issued session; existing inactive accounts cannot log in', async () => {
+test('verified new Google staff receives an Active Viewer session; existing inactive accounts cannot log in', async () => {
   for (const existing of [[], [{ UserID: 1, Status: 'Inactive' }]]) {
     const calls = [], connection = { beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {}, execute: async (sql, args) => { calls.push([sql, args]); return sql.startsWith('SELECT') ? [existing] : [{ insertId: 1 }] } }
-    const google = load('server/utils/googleSignIn.ts', { '../connection/dbconnect': { getConnection: async () => connection }, './auth': { normalizeEmail: validation.emailInput, setSession: () => { throw Error('No session may be issued') } }, './jwt': {} })
-    await assert.rejects(() => google.googleSignIn({ node: { req: { socket: {}, headers: {} } } }, { email: 'new-google@example.com', emailVerified: true, googleId: '123', firstName: 'Test', lastName: 'User' }), denied(403))
-    if (!existing.length) assert.ok(calls.find(([sql]) => sql.startsWith('INSERT'))[0].includes("'Viewer', 'Inactive'"))
-    else assert.equal(calls.length, 1)
+    let issued=false
+    const google = load('server/utils/googleSignIn.ts', { '../connection/dbconnect': { getConnection: async () => connection }, './auth': { normalizeEmail: validation.emailInput, safeUser:user=>user, setSession: (_,user) => { assert.equal(user.Status,'Active'); assert.equal(user.UserType,'Viewer'); issued=true } }, './jwt': {} })
+    const login=()=>google.googleSignIn({ node: { req: { socket: {}, headers: {} } } }, { email: 'new-google@example.com', emailVerified: true, googleId: '123', firstName: 'Test', lastName: 'User' })
+    if (!existing.length) { await login(); assert.equal(issued,true); assert.ok(calls.find(([sql]) => sql.startsWith('INSERT'))[0].includes("'Viewer', 'Active'")) }
+    else { await assert.rejects(login,denied(403)); assert.equal(issued,false); assert.equal(calls.length,1) }
   }
 })
 

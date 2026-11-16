@@ -2,6 +2,7 @@ import { createError, getRouterParam, readBody } from 'h3'
 import pool from '../../../connection/dbconnect'
 import { requireSession } from '../../../utils/auth'
 import { requireAdmin } from '../../../utils/settingsAccess'
+import { deleteStaffIdentity } from '../../../utils/staffAccountDeletion'
 
 export default defineEventHandler(async (event) => {
   const session = requireSession(event)
@@ -15,11 +16,11 @@ export default defineEventHandler(async (event) => {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [actors] = await connection.execute<any[]>('SELECT UserType, Status FROM `user` WHERE UserID = ? FOR UPDATE', [session.sub])
+    const [actors] = await connection.execute<any[]>('SELECT UserType, Status FROM `user` WHERE UserID = ? AND DeletedAt IS NULL FOR UPDATE', [session.sub])
     if (!actors.length || actors[0].UserType !== 'Admin' || actors[0].Status !== 'Active') throw createError({ statusCode: 403, statusMessage: 'Administrator access is required.' })
-    const [rows] = await connection.execute<any[]>('SELECT UserID, Status FROM `user` WHERE UserID = ? FOR UPDATE', [id])
-    if (!rows.length || rows[0].Status !== 'Active') throw createError({ statusCode: 404, statusMessage: 'Active user not found.' })
-    await connection.execute('UPDATE `user` SET Status = \'Inactive\' WHERE UserID = ?', [id])
+    const [rows] = await connection.execute<any[]>('SELECT UserID, Status FROM `user` WHERE UserID = ? AND DeletedAt IS NULL FOR UPDATE', [id])
+    if (!rows.length) throw createError({ statusCode: 404, statusMessage: 'User not found.' })
+    await deleteStaffIdentity(connection, id, session.sub)
     await connection.commit()
     return { success: true }
   } catch (error) { await connection.rollback(); throw error }
