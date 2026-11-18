@@ -3,6 +3,7 @@ import type { PoolConnection } from 'mysql2/promise'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { calendarDate } from './inputValidation'
+import { flagDtrImportOverlaps, type DtrImportReviewRow } from '../../shared/utils/dtrImportReview'
 import { automaticDtrAttendanceStatus } from '../../shared/utils/dtrAttendanceStatus'
 import { assertDtrBtrReady } from './dtrBtrCrud'
 import { alertMessages, DTR_EMPLOYEE_ALREADY_ADDED } from '../../components/alertmessage/messages'
@@ -1663,7 +1664,8 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
     const periodStart = databaseDate(batch.PeriodStart), periodEnd = databaseDate(batch.PeriodEnd)
     await attachPendingEmployeeStatuses(connection, batch, session.sub)
     const [[enrollments], [shiftRows]] = await Promise.all([
-      connection.execute<any[]>(`SELECT de.EmployeeID, de.DeploymentID, de.AttendanceType, e.EmployeeNumber
+      connection.execute<any[]>(`SELECT de.EmployeeID, de.DeploymentID, de.AttendanceType, e.EmployeeNumber,
+          CONCAT_WS(', ', e.LastName, CONCAT_WS(' ', e.FirstName, NULLIF(e.MiddleName, ''))) AS EmployeeName
         FROM attendance_dtr_employee de INNER JOIN employee e ON e.EmployeeID = de.EmployeeID
         WHERE de.BatchID = ? FOR UPDATE`, [id]),
       connection.execute<any[]>(`SELECT ShiftCodeID, ShiftCode, ShiftType, TimeIn, TimeOut, RegularHours, RegularOTCap, WorkdayCount,
@@ -1676,12 +1678,26 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
     const clearedDutyAttendanceIds = new Set<number>(), affectedEmployeeIds = new Set<number>()
     const preservedEmployeeStatusDates = new Set<string>()
     const issues: { row: number; reason: string }[] = []
+    const reviewRows: DtrImportReviewRow[] = []
     let imported = 0, updated = 0, skipped = 0, blank = 0, cleared = 0
     for (let index = 0; index < sourceRows.length; index++) {
       const source = sourceRows[index] || {}, rowNumber = Number(source.RowNumber) || index + 2
       const employeeValue = importText(source.EmployeeID), employeeNumber = importText(source.EmployeeNumber)
       const attendanceDate = importText(source.AttendanceDate), shiftCode = importText(source.ShiftCode)
-      const skip = (reason: string) => { skipped++; if (issues.length < 12) issues.push({ row: rowNumber, reason }) }
+      const report: DtrImportReviewRow = {
+        row: rowNumber, employeeId: null, employeeNumber: '', employeeName: '', sourceEmployee: employeeNumber || employeeValue,
+        attendanceDate, shiftCode, sourceStatus: importText(source.AttendanceStatus),
+        timeIn: importText(source.TimeIn) ? `${importText(source.DateIn) || attendanceDate} ${importText(source.TimeIn)}` : null,
+        timeOut: importText(source.TimeOut) ? `${importText(source.DateOut) || attendanceDate} ${importText(source.TimeOut)}` : null,
+        expectedTimeIn: null, expectedTimeOut: null, lateMinutes: 0, undertimeMinutes: 0,
+        outcome: 'skipped', flags: [], reason: '', canReview: false,
+      }
+      reviewRows.push(report)
+      const skip = (reason: string, preserved = false) => {
+        skipped++; if (issues.length < 12) issues.push({ row: rowNumber, reason })
+        report.outcome = preserved ? 'preserved' : 'skipped'
+        report.reason = reason; report.flags.push(preserved ? 'preserved' : 'skipped')
+      }
       let enrollment = null as any
       const employeeId = importedEmployeeId(employeeValue)
       if (employeeId) enrollment = enrollmentById.get(employeeId) || null
@@ -1689,29 +1705,37 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       if (!enrollment) { const fallbackEmployeeId = importedEmployeeId(employeeNumber); if (fallbackEmployeeId) enrollment = enrollmentById.get(fallbackEmployeeId) || null }
       if (!enrollment) enrollment = enrollmentByNumber.get(importKey(employeeValue)) || null
       if (!enrollment) { skip('Employee ID / Employee No. is not in this DTR.'); continue }
+      report.employeeId = Number(enrollment.EmployeeID); report.employeeName = String(enrollment.EmployeeName || ''); report.employeeNumber = String(enrollment.EmployeeNumber || '')
       if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate)) { skip('Date is missing or invalid.'); continue }
       if (attendanceDate < periodStart || attendanceDate > periodEnd) { skip('Date is outside this DTR cutoff.'); continue }
       await lockAttendanceEmployee(connection, Number(enrollment.EmployeeID))
       enrollment = await dtrDeploymentAtDate(connection, enrollment, Number(enrollment.EmployeeID), attendanceDate)
       if (!enrollment) { skip('No fixed deployment covers this date at this site.'); continue }
+      report.canReview = true
       const [[existing]] = await connection.execute<any[]>('SELECT AttendanceID, BatchID, AttendanceStatus FROM attendance WHERE EmployeeID = ? AND AttendanceDate = ? AND (BatchID = ? OR BatchID IS NULL) ORDER BY BatchID DESC LIMIT 1 FOR UPDATE', [enrollment.EmployeeID, attendanceDate, id])
       if (existing && isEmployeeStatusLeave(existing.AttendanceStatus)) {
         preservedEmployeeStatusDates.add(`${enrollment.EmployeeID}:${attendanceDate}`)
-        skip(`HR-approved ${normalizeAttendanceStatus(existing.AttendanceStatus)} was preserved; the Excel row was not applied.`)
+        skip(`HR-approved ${normalizeAttendanceStatus(existing.AttendanceStatus)} was preserved; the Excel row was not applied.`, true)
         continue
       }
       const attendanceStatus = normalizeAttendanceStatus(source.AttendanceStatus), noWorkStatus = noWorkAttendanceStatuses.has(attendanceStatus)
       const importedTimeIn = importText(source.TimeIn), importedTimeOut = importText(source.TimeOut)
-      // A shift code in the source is only a label.  Without both biometric
-      // timestamps, this employee did not work that row and the DTR stays blank.
+      if (noWorkStatus) report.flags.push('non-work')
+      // Incomplete punches cannot establish absence. Keep the existing blank-row
+      // behavior and expose the missing input for manual review instead of guessing.
       if (!importedTimeIn || !importedTimeOut) {
         blank++
+        report.outcome = 'blank'
+        report.flags.push(!importedTimeIn && !importedTimeOut ? 'no-punches' : !importedTimeIn ? 'missing-in' : 'missing-out')
+        report.reason = !importedTimeIn && !importedTimeOut ? 'No time-in or time-out in this Excel row.' : !importedTimeIn ? 'Time-in is missing from this Excel row.' : 'Time-out is missing from this Excel row.'
+        report.reason += ' Confirm the punches or the correct non-work status in the DTR; a blank does not confirm absence.'
         const existingAttendanceId = Number(existing?.AttendanceID || 0)
         // Do not remove a valid earlier duty for the same employee/date when a
         // second spreadsheet row is merely blank (for example, empty augmentation).
         if (existingAttendanceId && Number(existing.BatchID) === id && !clearedDutyAttendanceIds.has(existingAttendanceId)) {
           await connection.execute('DELETE FROM attendance WHERE AttendanceID = ?', [existingAttendanceId])
           affectedEmployeeIds.add(Number(enrollment.EmployeeID)); cleared++
+          report.cleared = true; report.reason += ' Previous attendance for this DTR date was cleared.'
         }
         continue
       }
@@ -1725,8 +1749,11 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
       } catch { skip('Date in/time in or date out/time out is invalid.'); continue }
       if (!noWorkStatus && (!timeIn || !timeOut)) { skip('Time in and time out are required for this shift.'); continue }
       if (timeIn && timeOut && new Date(timeOut.replace(' ', 'T')) <= new Date(timeIn.replace(' ', 'T'))) { skip('Time out must be after time in.'); continue }
+      report.timeIn = timeIn; report.timeOut = timeOut
       const conflict = attendanceConflict(await otherDtrAttendance(connection, Number(enrollment.EmployeeID), id, attendanceDate), attendanceDate, timeIn, timeOut, noWorkStatus)
       if (conflict) { skip(conflict); continue }
+      report.outcome = existing?.AttendanceID ? 'updated' : 'added'
+      report.reason = noWorkStatus ? `Source status: ${attendanceStatus}.` : 'Duty imported; review any flags before payroll.'
       let attendanceId = Number(existing?.AttendanceID || 0)
       if (!attendanceId) {
         const [result] = await connection.execute<any>(`INSERT INTO attendance (EmployeeID, DeploymentID, ShiftCodeID, WorkdayCount, BatchID, AttendanceDate, TimeIn, TimeOut, ${hourColumns.join(', ')}, HolidayID, AttendanceStatus, AttendanceType, IsManualEdit, CreatedBy) VALUES (?, ?, ?, 1, ?, ?, NULL, NULL, ${hourColumns.map(() => '?').join(', ')}, NULL, ?, ?, 1, ?)`, [enrollment.EmployeeID, enrollment.DeploymentID, null, id, attendanceDate, ...hourColumns.map(() => 0), attendanceStatus, enrollment.AttendanceType, session.sub])
@@ -1746,6 +1773,14 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
           referenceShift = reference || null
         }
         const dutyValues = importedDutyHours(shift, attendanceDate, timeIn!, timeOut!, policy, referenceShift)
+        report.lateMinutes = Math.round(Number(dutyValues[hourColumns.indexOf('LateHours')] || 0) * 60)
+        report.undertimeMinutes = Math.round(Number(dutyValues[hourColumns.indexOf('UndertimeHours')] || 0) * 60)
+        if (report.lateMinutes > 0) report.flags.push('late')
+        if (report.undertimeMinutes > 0) report.flags.push('undertime')
+        if (String(shift.ShiftType) !== 'Flexible') {
+          report.expectedTimeIn = dateTimeForShift(attendanceDate, shift.TimeIn)
+          report.expectedTimeOut = dateTimeForShift(attendanceDate, shift.TimeOut, String(shift.TimeOut).slice(0,5) <= String(shift.TimeIn).slice(0,5))
+        }
         await connection.execute(`INSERT INTO attendance_duty (AttendanceID, ShiftCodeID, SourceRowNumber, TimeIn, TimeOut, RegularHours, OTHours, OTExtHours, NightDiffHours, LateHours, UndertimeHours, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE ShiftCodeID = VALUES(ShiftCodeID), TimeIn = VALUES(TimeIn), TimeOut = VALUES(TimeOut), RegularHours = VALUES(RegularHours), OTHours = VALUES(OTHours), OTExtHours = VALUES(OTExtHours), NightDiffHours = VALUES(NightDiffHours), LateHours = VALUES(LateHours), UndertimeHours = VALUES(UndertimeHours), UpdatedBy = VALUES(CreatedBy)`, [attendanceId, shift.ShiftCodeID, rowNumber, timeIn, timeOut, dutyValues[hourColumns.indexOf('RegularHours')], dutyValues[hourColumns.indexOf('OTHours')], dutyValues[hourColumns.indexOf('OTExtHours')], dutyValues[hourColumns.indexOf('NightDiffHours')], dutyValues[hourColumns.indexOf('LateHours')], dutyValues[hourColumns.indexOf('UndertimeHours')], session.sub])
       }
       const [[summary]] = await connection.execute<any[]>(`SELECT COUNT(*) AS DutyCount, MIN(TimeIn) AS TimeIn, MAX(TimeOut) AS TimeOut,
@@ -1762,8 +1797,9 @@ async function importDtrAttendanceDutyRows(event: any, body: { Rows?: unknown },
     }
     await syncBatchHolidays(connection, batch, session.sub)
     for (const employeeId of affectedEmployeeIds) await syncAutoWdo(connection, batch, employeeId)
+    flagDtrImportOverlaps(reviewRows)
     await connection.commit()
-    return { success: true, imported, updated, skipped, blank, cleared, preservedEmployeeStatusDays: preservedEmployeeStatusDates.size, issues }
+    return { success: true, imported, updated, skipped, blank, cleared, preservedEmployeeStatusDays: preservedEmployeeStatusDates.size, issues, reviewRows }
   } catch (error) { await connection.rollback(); throw error } finally { connection.release() }
 }
 

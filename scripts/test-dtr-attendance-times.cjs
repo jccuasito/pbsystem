@@ -29,7 +29,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
   const scope = vue.effectScope()
   const context = {
     Date,
-    ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 11, PeriodStart: '2026-09-01', PeriodEnd: '2026-09-15' } }), defineEmits: () => () => {},
+    ...vue, onMounted() {}, useId: () => 'test-dialog', defineProps: () => ({ dtr: { BatchID: 11, PeriodStart: '2026-09-01', PeriodEnd: '2026-09-15' } }), defineEmits: () => () => {},
     module: { exports: {} }, require: name => name.endsWith('/requestError') ? require('../shared/utils/requestError.ts') : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : name.includes('dtrAttendanceStatus') ? statusModule.exports : name.includes('attendanceStatuses') ? attendanceStatusesModule.exports : name.endsWith('/messages') ? alertModule.exports : name.endsWith('.vue') ? {} : require(name),
     xlsxForTest: { ...require('xlsx'), writeFile: workbook => workbooks.push(workbook) },
     $fetch: async (url, options) => {
@@ -38,7 +38,7 @@ function workspace(shift = philtob, saved = record, sitePolicy = policy, exportR
     },
   }
   vm.createContext(context)
-  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, dayTimeConflict, canEditAttendanceField, resetControlledField, editControlledField, shifts, sitePolicy, attendanceRows, relieverElsewhereRows, displayedEntry, elsewhereLabel, totalDays, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr, readDtrImportFile, importRows, submitDtrImport, error };', { loader: 'ts', format: 'cjs' }).code, context))
+  scope.run(() => vm.runInContext(transformSync(descriptor.scriptSetup.content.replaceAll("await import('xlsx')", 'xlsxForTest') + '\nmodule.exports = { dayForm, dayOpen, dayTimeConflict, canEditAttendanceField, resetControlledField, editControlledField, shifts, sitePolicy, attendanceRows, relieverElsewhereRows, displayedEntry, elsewhereLabel, totalDays, openDay, saveDay, onHourInput, onMinuteInput, recalculateHoursFromTimes, selectDayShift, statusCellClass, exportDtr, readDtrImportFile, importRows, submitDtrImport, rows, importResult, importReportOpen, reviewImportedDay, importReviewRow, closeDay, closeImportResult, finishImportReview, saving, error };', { loader: 'ts', format: 'cjs' }).code, context))
   const state = context.module.exports
   state.shifts.value = [shift]
   state.sitePolicy.value = { ...sitePolicy }
@@ -61,6 +61,7 @@ test('Excel import keeps employee codes and incomplete biometric rows available 
     const rows = [
       ['Employee ID', 'Date', 'Shift Code', 'Date In', 'Time In', 'Date Out', 'Time Out'],
       ['DJA-0001', new Date(2026, 8, 16), 'DS0700-1900', new Date(2026, 8, 16), 7 / 24, new Date(2026, 8, 16), 19 / 24],
+      [],
       ['EMP-0011', new Date(2026, 8, 17), 'NS2200-1000', new Date(2026, 8, 17), 22 / 24, '', ''],
       ['DJA-0001', new Date(2026, 8, 18), 'DS0700-1900', '', '', new Date(2026, 8, 18), 19 / 24],
       ['DJA-0001', new Date(2026, 8, 19), 'NS1900-0700', '', '', '', ''],
@@ -80,6 +81,7 @@ test('Excel import keeps employee codes and incomplete biometric rows available 
     assert.equal(parsed[0].EmployeeID, 'DJA-0001')
     assert.equal(parsed[0].AttendanceDate, '2026-09-16')
     assert.equal(parsed[0].TimeIn, '07:00'); assert.equal(parsed[0].TimeOut, '19:00')
+    assert.equal(parsed[0].RowNumber, 2); assert.equal(parsed[1].RowNumber, 4); assert.equal(parsed[4].RowNumber, 7)
     assert.equal(parsed[1].EmployeeID, 'EMP-0011'); assert.equal(parsed[1].TimeIn, '22:00'); assert.equal(parsed[1].TimeOut, '')
     assert.equal(parsed[2].TimeIn, ''); assert.equal(parsed[2].TimeOut, '19:00')
     assert.equal(parsed[3].TimeIn, ''); assert.equal(parsed[3].TimeOut, '')
@@ -660,4 +662,56 @@ test('manual late updates an overnight Time in date without accumulating or movi
     assert.equal(harness.requests[0].body.LateHours,.5)
     assert.equal(harness.requests[0].body.TimeOut,saved.TimeOut)
   } finally { harness.close() }
+})
+
+
+test('review shortcut opens the exact imported DTR day without saving data or opening out-of-period rows', async () => {
+  const h = workspace()
+  try {
+    h.state.rows.value = [employee]
+    h.state.importResult.value = {reviewRows:[]}
+    await h.state.reviewImportedDay({employeeId:5, attendanceDate:'2026-09-01', canReview:true})
+    assert.notEqual(h.state.importResult.value, null)
+    assert.equal(h.state.importReportOpen.value, true)
+    assert.equal(h.state.importReviewRow.value.employeeId, 5)
+    assert.equal(h.state.dayOpen.value, true)
+    assert.equal(h.state.dayForm.value.AttendanceDate, '2026-09-01')
+    assert.equal(h.state.dayForm.value.EmployeeID, 5)
+    assert.equal(h.requests.length, 0)
+    h.state.dayOpen.value = false
+    await h.state.reviewImportedDay({employeeId:5, attendanceDate:'2026-10-01', canReview:true})
+    assert.equal(h.state.dayOpen.value, false)
+    await h.state.reviewImportedDay({employeeId:999, attendanceDate:'2026-09-01', canReview:false})
+    assert.equal(h.state.dayOpen.value, false)
+  } finally {h.close()}
+})
+
+test('import review cancellation and save preserve the report until explicitly finished', async () => {
+  const h = workspace()
+  try {
+    const row = {employeeId:5,attendanceDate:'2026-09-01',canReview:true,row:27,flags:['late']}
+    h.state.rows.value=[employee]
+    h.state.importResult.value={reviewRows:[row]}
+    await h.state.reviewImportedDay(row)
+    h.state.saving.value=true; h.state.closeDay()
+    assert.equal(h.state.dayOpen.value,true)
+    h.state.saving.value=false; h.state.closeDay()
+    assert.equal(h.state.dayOpen.value,false)
+    assert.equal(h.state.importReportOpen.value,true)
+    assert.equal(h.requests.length,0)
+    await h.state.reviewImportedDay(row)
+    await h.state.saveDay()
+    assert.equal(h.state.dayOpen.value,false)
+    assert.equal(h.state.importReportOpen.value,true)
+    assert.equal(h.state.importResult.value.reviewRows[0].row,27)
+    await h.state.closeImportResult()
+    assert.equal(h.state.importReportOpen.value,false)
+    assert.notEqual(h.state.importResult.value,null)
+    h.state.importReportOpen.value=true
+    await h.state.finishImportReview()
+    assert.equal(h.state.importReportOpen.value,false)
+    assert.equal(h.state.importResult.value,null)
+    h.state.openDay(employee,'2026-09-01')
+    assert.equal(h.state.importReviewRow.value,null)
+  } finally {h.close()}
 })
