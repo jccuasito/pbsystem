@@ -74,7 +74,7 @@ test('status can be saved before a DTR, attaches later, and never duplicates a d
   try {
     const tables = {
       user: 'UserID INT PRIMARY KEY, FirstName VARCHAR(50), LastName VARCHAR(50)',
-      employee: 'EmployeeID INT PRIMARY KEY, EmployeeNumber VARCHAR(30), AgencyPositionID INT, FirstName VARCHAR(50), MiddleName VARCHAR(50), LastName VARCHAR(50), Status VARCHAR(20), ResignationDate DATE NULL',
+      employee: 'EmployeeID INT PRIMARY KEY, EmployeeNumber VARCHAR(30), AgencyPositionID INT, FirstName VARCHAR(50), MiddleName VARCHAR(50), LastName VARCHAR(50), Status VARCHAR(20), ResignationDate DATE NULL, LastRehireDate DATE NULL',
       agency_position: 'AgencyPositionID INT PRIMARY KEY, AgencyID INT, PositionID INT',
       agency: 'AgencyID INT PRIMARY KEY, AgencyName VARCHAR(100)',
       position: 'PositionID INT PRIMARY KEY, PositionName VARCHAR(100)',

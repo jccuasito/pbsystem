@@ -33,6 +33,7 @@ function workspace(fetch) {
   const { descriptor } = parse(fs.readFileSync('app/pages/employees/status/index.vue', 'utf8'))
   const scope = vue.effectScope(), module = { exports: {} }
   const context = { module, $fetch: fetch, require: name => name === 'vue' ? { ...vue, onMounted() {} }
+    : name.includes('requestError') ? require('../shared/utils/requestError.ts')
     : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts')
     : name.includes('employeeStatusSheet') ? require('../shared/utils/employeeStatusSheet.ts')
     : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : {} }

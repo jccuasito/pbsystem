@@ -14,8 +14,8 @@ test('resignation is atomic, audited, retry-safe and never dates legacy Inactive
  const c=await require('mysql2/promise').createConnection({host:env.DB_HOST||'127.0.0.1',port:Number(env.DB_PORT||3306),user:env.DB_USER||'root',password:env.DB_PASSWORD,database:env.DB_NAME||'pbsystem',dateStrings:true})
  try{
   // Connection-local shadow table: never mutate a persistent employee.
-  await c.query('CREATE TEMPORARY TABLE employee(EmployeeID INT PRIMARY KEY,Status VARCHAR(20),DateHired DATE,ResignationDate DATE NULL,UpdatedBy INT) ENGINE=InnoDB')
-  await c.query("INSERT INTO employee VALUES (1,'Active','2020-01-01',NULL,NULL),(2,'Inactive','2020-01-01',NULL,NULL),(3,'Active','2020-01-01',NULL,NULL)")
+  await c.query('CREATE TEMPORARY TABLE employee(EmployeeID INT PRIMARY KEY,Status VARCHAR(20),DateHired DATE,ResignationDate DATE NULL,LastRehireDate DATE NULL,UpdatedBy INT) ENGINE=InnoDB')
+  await c.query("INSERT INTO employee VALUES (1,'Active','2020-01-01',NULL,NULL,NULL),(2,'Inactive','2020-01-01',NULL,NULL,NULL),(3,'Active','2020-01-01',NULL,NULL,NULL)")
   const save=async(id,day)=>{await c.beginTransaction();try{const result=await recordEmployeeResignation(c,id,day,14);await c.commit();return result}catch(e){await c.rollback();throw e}}
   assert.equal((await save(1,'2026-11-01')).ResignationDate,'2026-11-01')
   const [[row]]=await c.query('SELECT * FROM employee WHERE EmployeeID=1')

@@ -80,10 +80,12 @@ test('position changes only update profile/history; cutoff removals preserve sha
     const versions = evaluate('server/utils/rateVersions.ts', name => name.includes('rateFields') ? require('../shared/utils/rateFields.ts') : {})
     const auth = { requireSession: event => event.session || { sub: 1, userType: 'Admin' } }
     const common = name => name === 'h3' ? h3 : name.includes('dbconnect') ? pool : name.endsWith('/auth') || name === './auth' ? auth
+      : name.includes('inputValidation') ? evaluate('server/utils/inputValidation.ts',common)
       : name.includes('rateVersions') ? versions : name.includes('payrollPreview') ? require('../shared/utils/payrollPreview.ts')
       : name.includes('cashBondLedger') ? evaluate('server/utils/cashBondLedger.ts',common)
       : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts')
       : name.includes('dtrAttendanceStatus') ? require('../shared/utils/dtrAttendanceStatus.ts')
+      : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts')
       : name.includes('dtrDeploymentDates') ? require('../server/utils/dtrDeploymentDates.ts') : {}
     const api = evaluate('server/utils/employeePositionCrud.ts', common)
     const statusApi = evaluate('server/utils/employeeStatusCrud.ts', common)

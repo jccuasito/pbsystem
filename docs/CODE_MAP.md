@@ -266,10 +266,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrCompactPrintView.vue`
   - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
   - `app/components/DtrImportResultModal.vue`
+  - `app/components/EmployeeActions.vue`
   - `app/components/EmployeeAddressFields.vue`
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/EmployeePayslipWorkspace.vue`
   - `app/components/EmployeePositionChangeModal.vue`
+  - `app/components/EmployeeRehireModal.vue`
   - `app/components/InformationRequestThread.vue`
   - `app/components/NotificationBell.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
@@ -425,9 +427,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/employees` → `server/api/employees/index.post.ts`
   - `DELETE /api/employees/[param]` → `server/api/employees/[id].delete.ts`
   - `PUT /api/employees/[param]` → `server/api/employees/[id].put.ts`
+  - `GET /api/employees/[param]/employment-history` → `server/api/employees/[id]/employment-history.get.ts`
   - `DELETE /api/employees/[param]/permanent` → `server/api/employees/[id]/permanent.delete.ts`
   - `GET /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.get.ts`
   - `POST /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.post.ts`
+  - `POST /api/employees/[param]/rehire` → `server/api/employees/[id]/rehire.post.ts`
   - `POST /api/employees/[param]/transfer` → `server/api/employees/[id]/transfer.post.ts`
   - `GET /api/employees/address-options` → `server/api/employees/address-options.get.ts`
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
@@ -525,6 +529,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeePortalAuth.ts`
   - `server/utils/employeePortalRecovery.ts`
   - `server/utils/employeePositionCrud.ts`
+  - `server/utils/employeeRehireCrud.ts`
   - `server/utils/employeeResignation.ts`
   - `server/utils/employeeStatusCrud.ts`
   - `server/utils/governmentIdCrud.ts`
@@ -777,9 +782,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/employees/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
 - Related frontend files:
+  - `app/components/EmployeeActions.vue`
   - `app/components/EmployeeAddressFields.vue`
   - `app/components/EmployeePositionChangeModal.vue`
+  - `app/components/EmployeeRehireModal.vue`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/philippineAddress.ts`
   - `components/alertmessage/messages.ts`
@@ -791,9 +799,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `POST /api/employees` → `server/api/employees/index.post.ts`
   - `DELETE /api/employees/[param]` → `server/api/employees/[id].delete.ts`
   - `PUT /api/employees/[param]` → `server/api/employees/[id].put.ts`
+  - `GET /api/employees/[param]/employment-history` → `server/api/employees/[id]/employment-history.get.ts`
   - `DELETE /api/employees/[param]/permanent` → `server/api/employees/[id]/permanent.delete.ts`
   - `GET /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.get.ts`
   - `POST /api/employees/[param]/position-changes` → `server/api/employees/[id]/position-changes.post.ts`
+  - `POST /api/employees/[param]/rehire` → `server/api/employees/[id]/rehire.post.ts`
   - `POST /api/employees/[param]/transfer` → `server/api/employees/[id]/transfer.post.ts`
   - `GET /api/employees/address-options` → `server/api/employees/address-options.get.ts`
   - `GET /api/employees/deployments` → `server/api/employees/deployments/index.get.ts`
@@ -808,6 +818,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/employeeCrud.ts`
   - `server/utils/employeePositionCrud.ts`
+  - `server/utils/employeeRehireCrud.ts`
   - `server/utils/employeeResignation.ts`
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/inputValidation.ts`

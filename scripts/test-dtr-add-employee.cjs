@@ -25,6 +25,7 @@ function backend({ enrolled = false, insertConflict = false, initialEnrollment =
     release() { calls.push('release') },
     async execute(sql, args) {
       calls.push({ sql, args })
+      if (sql.startsWith('SELECT EmployeeID, Status,')) return [[{ EmployeeID: 2, Status: 'Active', LastRehireDate: null }]]
       if (sql.includes('FROM attendance_dtr WHERE')) return [[{ BatchID: args[0], AgencyID: 1, ClientID: 1, SiteID: batchSites[args[0]] || 1, PeriodStart: '2026-08-16', PeriodEnd: '2026-08-31', Status: 'Draft' }]]
       if (sql.startsWith('SELECT DeploymentID, AttendanceType, IsPermanentSite FROM attendance_dtr_employee')) {
         const saved = enrollments.get(args.join(':'))
@@ -117,7 +118,7 @@ function frontend(fetch) {
   const scope = vue.effectScope()
   const state = scope.run(() => evaluate(descriptor.scriptSetup.content + '\nmodule.exports={rows,employeeAlert,saving,pickerFixed,isPickerFixed,setPickerFixed,addEmployee,employeeAlreadyAdded,updatePermanentSite,typeSaving,detailsError,editableRoster,batchStatus};', {
     ...vue, onMounted() {}, defineProps: () => ({ dtr: { BatchID: 5 } }), defineEmits: () => () => {},
-    require: name => name.endsWith('/messages') ? alerts : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : {}, $fetch: fetch,
+    require: name => name.includes('requestError') ? require('../shared/utils/requestError.ts') : name.endsWith('/messages') ? alerts : name.includes('attendanceFieldControls') ? require('../shared/utils/attendanceFieldControls.ts') : {}, $fetch: fetch,
   }))
   return { state, close: () => scope.stop() }
 }

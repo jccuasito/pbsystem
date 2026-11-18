@@ -18,6 +18,7 @@ function effectiveDate(value: unknown) {
 async function employeeFor(connection: any, employeeId: number, lock = false) {
   const [[employee]] = await connection.execute<any[]>(`SELECT e.EmployeeID, e.EmployeeNumber, e.AgencyPositionID, e.Status,
     DATE_FORMAT(e.DateHired, '%Y-%m-%d') AS DateHired,
+    DATE_FORMAT(e.LastRehireDate, '%Y-%m-%d') AS LastRehireDate,
     CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
     ap.AgencyID, a.AgencyName, p.PositionName
     FROM employee e INNER JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
@@ -67,6 +68,7 @@ export async function changeEmployeePosition(event: any) {
     if (Number(employee.AgencyPositionID) !== expectedId) throw createError({ statusCode: 409, statusMessage: 'The employee position changed. Refresh before saving.' })
     if (targetId === expectedId) throw createError({ statusCode: 400, statusMessage: 'Choose a different position.' })
     if (employee.DateHired && date < employee.DateHired) throw createError({ statusCode: 400, statusMessage: 'Effective date cannot be before the date hired.' })
+    if (employee.LastRehireDate && date < employee.LastRehireDate) throw createError({ statusCode: 400, statusMessage: 'Effective date cannot be before the latest return date.' })
     const [[target]] = await connection.execute<any[]>(`SELECT ap.AgencyPositionID FROM agency_position ap
       INNER JOIN \`position\` p ON p.PositionID=ap.PositionID
       INNER JOIN agency a ON a.AgencyID=ap.AgencyID

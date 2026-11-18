@@ -250,9 +250,10 @@ export async function updateEmployeeDailyStatus(event: any) {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    const [[employee]] = await connection.execute<any[]>('SELECT EmployeeID, Status FROM employee WHERE EmployeeID = ? FOR UPDATE', [employeeId])
+    const [[employee]] = await connection.execute<any[]>("SELECT EmployeeID, Status, DATE_FORMAT(LastRehireDate, '%Y-%m-%d') AS LastRehireDate FROM employee WHERE EmployeeID = ? FOR UPDATE", [employeeId])
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     if (employee.Status !== 'Active') throw createError({statusCode:409,statusMessage:'This employee is resigned. Daily status updates are not permitted.'})
+    if (employee.LastRehireDate && startDate < employee.LastRehireDate) throw createError({ statusCode: 409, statusMessage: 'Daily status updates must be on or after the latest return date. Earlier employment history is retained for review.' })
     const assignments: any[] = []
     for (const attendanceDate of selectedDates) {
       // A cutoff roster takes precedence, including cutoff-only Regular and Reliever assignments.

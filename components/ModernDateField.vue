@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -11,6 +11,7 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   align?: 'start' | 'end'
   initialYear?: number
+  responsive?: boolean
 }>(), {
   placeholder: 'Select date',
   align: 'start'
@@ -19,6 +20,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const id = useId()
 const open = ref(false)
+const field = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLButtonElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
+const mobile = ref(false)
+const panelStyle = ref<Record<string, string>>({})
+let mobileQuery: MediaQueryList | null = null
 const now = new Date()
 
 function parseDate(value: string) {
@@ -68,15 +75,59 @@ const calendarDays = computed(() => {
   })
 })
 
-function showPicker() {
+async function showPicker() {
   if (props.disabled) return
   const selected = parseDate(props.modelValue)
   if (selected) {
     viewYear.value = selected.getFullYear()
     viewMonth.value = selected.getMonth()
   }
+  if (props.responsive) panelStyle.value = { visibility: 'hidden', width: `${Math.min(mobile.value ? 340 : 300, window.innerWidth - 24)}px` }
   open.value = true
+  if (!props.responsive) return
+  await nextTick()
+  positionPanel()
+  await nextTick()
+  if (open.value) (panel.value?.querySelector<HTMLElement>('button.selected:not(:disabled)') || panel.value?.querySelector<HTMLElement>('button:not(:disabled)'))?.focus({ preventScroll: true })
 }
+
+function positionPanel() {
+  if (!open.value || !panel.value || !trigger.value) return
+  const anchor = trigger.value.getBoundingClientRect()
+  const box = panel.value.getBoundingClientRect()
+  const below = window.innerHeight - anchor.bottom - 20
+  const above = anchor.top - 20
+  const height = Math.min(box.height, window.innerHeight - 24)
+  const top = below >= height ? anchor.bottom + 8 : above >= height ? anchor.top - height - 8 : Math.max(12, Math.min(anchor.bottom + 8, window.innerHeight - height - 12))
+  panelStyle.value = {
+    visibility: 'visible', width: `${box.width}px`, maxHeight: `${height}px`,
+    left: `${Math.max(12, Math.min(anchor.left, window.innerWidth - box.width - 12))}px`,
+    top: `${top}px`,
+  }
+}
+
+function close(restoreFocus = false) {
+  open.value = false
+  if (restoreFocus && props.responsive) trigger.value?.focus({ preventScroll: true })
+}
+function onEscape(event: KeyboardEvent) {
+  if (!open.value) return
+  event.preventDefault(); event.stopPropagation(); close(true)
+}
+function outside(event: Event) {
+  if (event.target instanceof Node && !field.value?.contains(event.target)) close()
+}
+function dismiss() { close() }
+function onScroll(event: Event) {
+  if (event.target instanceof Node && panel.value?.contains(event.target)) return
+  positionPanel()
+}
+function detach() {
+  document.removeEventListener('pointerdown', outside)
+  document.removeEventListener('scroll', onScroll, true)
+  window.removeEventListener('resize', dismiss)
+}
+function updateMobile() { mobile.value = Boolean(mobileQuery?.matches); close() }
 
 function shiftMonth(amount: number) {
   const next = new Date(viewYear.value, viewMonth.value + amount, 1)
@@ -87,18 +138,18 @@ function shiftMonth(amount: number) {
 function choose(value: string, disabled: boolean) {
   if (disabled) return
   emit('update:modelValue', value)
-  open.value = false
+  close(true)
 }
 
 function chooseToday() {
   if ((props.min && todayValue < props.min) || (props.max && todayValue > props.max)) return
   emit('update:modelValue', todayValue)
-  open.value = false
+  close(true)
 }
 
 function clear() {
   emit('update:modelValue', '')
-  open.value = false
+  close(true)
 }
 
 function leave(event: FocusEvent) {
@@ -112,18 +163,35 @@ watch(() => props.modelValue, (value) => {
   viewMonth.value = selected.getMonth()
 })
 watch(() => props.disabled, (disabled) => { if (disabled) open.value = false })
+watch(open, (opened) => {
+  if (!props.responsive) return
+  detach()
+  if (opened) {
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', dismiss)
+  }
+})
+onMounted(() => {
+  if (!props.responsive) return
+  mobileQuery = window.matchMedia('(max-width: 980px), (pointer: coarse)')
+  updateMobile()
+  mobileQuery.addEventListener('change', updateMobile)
+})
+onDeactivated(() => { close(); detach() })
+onBeforeUnmount(() => { close(); detach(); mobileQuery?.removeEventListener('change', updateMobile) })
 </script>
 
 <template>
-  <div class="modern-date-field" :class="[`modern-date-field--${align}`, { 'modern-date-field--disabled': disabled }]" @focusout="leave" @keydown.esc.stop="open = false">
+  <div ref="field" class="modern-date-field" :class="[`modern-date-field--${align}`, { 'modern-date-field--disabled': disabled }]" @focusout="leave" @keydown.esc="onEscape">
     <label :for="id">{{ label }}</label>
-    <button :id="id" class="modern-date-field__trigger" type="button" :aria-expanded="open" aria-haspopup="dialog" :disabled="disabled" @click="open ? open = false : showPicker()">
+    <button :id="id" ref="trigger" class="modern-date-field__trigger" type="button" :aria-expanded="open" :aria-controls="`${id}-calendar`" aria-haspopup="dialog" :disabled="disabled" @click="open ? close() : showPicker()">
       <span :class="{ placeholder: !formattedValue }">{{ formattedValue || placeholder }}</span>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3M17 3v3M4 9h16"/><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 13h3M13 13h3M8 16h3"/></svg>
     </button>
     <input class="modern-date-field__native" tabindex="-1" :value="modelValue" :required="required" :disabled="disabled" aria-hidden="true" />
 
-    <section v-if="open" class="modern-date-field__panel" role="dialog" :aria-label="`${label} calendar`">
+    <section v-if="open" :id="`${id}-calendar`" ref="panel" class="modern-date-field__panel" :class="{ 'modern-date-field__panel--floating': responsive, 'modern-date-field__panel--touch': responsive && mobile }" :style="responsive ? panelStyle : undefined" role="dialog" :aria-label="`${label} calendar`">
       <header>
         <button type="button" aria-label="Previous month" @click="shiftMonth(-1)">‹</button>
         <div>
@@ -173,8 +241,11 @@ watch(() => props.disabled, (disabled) => { if (disabled) open.value = false })
 .modern-date-field__native{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .modern-date-field__panel{position:absolute;z-index:30;top:calc(100% + 7px);left:0;width:300px;box-sizing:border-box;border:1px solid var(--theme-line,#cbd7e8);border-radius:14px;padding:12px;background:var(--theme-surface,#fff);box-shadow:0 18px 45px rgba(23,42,70,.2);font-family:Inter,system-ui,sans-serif}
 .modern-date-field--end .modern-date-field__panel{right:0;left:auto}
+.modern-date-field__panel.modern-date-field__panel--floating{position:fixed;right:auto;z-index:400;overflow-y:auto;overscroll-behavior:contain;margin:0}
 .modern-date-field__panel header{display:grid;grid-template-columns:34px 1fr 34px;align-items:center;gap:6px;margin-bottom:10px}
 .modern-date-field__panel header>div{display:grid;grid-template-columns:1.35fr .85fr;gap:6px}
+.modern-date-field__panel--floating header>div{min-width:0;grid-template-columns:minmax(0,1.35fr) minmax(0,.85fr)}
+.modern-date-field__panel--floating select{min-width:0;width:100%;padding:0 4px}
 .modern-date-field__panel select,.modern-date-field__panel header button{min-height:34px;border:1px solid var(--theme-line,#dae2ee);border-radius:8px;background:var(--theme-soft,#f8faff);color:var(--theme-ink,#1e385b);font:inherit;font-weight:800}
 .modern-date-field__panel header button{padding:0;font-size:1.25rem;cursor:pointer}
 .modern-date-field__weekdays,.modern-date-field__days{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
@@ -187,5 +258,9 @@ watch(() => props.disabled, (disabled) => { if (disabled) open.value = false })
 .modern-date-field__days button:disabled{color:#d1d6de;cursor:not-allowed}
 .modern-date-field__panel footer{display:flex;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:1px solid var(--theme-line,#edf1f6)}
 .modern-date-field__panel footer button{border:0;background:transparent;color:var(--theme-accent,#2349e6);font:inherit;font-weight:800;cursor:pointer}
+.modern-date-field__panel--touch header { grid-template-columns: 40px minmax(0,1fr) 40px; }
+.modern-date-field__panel--touch header button,.modern-date-field__panel--touch select{min-height:40px}
+.modern-date-field__panel--touch .modern-date-field__days button{aspect-ratio:auto;min-height:40px}
+.modern-date-field__panel--touch footer button{min-height:44px;padding:8px}
 @media(max-width:600px){.modern-date-field__panel,.modern-date-field--end .modern-date-field__panel{right:auto;left:0;width:min(300px,calc(100vw - 56px))}}
 </style>

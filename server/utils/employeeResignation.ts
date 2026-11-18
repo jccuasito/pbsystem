@@ -14,12 +14,14 @@ export function resignationDate(value: unknown, hired: string | null, now=new Da
 export async function recordEmployeeResignation(connection: any, employeeId: number, value: unknown, actor: number) {
   const [[employee]]=await connection.execute(`SELECT EmployeeID, Status,
     DATE_FORMAT(DateHired, '%Y-%m-%d') AS DateHired,
+    DATE_FORMAT(LastRehireDate, '%Y-%m-%d') AS LastRehireDate,
     DATE_FORMAT(ResignationDate, '%Y-%m-%d') AS ResignationDate
     FROM employee WHERE EmployeeID = ? FOR UPDATE`,[employeeId])
   if (!employee) throw createError({statusCode:404,statusMessage:'Employee not found.'})
   // A retry never changes the original resignation date or dates a legacy record.
   if (employee.Status==='Inactive') return {success:true,Status:'Inactive',EmploymentStatus:'Resigned',ResignationDate:employee.ResignationDate||null}
   const day=resignationDate(value,employee.DateHired)
+  if (employee.LastRehireDate && day<employee.LastRehireDate) throw createError({statusCode:400,statusMessage:'Resignation date cannot be before the latest return date.'})
   await connection.execute("UPDATE employee SET Status = 'Inactive', ResignationDate = ?, UpdatedBy = ? WHERE EmployeeID = ?",[day,actor,employeeId])
   return {success:true,Status:'Inactive',EmploymentStatus:'Resigned',ResignationDate:day}
 }

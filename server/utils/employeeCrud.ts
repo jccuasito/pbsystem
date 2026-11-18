@@ -642,7 +642,7 @@ function latestDeploymentJoin() {
         WHERE ed.StartDate <= CURDATE() AND (ed.EndDate IS NULL OR ed.EndDate >= CURDATE())
       ) ranked
       WHERE ranked.rn = 1
-    ) ld ON ld.EmployeeID = e.EmployeeID
+    ) ld ON ld.EmployeeID = e.EmployeeID AND e.Status = 'Active'
   `
 }
 
@@ -651,6 +651,7 @@ function employeeListSql(filters: string[]) {
     'SELECT',
     '  e.EmployeeID, e.AgencyPositionID, e.EmployeeNumber, e.FirstName, e.MiddleName, e.LastName, e.Nickname, e.Birthday,',
     "  e.Gender, e.CivilStatus, e.Address, e.Email, e.ContactNumber, e.DateHired, e.Status, DATE_FORMAT(e.ResignationDate, '%Y-%m-%d') AS ResignationDate, e.PhotoPath AS PhotoUrl,",
+    "  DATE_FORMAT(e.LastRehireDate, '%Y-%m-%d') AS LastRehireDate,",
     '  e.PermanentUnitHouseNumber, e.PermanentProvince, e.PermanentStreet, e.PermanentCityMunicipality, e.PermanentSubdivision, e.PermanentBarangay, e.PermanentRegion, e.PermanentPostalCode,',
     '  e.PresentUnitHouseNumber, e.PresentProvince, e.PresentStreet, e.PresentCityMunicipality, e.PresentSubdivision, e.PresentBarangay, e.PresentRegion, e.PresentPostalCode,',
     '  e.BeneficiaryNotApplicable, e.Beneficiary1, e.Beneficiary1Relationship, e.Beneficiary2, e.Beneficiary2Relationship, e.Beneficiaries,',
@@ -874,11 +875,12 @@ export async function updateEmployee(event: any) {
   let existing: any = null
   try {
     await connection.beginTransaction()
-    const [[lockedEmployee]] = await connection.execute<any[]>('SELECT PhotoPath, AgencyPositionID, Status FROM employee WHERE EmployeeID = ? LIMIT 1 FOR UPDATE', [employeeId])
+    const [[lockedEmployee]] = await connection.execute<any[]>("SELECT PhotoPath, AgencyPositionID, Status, LastRehireDate, DATE_FORMAT(DateHired, '%Y-%m-%d') AS DateHired FROM employee WHERE EmployeeID = ? LIMIT 1 FOR UPDATE", [employeeId])
     existing = lockedEmployee
     if (!existing) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     if (parseStatus(body.Status) !== existing.Status) throw createError({statusCode:409,statusMessage:existing.Status==='Inactive' ? 'Resigned employees cannot be reactivated through profile editing.' : 'Use Deactivate / resign to record the resignation date.'})
     if (Number(body.AgencyPositionID) !== Number(existing.AgencyPositionID)) throw createError({ statusCode: 409, statusMessage: 'Use Change position to record an effective date and preserve position history. Refresh this employee before saving.' })
+    if (existing.LastRehireDate && parseDate(body.DateHired) !== existing.DateHired) throw createError({ statusCode: 409, statusMessage: 'The original hire date is retained after rehire and cannot be changed through profile editing.' })
     const [result] = await connection.execute<any>(`UPDATE employee SET ${employeeFields.map((field) => `${field} = ?`).join(', ')}, UpdatedBy = ? WHERE EmployeeID = ?`, [...employeeValues(body, beneficiaries), session.sub, employeeId] as any[])
     if (!result.affectedRows) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
     await savePayrollDisbursement(connection, employeeId, body)
@@ -930,8 +932,9 @@ export async function permanentlyDeleteEmployee(event: any) {
     )
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Employee not found.' })
 
-    // All other employee-owned rows use ON DELETE CASCADE. BTR has two
-    // employee references with RESTRICT, so remove both roles first.
+    // BTR has two restrictive employee references, so clear both roles first.
+    // Retained financial/employment ledgers may still restrict the employee
+    // delete; the transaction restores this cleanup when that happens.
     const [btrResult] = await connection.execute<any>(
       'DELETE FROM attendance_dtr_btr WHERE ReplacedEmployeeID = ? OR RelieverEmployeeID = ?',
       [employeeId, employeeId]
@@ -948,6 +951,9 @@ export async function permanentlyDeleteEmployee(event: any) {
   } catch (error) {
     await connection.rollback()
     const databaseError = error as { code?: string; sqlMessage?: string }
+    if (databaseError.code === 'ER_ROW_IS_REFERENCED_2' && /rehire/i.test(databaseError.sqlMessage || '')) {
+      throw createError({ statusCode: 409, statusMessage: 'This employee has retained employment history. Record resignation instead of deleting the employee permanently.' })
+    }
     if (databaseError.code === 'ER_ROW_IS_REFERENCED_2' && /thirteenth/i.test(databaseError.sqlMessage || '')) {
       throw createError({ statusCode: 409, statusMessage: 'This employee has retained 13th-month earnings or payment history. Deactivate the employee to preserve these records.' })
     }
@@ -1060,7 +1066,7 @@ export async function createDeployment(event: any) {
   try {
     await connection.beginTransaction()
     const [[employee]] = await connection.execute<any[]>(
-      `SELECT e.AgencyPositionID, ap.AgencyID
+      `SELECT e.AgencyPositionID, DATE_FORMAT(e.LastRehireDate, '%Y-%m-%d') AS LastRehireDate, ap.AgencyID
        FROM employee e
        INNER JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
        WHERE e.EmployeeID = ? AND e.Status = 'Active'
@@ -1068,6 +1074,7 @@ export async function createDeployment(event: any) {
       [employeeId]
     )
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
+    if (employee.LastRehireDate && startDate < String(employee.LastRehireDate).slice(0, 10)) throw createError({ statusCode: 400, statusMessage: 'Deployment start date cannot be before the latest return date.' })
 
     // The employee lock serializes repeated/concurrent submissions. Check before
     // changing any site link or deployment; transfers have a separate endpoint.
@@ -1163,10 +1170,11 @@ export async function transferEmployee(event: any) {
     const [[dateRow]] = await connection.execute<any[]>("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS CurrentDate")
     const today = String(dateRow.CurrentDate)
     if (startDate > today) throw createError({ statusCode: 400, statusMessage: 'Future-dated transfers are not supported yet.' })
-    const [[employee]] = await connection.execute<any[]>(`SELECT e.EmployeeID, ap.AgencyID FROM employee e
+    const [[employee]] = await connection.execute<any[]>(`SELECT e.EmployeeID, DATE_FORMAT(e.LastRehireDate, '%Y-%m-%d') AS LastRehireDate, ap.AgencyID FROM employee e
       INNER JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
       WHERE e.EmployeeID=? AND e.Status='Active' FOR UPDATE`, [employeeId])
     if (!employee) throw createError({ statusCode: 404, statusMessage: 'Active employee not found.' })
+    if (employee.LastRehireDate && startDate < employee.LastRehireDate) throw createError({ statusCode: 400, statusMessage: 'Transfer date cannot be before the latest return date.' })
 
     const [[target]] = await connection.execute<any[]>(
       `SELECT pr.AgencyPositionID, ap.AgencyID, sr.SiteID

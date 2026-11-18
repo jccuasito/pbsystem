@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import EmployeePositionChangeModal from '~/components/EmployeePositionChangeModal.vue'
+import EmployeeRehireModal from '~/components/EmployeeRehireModal.vue'
+import EmployeeActions from '~/components/EmployeeActions.vue'
 import ModernDateField from '~~/components/ModernDateField.vue'
 import SearchableSelect from '~~/components/SearchableSelect.vue'
 import EmployeeAddressFields from '~/components/EmployeeAddressFields.vue'
 import { addressFromEmployee, addressToEmployee, type EmployeeAddress } from '~/utils/philippineAddress'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
+import { lockBodyScroll } from '~/utils/bodyScrollLock'
 import { employeeCurrentDate, formatEmployeeAge, formatEmployeeId, formatEmployeeName, formatEmployeeNumber } from '~/utils/employee'
 import { alertMessages, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../../components/alertmessage/messages'
 
@@ -37,11 +40,13 @@ const duplicateReviewOpen = ref(false)
 const duplicateReviewKind = ref<'exact' | 'similar'>('similar')
 const duplicateMatches = ref<any[]>([])
 const positionEmployeeId = ref<number | null>(null)
+const employmentEmployeeId = ref<number | null>(null)
 const transferOpen = ref(false)
 const deleteOpen = ref(false)
 const resigning = ref<any>(null), resignationDay = ref(employeeCurrentDate()), resignationError = ref('')
 const resignationDialog = ref<HTMLElement | null>(null)
 let resignationTrigger: HTMLElement | null = null
+let releaseResignationScroll = () => {}
 const editing = ref<any>(null)
 const transferring = ref<any>(null)
 const deleting = ref<any>(null)
@@ -59,7 +64,7 @@ const shiftSetupOpen = ref(false)
 const shiftSetupBusy = ref(false)
 const shiftSetupError = ref('')
 const createNewShiftCode = ref(false)
-const filters = ref({ agencyId: '', positionId: '' })
+const filters = ref({ agencyId: '', positionId: '', status: '' })
 const search = ref('')
 const ageAsOf = ref(employeeCurrentDate())
 useRealtimeRefresh(() => { ageAsOf.value = employeeCurrentDate() }, { intervalMs: 60_000, immediate: true })
@@ -329,13 +334,24 @@ async function deactivate(item: any) {
   if (item.Status === 'Inactive') return
   resignationTrigger = document.activeElement as HTMLElement | null
   resigning.value=item;resignationDay.value=employeeCurrentDate();resignationError.value=''
+  releaseResignationScroll()
+  releaseResignationScroll = lockBodyScroll()
   await nextTick()
   resignationDialog.value?.focus()
 }
 function closeResignation() {
   if (busy.value) return
   resigning.value=null
+  releaseResignationScroll()
   resignationTrigger?.focus()
+}
+function trapResignationFocus(event: KeyboardEvent) {
+  if (event.key !== 'Tab') return
+  const controls = Array.from(resignationDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not([aria-hidden="true"]), select:not(:disabled), textarea:not(:disabled)') || []).filter(control => control.getClientRects().length)
+  const first = controls[0], last = controls[controls.length - 1]
+  if (!first) { event.preventDefault(); return }
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === resignationDialog.value)) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 }
 async function saveResignation() {
   if (!resigning.value || busy.value) return
@@ -343,6 +359,8 @@ async function saveResignation() {
   try {
     await $fetch(`/api/employees/${resigning.value.EmployeeID}`,{method:'DELETE',body:{id:resigning.value.EmployeeID,ResignationDate:resignationDay.value}})
     resigning.value=null
+    releaseResignationScroll()
+    resignationTrigger?.focus()
     await load()
   } catch(cause) {resignationError.value=requestErrorMessage(cause,'Unable to record employee resignation.')}
   finally {busy.value=false}
@@ -456,6 +474,7 @@ const filteredItems = computed(() => {
   const query = search.value.trim().toLowerCase()
   return items.value.filter((item) => (!filters.value.agencyId || String(item.AgencyID) === String(filters.value.agencyId))
     && (!filters.value.positionId || String(item.PositionID) === String(filters.value.positionId))
+    && (!filters.value.status || item.Status === filters.value.status)
     && (!query || [formatEmployeeId(item.EmployeeID), item.EmployeeNumber, formatEmployeeName(item), item.AgencyName, item.PositionName, item.SiteName]
       .some((value) => String(value || '').toLowerCase().includes(query))))
 })
@@ -690,7 +709,7 @@ function sanitizeBankAccountNumber(event: Event) {
   form.value.AccountNumber = sanitized
 }
 
-watch([search, () => filters.value.agencyId, () => filters.value.positionId], () => {
+watch([search, () => filters.value.agencyId, () => filters.value.positionId, () => filters.value.status], () => {
   visibleEmployeeCount.value = employeeBatchSize
 })
 
@@ -824,6 +843,17 @@ async function saveTransfer() {
   }
 }
 
+function handleEmployeeAction(action: string, employee: any) {
+  switch (action) {
+    case 'edit': reset(employee); modalOpen.value = true; break
+    case 'position': positionEmployeeId.value = Number(employee.EmployeeID); break
+    case 'history': employmentEmployeeId.value = Number(employee.EmployeeID); break
+    case 'transfer': openTransfer(employee); break
+    case 'deactivate': deactivate(employee); break
+    case 'delete': openDelete(employee); break
+  }
+}
+
 onMounted(load)
 onMounted(() => {
   document.addEventListener('click', closeRatePicker)
@@ -836,11 +866,13 @@ onMounted(() => {
   if (loadMoreSentinel.value) employeeObserver.observe(loadMoreSentinel.value)
 })
 onBeforeUnmount(() => {
+  releaseResignationScroll()
   document.removeEventListener('click', closeRatePicker)
   compactViewQuery?.removeEventListener('change', handleCompactViewChange)
   employeeObserver?.disconnect()
 })
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !busy.value && !modalOpen.value && !transferOpen.value && !deleteOpen.value && !resigning.value && !positionEmployeeId.value })
+onDeactivated(() => { resigning.value = null; releaseResignationScroll() })
+useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !busy.value && !modalOpen.value && !transferOpen.value && !deleteOpen.value && !resigning.value && !positionEmployeeId.value && !employmentEmployeeId.value })
 </script>
 
 <template>
@@ -875,6 +907,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
           <option v-for="position in availablePositions" :key="position.PositionID" :value="position.PositionID">{{ position.PositionName }}</option>
         </select>
       </label>
+      <label><span>Employment status</span><select v-model="filters.status" aria-label="Employment status"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Resigned</option></select></label>
     </section>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -922,21 +955,9 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             <td data-label="Position">{{ format(item.PositionName) }}</td>
             <td data-label="Current Site">{{ format(item.SiteName) }}</td>
             <td data-label="Deployment"><span class="status" :class="`status--${String(item.DeploymentStatus || 'unassigned').toLowerCase()}`">{{ item.DeploymentStatus }}</span></td>
-            <td data-label="Status"><span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status === 'Inactive' ? 'Resigned' : item.Status }}</span></td>
+            <td data-label="Status"><span class="status" :class="`status--${String(item.Status || '').toLowerCase()}`">{{ item.Status === 'Inactive' ? 'Resigned' : item.Status }}</span><small v-if="item.Status === 'Inactive'" class="employment-date">{{ item.ResignationDate || 'Date not recorded' }}</small><small v-else-if="item.LastRehireDate" class="employment-date">Returned {{ item.LastRehireDate }}</small></td>
             <td class="row-actions" data-label="Actions">
-              <button class="action-icon action-icon--edit" type="button" aria-label="Edit employee" title="Edit" @click="reset(item); modalOpen = true">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-              </button>
-              <button class="action-icon action-icon--position" type="button" aria-label="Change position and view history" title="Change position / history" @click="positionEmployeeId = Number(item.EmployeeID)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6M5 20h14"/></svg></button>
-              <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee to another agency" title="Agency transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
-              </button>
-              <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate / resign employee" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/></svg>
-              </button>
-              <button class="action-icon action-icon--delete" type="button" aria-label="Delete employee permanently" title="Delete permanently" @click="openDelete(item)">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
-              </button>
+              <EmployeeActions :employee-id="Number(item.EmployeeID)" :employee-name="displayEmployeeName(item)" :inactive="item.Status === 'Inactive'" @action="handleEmployeeAction($event, item)" />
             </td>
           </tr>
         </tbody>
@@ -959,6 +980,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
         </header>
 
         <div class="employee-card__details">
+          <p v-if="item.Status === 'Inactive'" class="employment-date">Resigned: {{ item.ResignationDate || 'Date not recorded' }}</p><p v-else-if="item.LastRehireDate" class="employment-date">Returned {{ item.LastRehireDate }}</p>
           <p class="employee-card__agency">{{ format(item.AgencyName) }}</p>
           <p>{{ format(item.PositionName) }} <span aria-hidden="true">·</span> {{ format(item.SiteName) }}</p>
         </div>
@@ -968,21 +990,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             <span>Deployment</span>
             <span class="status" :class="`status--${String(item.DeploymentStatus || 'unassigned').toLowerCase()}`">{{ item.DeploymentStatus }}</span>
           </div>
-          <div class="mobile-actions" aria-label="Employee actions">
-            <button class="action-icon action-icon--edit" type="button" aria-label="Edit employee" title="Edit" @click="reset(item); modalOpen = true">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-            </button>
-            <button class="action-icon action-icon--position" type="button" aria-label="Change position and view history" title="Change position / history" @click="positionEmployeeId = Number(item.EmployeeID)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6M5 20h14"/></svg></button>
-            <button class="action-icon action-icon--transfer" type="button" aria-label="Transfer employee to another agency" title="Agency transfer" :disabled="item.Status === 'Inactive'" @click="openTransfer(item)">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l4 4-4 4"/><path d="M20 7H8a4 4 0 0 0-4 4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h12a4 4 0 0 0 4-4"/></svg>
-            </button>
-            <button class="action-icon action-icon--deactivate" type="button" aria-label="Deactivate employee" title="Deactivate / resign employee" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/></svg>
-            </button>
-            <button class="action-icon action-icon--delete" type="button" aria-label="Delete employee permanently" title="Delete permanently" @click="openDelete(item)">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
-            </button>
-          </div>
+          <EmployeeActions :employee-id="Number(item.EmployeeID)" :employee-name="displayEmployeeName(item)" :inactive="item.Status === 'Inactive'" @action="handleEmployeeAction($event, item)" />
         </footer>
       </article>
     </section>
@@ -1025,7 +1033,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
             <div class="employee-core-grid">
               <label class="employee-core-field"><span>Employee number</span><input v-model="form.EmployeeNumber" placeholder="Enter employee number" /></label>
               <div class="employee-core-field employee-core-field--search"><SearchableSelect v-model="form.AgencyPositionID" label="Agency position" placeholder="Search agency or position" empty-text="No matching agency position." :options="agencyPositionOptions" :disabled="!!editing" required /><small>{{ editing ? 'Use Change position from the employee list to record a promotion.' : 'Required for rates and deployments.' }}</small></div>
-              <label class="employee-core-field"><span>Status</span><select v-model="form.Status" disabled><option value="Active">Active</option><option value="Inactive">Resigned</option></select><small>Use Deactivate / resign to record resignation. Resigned employees cannot be reactivated here.</small></label>
+              <label class="employee-core-field"><span>Status</span><select v-model="form.Status" disabled><option value="Active">Active</option><option value="Inactive">Resigned</option></select><small>Use Deactivate / resign for resignation, or Employment history / Rehire when the employee returns.</small></label>
             </div>
             <div class="grid"><label>First name<input v-model="form.FirstName" autocomplete="given-name" required @input="uppercaseNameField('FirstName', $event)" /></label><label>Middle name<input v-model="form.MiddleName" autocomplete="additional-name" @input="uppercaseNameField('MiddleName', $event)" /></label></div>
             <div class="grid"><label>Last name<input v-model="form.LastName" autocomplete="family-name" required @input="uppercaseNameField('LastName', $event)" /></label><label>Nickname<input v-model="form.Nickname" @input="uppercaseNameField('Nickname', $event)" /></label></div>
@@ -1035,7 +1043,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
                 <label>Age<input :value="formatEmployeeAge(form.Birthday, ageAsOf)" readonly aria-describedby="employee-age-help" /></label>
                 <small id="employee-age-help">Calculated from birthday. Updates automatically.</small>
               </div>
-              <ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" required />
+              <ModernDateField v-model="form.DateHired" label="Date hired" placeholder="Select hiring date" align="end" :disabled="!!editing?.LastRehireDate" required />
             </div>
             <div class="grid">
               <label>Gender<select v-model="form.Gender" required><option disabled value="">Select gender</option><option v-for="gender in genderOptions" :key="gender" :value="gender">{{ gender }}</option></select></label>
@@ -1223,6 +1231,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
 
     <Teleport to="body">
       <EmployeePositionChangeModal v-if="positionEmployeeId" :employee-id="positionEmployeeId" @close="positionEmployeeId = null" @changed="load" />
+      <EmployeeRehireModal v-if="employmentEmployeeId" :employee-id="employmentEmployeeId" @close="employmentEmployeeId = null" @changed="load" />
 
       <div v-if="transferOpen" class="backdrop" @click.self="!transferBusy && (transferOpen = false)">
         <form class="modal" @submit.prevent="saveTransfer">
@@ -1298,12 +1307,34 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="resigning" class="backdrop" @keydown.esc.stop.prevent="closeResignation"><form ref="resignationDialog" class="modal resignation-modal" role="dialog" aria-modal="true" aria-labelledby="resignation-title" tabindex="-1" @submit.prevent="saveResignation">
-        <h2 id="resignation-title">Record employee resignation</h2><p>{{ formatEmployeeName(resigning) }} · {{ formatEmployeeId(resigning.EmployeeID) }}</p>
-        <ModernDateField v-model="resignationDay" label="Resignation date" :max="ageAsOf" :min="String(resigning.DateHired || '').slice(0,10)" required />
-        <p class="transfer-note">This deactivates the employee and marks them as Resigned. Daily status updates will be locked. Existing attendance and payroll history will be retained.</p>
-        <p v-if="resignationError" class="error" role="alert">{{ resignationError }}</p><footer><button type="button" class="cancel-button" :disabled="busy" @click="closeResignation">Cancel</button><button type="submit" class="primary" :disabled="busy || !resignationDay">{{ busy ? 'Saving…' : 'Confirm resignation' }}</button></footer>
-      </form></div>
+      <div v-if="resigning" class="backdrop resignation-backdrop" @keydown.esc.stop.prevent="closeResignation" @keydown="trapResignationFocus">
+        <form ref="resignationDialog" class="modal resignation-modal" role="dialog" aria-modal="true" aria-labelledby="resignation-title" tabindex="-1" :aria-busy="busy" @submit.prevent="saveResignation">
+          <header class="resignation-modal__header">
+            <div><p class="resignation-modal__eyebrow">EMPLOYMENT STATUS</p><h2 id="resignation-title">Record employee resignation</h2></div>
+            <button type="button" class="resignation-modal__close" aria-label="Close resignation dialog" :disabled="busy" @click="closeResignation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+          </header>
+          <div class="resignation-modal__body">
+            <section class="resignation-modal__employee" aria-label="Selected employee">
+              <strong>{{ formatEmployeeName(resigning) }}</strong>
+              <span>{{ formatEmployeeId(resigning.EmployeeID) }}<template v-if="resigning.AgencyName"> &middot; {{ resigning.AgencyName }}</template></span>
+              <div class="resignation-modal__status"><span>Active</span><span aria-hidden="true">&rarr;</span><span>Resigned</span></div>
+            </section>
+            <div class="resignation-modal__date">
+              <ModernDateField v-model="resignationDay" label="Resignation date" :max="ageAsOf" :min="String(resigning.DateHired || '').slice(0,10)" :disabled="busy" required responsive />
+              <p>Select the employee's last working day.</p>
+            </div>
+            <div class="resignation-modal__note">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
+              <div><strong>Previous records are kept</strong><p>Attendance and payroll history stay available. Daily status updates will be locked.</p></div>
+            </div>
+            <p v-if="resignationError" class="resignation-modal__error" role="alert">{{ resignationError }}</p>
+          </div>
+          <footer class="resignation-modal__footer">
+            <button type="button" class="resignation-modal__cancel" :disabled="busy" @click="closeResignation">Cancel</button>
+            <button type="submit" class="danger resignation-modal__confirm" :disabled="busy || !resignationDay">{{ busy ? 'Saving...' : 'Confirm resignation' }}</button>
+          </footer>
+        </form>
+      </div>
       <div v-if="deleteOpen" class="backdrop">
         <section class="modal delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-employee-title" aria-describedby="delete-employee-note">
           <div class="delete-modal__icon" aria-hidden="true">!</div>
@@ -1326,8 +1357,52 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
 </template>
 
 <style scoped>
-.resignation-modal {width:min(100%,540px);color:var(--theme-ink,#162033)}
-.resignation-modal > p {margin:0;line-height:1.5}
+.modal.resignation-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  box-sizing: border-box;
+  width: min(100%, 520px);
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--theme-line,#dce3ee);
+  border-radius: 18px;
+  color: var(--theme-ink,#162033);
+  box-shadow: 0 24px 72px rgba(15,23,42,.24);
+}
+.resignation-modal__header { display: flex; flex-shrink: 0; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 24px 24px 20px; }
+.resignation-modal__eyebrow { margin: 0 0 8px; color: var(--theme-muted,#637287); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+.resignation-modal .resignation-modal__header h2 { margin: 0; font-size: 22px; line-height: 1.3; letter-spacing: -.02em; }
+.resignation-modal__close { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; padding: 7px; border: 1px solid var(--theme-line,#dce3ee); border-radius: 9px; background: var(--theme-surface,#fff); color: var(--theme-muted,#637287); }
+.resignation-modal__close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.resignation-modal__body { display: grid; gap: 20px; min-height: 0; padding: 0 24px 24px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.resignation-modal__employee { display: grid; gap: 5px; padding: 16px; border: 1px solid var(--theme-line,#dce3ee); border-radius: 12px; background: var(--theme-soft,#f8fafc); overflow-wrap: anywhere; }
+.resignation-modal__employee > strong { font-size: 15px; line-height: 1.4; }
+.resignation-modal__employee > span { color: var(--theme-muted,#637287); font-size: 12px; line-height: 1.5; }
+.resignation-modal__status { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--theme-muted,#637287); font-size: 11px; font-weight: 700; }
+.resignation-modal__status span:first-child { padding: 4px 9px; border-radius: 99px; background: #dcfce7; color: #166534; }
+.resignation-modal__status span:last-child { padding: 4px 9px; border-radius: 99px; background: #fee2e2; color: #991b1b; }
+.resignation-modal__date > p { margin: 8px 0 0; color: var(--theme-muted,#637287); font-size: 12px; line-height: 1.5; }
+.resignation-modal__note { display: flex; align-items: flex-start; gap: 10px; padding: 14px; border: 1px solid var(--theme-line,#dce3ee); border-radius: 10px; background: var(--theme-soft,#f8fafc); }
+.resignation-modal__note > svg { flex: 0 0 20px; width: 20px; height: 20px; fill: none; stroke: var(--theme-muted,#637287); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.resignation-modal__note strong { display: block; font-size: 12px; line-height: 1.5; }
+.resignation-modal__note p { margin: 4px 0 0; color: var(--theme-muted,#637287); font-size: 12px; line-height: 1.6; }
+.resignation-modal__error { margin: 0; padding: 12px 14px; border: 1px solid #fecaca; border-radius: 10px; background: #fff1f2; color: #b42318; font-size: 13px; line-height: 1.5; }
+.resignation-modal .resignation-modal__footer { display: flex; flex-shrink: 0; gap: 10px; justify-content: flex-end; margin: 0; padding: 16px 24px; border-top: 1px solid var(--theme-line,#dce3ee); background: var(--theme-surface,#fff); }
+.resignation-modal__footer > button { min-height: 44px; padding: 10px 16px; border: 1px solid var(--theme-line,#cfd8e6); border-radius: 9px; font: inherit; font-size: 13px; font-weight: 700; }
+.resignation-modal__cancel { background: var(--theme-surface,#fff); color: var(--theme-ink,#24415f); }
+.resignation-modal__footer .resignation-modal__confirm { border-color: #b42318; background: #b42318; color: #fff; }
+.resignation-modal__confirm:hover:not(:disabled) { border-color: #912018; background: #912018; }
+.resignation-modal :focus-visible { outline: 2px solid var(--theme-accent,#5271a5); outline-offset: 2px; }
+:global(html[data-theme="dark"] .resignation-modal .resignation-modal__error) { border-color: #733540; background: #351e2a; color: #fecaca; }
+@media (max-width: 600px) {
+  .resignation-modal__header { padding: 20px 18px 18px; gap: 10px; }
+  .resignation-modal .resignation-modal__header h2 { font-size: 20px; }
+  .resignation-modal__body { padding: 0 18px 18px; gap: 16px; }
+  .resignation-modal .resignation-modal__footer { padding: 14px 18px; display: grid; grid-template-columns: 1fr 1.65fr; gap: 8px; }
+  .resignation-modal__footer > button { padding: 10px 8px; }
+}
 .employees-page{padding:32px;max-width:1400px;margin:auto;color:var(--theme-ink,#162033);font-family:Inter,system-ui,sans-serif}.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.page-head p{margin:0;font-size:.75rem;font-weight:800;letter-spacing:.08em;color:var(--theme-accent,#5271a5)}.page-head h1{margin:4px 0 0;font-size:1.8rem}.actions-row{display:flex;gap:10px;flex-wrap:wrap}.primary,.ghost{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.primary{background:#2349e6;color:#fff}.ghost{background:var(--theme-soft,#eef3ff);color:var(--theme-accent,#2043cc)}.filters{display:grid;grid-template-columns:minmax(280px,1fr) minmax(180px,220px) minmax(180px,220px);gap:14px;margin:0 0 16px}.filters label{display:grid;min-width:0;gap:6px;font-size:.8rem;font-weight:700;color:var(--theme-muted,#56657b)}.filters input,.filters select{box-sizing:border-box;width:100%;min-height:40px;border:1px solid var(--theme-line,#ccd5e4);border-radius:8px;padding:8px 10px;background:var(--theme-surface,#fff);font:inherit}.table-wrap{overflow:auto;border:1px solid var(--theme-line,#dce3ee);border-radius:14px;background:var(--theme-surface,#fff)}table{width:100%;border-collapse:collapse}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid var(--theme-line,#edf1f6);font-size:.88rem;white-space:nowrap}th{background:var(--theme-soft,#f8fafc);color:var(--theme-muted,#526174);font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}.row-actions{display:flex;gap:8px}.row-actions button{border:1px solid var(--theme-line,#cfd8e6);border-radius:7px;background:var(--theme-surface,#fff);padding:7px 9px;color:var(--theme-ink,#24415f);font-weight:700;cursor:pointer}.row-actions .delete-action{border-color:#fecaca;color:#b42318;background:#fff7f7}button:disabled{opacity:.45;cursor:not-allowed}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active,.status--unassigned{background:#dcfce7;color:#166534}.status--inactive,.status--ended{background:#fee2e2;color:#991b1b}.error{color:#b42318;margin:0 0 12px}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{position:relative;width:min(100%,760px);max-height:90vh;overflow:auto;background:var(--theme-surface,#fff);border-radius:16px;padding:26px;display:grid;gap:12px}.modal h2{margin:0 0 4px}.modal label{display:grid;gap:6px;font-size:.8rem;font-weight:700;color:var(--theme-muted,#475569)}.modal input,.modal select,.modal textarea{box-sizing:border-box;width:100%;min-height:40px;border:1px solid var(--theme-line,#cfd8e6);border-radius:8px;padding:9px 10px;font:inherit}.modal textarea{resize:vertical;min-height:90px}.transfer-subtitle{margin:-5px 0 0;color:var(--theme-muted,#405675);font-weight:700}.transfer-note{margin:0;padding:10px 12px;border-radius:8px;background:var(--theme-soft,#eff6ff);color:var(--theme-accent,#315887);font-size:.85rem;line-height:1.4}.rate-picker{position:relative}.rate-picker input{padding-right:86px}.rate-picker small{color:var(--theme-muted,#637287);font-weight:600}.rate-search-button{position:absolute;right:6px;top:27px;border:0;border-radius:6px;background:#2349e6;color:#fff;padding:7px 11px;font-weight:800;cursor:pointer}.rate-picker__results{position:absolute;z-index:4;top:100%;left:0;right:0;max-height:270px;overflow:auto;border:1px solid var(--theme-line,#bfcee4);border-radius:8px;background:var(--theme-surface,#fff);box-shadow:0 12px 26px rgba(15,23,42,.16)}.rate-picker__results button{display:grid;width:100%;gap:3px;padding:10px 12px;border:0;border-bottom:1px solid var(--theme-line,#edf1f6);background:var(--theme-surface,#fff);text-align:left;cursor:pointer;color:var(--theme-ink,#1d3557)}.rate-picker__results button:hover{background:var(--theme-soft,#eff6ff)}.rate-picker__results span{font-size:.8rem;color:var(--theme-muted,#61708a)}.rate-picker__results p{margin:0;padding:12px;color:var(--theme-muted,#66758b);font-weight:600}.shift-missing{display:grid;gap:5px;padding:12px;border:1px solid #f5c978;border-radius:9px;background:#fff9ed;color:#80530b;font-size:.85rem}.shift-missing span{color:#8a6a30}.shift-missing button{justify-self:start;border:0;border-radius:7px;background:#f59e0b;color:#fff;padding:7px 10px;font-weight:800;cursor:pointer}.shift-choice{display:flex;gap:8px;flex-wrap:wrap}.shift-choice button{border:1px solid var(--theme-line,#cfd8e6);border-radius:7px;background:var(--theme-surface,#fff);padding:8px 10px;font-weight:700;cursor:pointer}.shift-choice button.active{border-color:#2349e6;background:var(--theme-soft,#eef3ff);color:var(--theme-accent,#2043cc)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.1rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}.delete-modal{width:min(100%,540px);justify-items:center;text-align:center;gap:14px}.delete-modal__icon{display:grid;place-items:center;width:50px;height:50px;border-radius:50%;background:#fee2e2;color:#b42318;font-size:1.5rem;font-weight:900}.delete-modal__employee{margin:0;color:var(--theme-ink,#1e3655);font-weight:800}.delete-modal__employee span{color:var(--theme-muted,#64748b);font-weight:700}.delete-modal__note{margin:0;padding:14px 16px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7;color:#7f1d1d;font-size:.88rem;line-height:1.55;text-align:left}.delete-modal footer{width:100%}.delete-modal footer button{min-width:90px;border:1px solid var(--theme-line,#cfd8e6);border-radius:8px;background:var(--theme-surface,#fff);padding:9px 16px;font-weight:800;cursor:pointer}.delete-modal footer .danger{border-color:#dc2626;background:#dc2626;color:#fff}@media(max-width:760px){.employees-page{padding:20px}.filters,.grid{grid-template-columns:1fr}.page-head{flex-direction:column;align-items:flex-start}}
 </style>
 
@@ -2473,23 +2548,30 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
 }
 
 .employee-table-wrap {
-  overflow: hidden;
+  overflow-x: auto;
 }
 
 .employee-table {
   width: 100%;
+  min-width: 1120px;
   table-layout: fixed;
 }
 
-.employee-table .col-id { width: 8%; }
-.employee-table .col-number { width: 8%; }
-.employee-table .col-name { width: 15%; }
-.employee-table .col-agency { width: 15%; }
-.employee-table .col-position { width: 10%; }
-.employee-table .col-site { width: 9%; }
-.employee-table .col-deployment { width: 10%; }
-.employee-table .col-status { width: 7%; }
-.employee-table .col-actions { width: 210px; }
+.employee-table .col-id { width: 110px; }
+.employee-table .col-number { width: 110px; }
+.employee-table .col-name { width: calc(25% - 122.5px); }
+.employee-table .col-agency { width: calc(25% - 122.5px); }
+.employee-table .col-position { width: calc(16% - 78.4px); }
+.employee-table .col-site { width: calc(17% - 83.3px); }
+.employee-table .col-deployment { width: calc(17% - 83.3px); }
+.employee-table .col-status { width: 110px; }
+.employee-table .col-actions { width: 160px; }
+.status { display: inline-flex; align-items: center; white-space: nowrap; overflow-wrap: normal; line-height: 1.3; }
+.status.status--unassigned { background: var(--theme-soft,#eef2f7); color: var(--theme-muted,#526174); }
+.employment-date { display: block; margin-top: 6px; color: var(--theme-muted,#637287); font-size: 11px; line-height: 1.4; }
+.filters { grid-template-columns: minmax(240px,1fr) repeat(3,minmax(155px,190px)); }
+@media(max-width:1000px) { .filters { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media(max-width:600px) { .filters { grid-template-columns: 1fr; } }
 
 .employee-table th,
 .employee-table td {
@@ -2519,67 +2601,22 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
 }
 
 .employee-table .row-actions {
-  justify-content: center;
-  align-items: center;
-  gap: 5px;
+  display: table-cell;
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--theme-surface,#fff);
+  box-shadow: -1px 0 var(--theme-line,#dce3ee);
   padding-right: 10px;
   padding-left: 10px;
 }
 
 .employee-table th:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  box-shadow: -1px 0 var(--theme-line,#dce3ee);
   text-align: center;
-}
-
-.action-icon {
-  display: inline-grid;
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  padding: 0;
-  border-color:var(--theme-line,#d3dcea);
-  border-radius: 8px;
-  color:var(--theme-muted,#315173);
-  transition: background-color .16s ease, border-color .16s ease, color .16s ease, transform .16s ease;
-}
-
-.action-icon:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: #9cb5dc;
-  background:var(--theme-soft,#edf4ff);
-  color:var(--theme-accent,#174ea6);
-}
-
-.action-icon svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.action-icon--deactivate {
-  color: #9a6700;
-}
-
-.action-icon--deactivate:hover:not(:disabled) {
-  border-color: #f3c969;
-  background: #fff8e5;
-  color: #7a4e00;
-}
-
-.action-icon--delete {
-  border-color: #fecaca;
-  background: #fff7f7;
-  color: #b42318;
-}
-
-.action-icon--delete:hover:not(:disabled) {
-  border-color: #ef4444;
-  background: #fee2e2;
-  color: #991b1b;
 }
 
 .mobile-employee-list {
@@ -2706,17 +2743,6 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
   font-weight: 800;
   letter-spacing: .04em;
   text-transform: uppercase;
-}
-
-.mobile-actions {
-  display: grid;
-  grid-template-columns: repeat(5, 36px);
-  gap: 6px;
-}
-
-.mobile-actions .action-icon {
-  width: 36px;
-  height: 36px;
 }
 
 @media (max-width: 980px) {
@@ -2862,16 +2888,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
     flex-wrap: wrap;
   }
 
-  .row-actions .action-icon {
-    flex-basis: 42px;
-    width: 42px;
-    height: 42px;
-  }
 
-  .action-icon svg {
-    width: 19px;
-    height: 19px;
-  }
 }
 
 @media (max-width: 380px) {
@@ -2898,12 +2915,6 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
     gap: 10px;
   }
 
-  .mobile-actions {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
 
-  .mobile-actions .action-icon {
-    width: 100%;
-  }
 }
 </style>

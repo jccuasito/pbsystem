@@ -735,10 +735,12 @@ async function applyWorkPositionDates(connection: any, batch: any, employeeId: n
 
 async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, employeeId: number, deploymentType: 'Regular' | 'Reliever', currentDeploymentId: number | null, createdBy: unknown) {
   // The employee lock serializes fixed-post changes across different site DTRs.
-  const [[employee]] = await connection.execute<any[]>(`SELECT e.EmployeeID, ap.AgencyID FROM employee e
+  const [[employee]] = await connection.execute<any[]>(`SELECT e.EmployeeID, ap.AgencyID, DATE_FORMAT(e.LastRehireDate, '%Y-%m-%d') AS LastRehireDate FROM employee e
     INNER JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
     WHERE e.EmployeeID=? AND e.Status='Active' FOR UPDATE`, [employeeId])
   if (!employee || Number(employee.AgencyID) !== Number(batch.AgencyID)) throw createError({ statusCode: 400, statusMessage: 'Select an active employee under this DTR agency. Agency transfers are managed from Employee List.' })
+  if (employee.LastRehireDate && employee.LastRehireDate > databaseDate(batch.PeriodEnd)) throw createError({ statusCode: 409, statusMessage: 'This DTR ends before the employee return date.' })
+  if (employee.LastRehireDate && employee.LastRehireDate > databaseDate(batch.PeriodStart)) batch = { ...batch, PeriodStart: employee.LastRehireDate }
   const rate = await matchingDtrRate(connection, employeeId, batch)
   // A backdated cutoff cannot turn into an ongoing assignment across a later
   // original deployment. Its fixed period ends immediately before that move.
@@ -785,7 +787,8 @@ async function promoteDtrEmployeeToPermanentSite(connection: any, batch: any, em
   const [[existingPermanent]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
     WHERE EmployeeID = ? AND SiteRateID = ? AND SiteID = ? AND IsPermanentSite = 1
       AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= DATE_SUB(?, INTERVAL 1 DAY))
-    ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, rate.SiteRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+      AND (? IS NULL OR StartDate>=?)
+    ORDER BY StartDate DESC, DeploymentID DESC LIMIT 1 FOR UPDATE`, [employeeId, rate.SiteRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart, employee.LastRehireDate || null, employee.LastRehireDate || null])
   if (existingPermanent) {
     await connection.execute(`UPDATE employee_deployment
       SET DeploymentType = ?, EndDate = CASE WHEN ? IS NULL THEN NULL ELSE DATE_SUB(?, INTERVAL 1 DAY) END
@@ -1063,17 +1066,22 @@ export async function addDtrEmployee(event: any) {
     const batch = await batchDetail(connection, id, true); assertEditableBatch(batch)
     const [enrolled] = await connection.execute<any[]>('SELECT EmployeeID FROM attendance_dtr_employee WHERE BatchID = ? AND EmployeeID = ? FOR UPDATE', [id, employeeId])
     if (enrolled.length) throw alreadyAdded()
-    const rate = await matchingDtrRate(connection, employeeId, batch)
+    const [[employee]] = await connection.execute<any[]>("SELECT EmployeeID, Status, DATE_FORMAT(LastRehireDate, '%Y-%m-%d') AS LastRehireDate FROM employee WHERE EmployeeID=? FOR UPDATE", [employeeId])
+    if (!employee || employee.Status !== 'Active') throw createError({ statusCode: 409, statusMessage: 'Select an active employee for this DTR.' })
+    if (employee.LastRehireDate && employee.LastRehireDate > databaseDate(batch.PeriodEnd)) throw createError({ statusCode: 409, statusMessage: 'This DTR ends before the employee return date.' })
+    // A mid-cutoff return starts a new assignment on the return date, never in the gap.
+    const assignmentBatch = employee.LastRehireDate && employee.LastRehireDate > databaseDate(batch.PeriodStart) ? { ...batch, PeriodStart: employee.LastRehireDate } : batch
+    const rate = await matchingDtrRate(connection, employeeId, assignmentBatch)
     const [[existing]] = await connection.execute<any[]>(`SELECT DeploymentID FROM employee_deployment
       WHERE EmployeeID = ? AND SiteRateID = ? AND SiteID = ? AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?)
-      ORDER BY StartDate DESC LIMIT 1`, [employeeId, rate.SiteRateID, batch.SiteID, batch.PeriodEnd, batch.PeriodStart])
+      ORDER BY StartDate DESC LIMIT 1`, [employeeId, rate.SiteRateID, batch.SiteID, batch.PeriodEnd, assignmentBatch.PeriodStart])
     let deploymentId = existing?.DeploymentID
     if (isPermanentSite) {
-      deploymentId = await promoteDtrEmployeeToPermanentSite(connection, batch, employeeId, deploymentType, deploymentId ? Number(deploymentId) : null, session.sub)
+      deploymentId = await promoteDtrEmployeeToPermanentSite(connection, assignmentBatch, employeeId, deploymentType, deploymentId ? Number(deploymentId) : null, session.sub)
     } else if (!deploymentId) {
       const [result] = await connection.execute<any>(`INSERT INTO employee_deployment
         (EmployeeID, SiteRateID, SiteID, DeploymentType, IsPermanentSite, StartDate, EndDate, Remarks, CreatedBy)
-        VALUES (?, ?, ?, ?, 0, ?, ?, 'Created from DTR attendance assignment', ?)`, [employeeId, rate.SiteRateID, batch.SiteID, deploymentType, batch.PeriodStart, batch.PeriodEnd, session.sub])
+        VALUES (?, ?, ?, ?, 0, ?, ?, 'Created from DTR attendance assignment', ?)`, [employeeId, rate.SiteRateID, batch.SiteID, deploymentType, assignmentBatch.PeriodStart, batch.PeriodEnd, session.sub])
       deploymentId = result.insertId
     }
     try {
