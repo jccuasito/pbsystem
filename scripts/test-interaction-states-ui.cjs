@@ -6,8 +6,9 @@ async function fixture(accounts=false){
  const styles=['base','theme','components','auth','dashboard','payroll-processing','interactions'].map(name=>fs.readFileSync(path.join(root,'assets/css',name+'.css'),'utf8'))
  const dashboard=fs.readFileSync(path.join(root,'app/pages/dashboard/index.vue'),'utf8'),start=dashboard.indexOf('<button type="button" class="dash-icon-btn"'),themeButton=dashboard.slice(start,dashboard.indexOf('</button>',start)+9)
  const source=accounts?`<script setup>
- import Accounts from './app/pages/deductions-loans/employees/index.vue';
- </script><template><div class="page dash-page"><Accounts class="dash-workspace-page"/></div></template>`:`<script setup>
+ import {ref,KeepAlive} from 'vue';import Accounts from './app/pages/deductions-loans/employees/index.vue';
+ const active=ref(true);window.accountListScene=active;
+ </script><template><div class="page dash-page"><KeepAlive><Accounts v-if="active" class="dash-workspace-page"/></KeepAlive></div></template>`:`<script setup>
  import{ref,watchEffect}from'vue';import{provideAppTheme}from'./app/composables/useAppTheme';
  import Settings from './app/pages/settings/index.vue';import Bell from './app/components/NotificationBell.vue';import DateField from './components/ModernDateField.vue';import ImportReport from './app/components/DtrImportResultModal.vue';
  const {isDark}=provideAppTheme(),date=ref('2026-11-20'),report=ref(null),clicks=ref(0);window.interactionQa={isDark,clicks};watchEffect(()=>document.documentElement.dataset.theme=isDark.value?'dark':'light');
@@ -19,7 +20,7 @@ async function fixture(accounts=false){
  <style>.interaction-samples{display:flex;flex-wrap:wrap;align-items:start;gap:14px;padding:24px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}.interaction-samples h2{width:100%;margin:0}.interaction-samples .auth-submit{margin:0}.interaction-samples details{width:100%}</style>`
  function compile(code,filename,resolveDir){
   if(filename.replaceAll('\\','/').endsWith('/deductions-loans/employees/index.vue')){
-   code=code.replace('<script setup lang="ts">','<script setup lang="ts">\nimport {ref,reactive,computed,watch,onMounted} from "vue";')
+   code=code.replace('<script setup lang="ts">','<script setup lang="ts">\nimport {ref,reactive,computed,watch,onMounted,onBeforeUnmount,onActivated,onDeactivated} from "vue";').replace('</script>','window.accountListQa={load};</script>')
   }
   const {descriptor,errors}=sfc.parse(code,{filename});assert.deepEqual(errors,[])
   const id='data-v-'+crypto.createHash('sha1').update(filename).digest('hex').slice(0,8)
@@ -27,7 +28,7 @@ async function fixture(accounts=false){
   for(const style of descriptor.styles){const result=sfc.compileStyle({source:style.content,filename,id,scoped:style.scoped});assert.deepEqual(result.errors,[]);styles.push(result.code)}
   return{contents:script.content+`;Component.__scopeId='${id}';export default Component`,loader:'ts',resolveDir}
  }
- const result=await build({stdin:{resolveDir:root,contents:"import{createApp}from'vue';import App from'interaction-fixture';createApp(App).mount('#app')"},bundle:true,write:false,format:'iife',platform:'browser',alias:{'~~':root,'~':path.join(root,'app')},define:{'process.env.NODE_ENV':'"production"'},plugins:[{name:'controls',setup(build){
+ const result=await build({stdin:{resolveDir:root,contents:"import{createApp}from'vue';import App from'interaction-fixture';const app=createApp(App);app.mount('#app');window.interactionFixtureApp=app"},bundle:true,write:false,format:'iife',platform:'browser',alias:{'~~':root,'~':path.join(root,'app')},define:{'process.env.NODE_ENV':'"production"'},plugins:[{name:'controls',setup(build){
   build.onResolve({filter:/^interaction-fixture$/},()=>({path:'interactions.vue',namespace:'qa'}))
   build.onLoad({filter:/.*/,namespace:'qa'},args=>compile(source,args.path,root))
   build.onLoad({filter:/\.vue$/},args=>compile(fs.readFileSync(args.path,'utf8'),args.path,path.dirname(args.path)))
@@ -212,5 +213,107 @@ test('employee account filters and nested modal actions stay still and respond o
    assert.deepEqual(errors,[])
    await page.close()
   }
+ }finally{await browser.close()}
+})
+
+test('employee account scrolling fetches batches, preserves rows, retries and isolates filter changes',{skip:process.env.INTERACTIONS_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),built=await fixture(true),browser=await chromium.launch({headless:true,executablePath:process.env.INTERACTIONS_BROWSER_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'})
+ const errors=[]
+ async function mountList(page,fallback=false){
+  page.on('pageerror',error=>errors.push(error.message));page.setDefaultTimeout(10000)
+  await page.route('https://**/*',route=>route.abort())
+  await page.setContent(`<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${built.css}</style></head><body><div id="app"></div></body></html>`)
+  await page.evaluate(fallback=>{
+   if(fallback)window.IntersectionObserver=undefined
+   window.listFixture={calls:[],failPage:0,delayPage:0,pending:[]}
+   window.$fetch=async(url,options={})=>{
+    if(options.method)throw new Error('Unexpected write in list QA')
+    const state=window.listFixture,query={...options.query};state.calls.push({url,query,signal:options.signal})
+    if(url!=='/api/deductions-loans/employee-records')throw new Error('Unexpected request '+url)
+    const total=query.search==='small'?3:query.search==='empty'?0:query.agencyId==='2'?30:60
+    const offset=query.agencyId==='2'?1000:0
+    const rows=Array.from({length:total},(_,index)=>({EmployeeID:offset+index+1,EmployeeNumber:'TEST-'+(offset+index+1),EmployeeName:'SAMPLE EMPLOYEE '+(offset+index+1),AgencyID:query.agencyId||1,AgencyName:query.agencyId==='2'?'Agency Two':'Agency One',ActiveLoanCount:1,ActiveDeductionCount:0,TotalIssued:100,OutstandingBalance:100}))
+    const response={items:rows.slice((query.page-1)*25,query.page*25),agencies:[{AgencyID:1,AgencyName:'Agency One'},{AgencyID:2,AgencyName:'Agency Two'}],catalogItems:[],pagination:{page:query.page,pageSize:25,total,pages:Math.max(1,Math.ceil(total/25))}}
+    if(query.page===state.failPage){state.failPage=0;throw new Error('Simulated list request failure')}
+    if(query.page===state.delayPage){state.delayPage=0;return new Promise(resolve=>state.pending.push(()=>resolve(response)))}
+    return response
+   }
+  },fallback)
+  await page.addScriptTag({content:built.script})
+ }
+ const waitRows=(page,count,mobile=false)=>page.waitForFunction(({count,mobile})=>document.querySelectorAll(mobile?'.mobile-list>article':'.desktop-list tbody tr').length===count&&!document.querySelector('.filters button:disabled'),{count,mobile})
+ const release=page=>page.evaluate(()=>window.listFixture.pending.shift()())
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:900}});await mountList(page)
+  await waitRows(page,25)
+  assert.equal(await page.evaluate(()=>window.listFixture.calls.length),1,'Only the first batch is requested initially')
+  const first=await page.locator('.desktop-list tbody tr').first().innerText()
+  await page.locator('.employee-list-progress').scrollIntoViewIfNeeded();await waitRows(page,50)
+  assert.equal(await page.locator('.desktop-list tbody tr').first().innerText(),first,'Appending preserves existing employees')
+  await page.evaluate(()=>window.listFixture.delayPage=3)
+  await page.locator('.employee-list-progress').scrollIntoViewIfNeeded()
+  await page.waitForFunction(()=>window.listFixture.pending.length===1)
+  await page.locator('.employee-list-progress button').evaluate(el=>{el.click();el.click()})
+  assert.equal(await page.locator('.desktop-list tbody tr').count(),50,'Rows remain visible while the next batch is pending')
+  assert.equal(await page.evaluate(()=>window.listFixture.calls.filter(call=>call.query.page===3).length),1,'Repeated scroll/click signals share one request')
+  await release(page);await waitRows(page,60)
+  await page.getByText('All employees displayed',{exact:true}).waitFor()
+  assert.equal(await page.locator('.employee-list-progress button').count(),0)
+  assert.equal(await page.locator('.desktop-list tbody tr').evaluateAll(rows=>new Set(rows.map(row=>row.cells[0].innerText)).size),60)
+  // Issuance/refund refreshes re-fetch the visible pages without collapsing the list.
+  await page.evaluate(()=>{window.listFixture.delayPage=1;window.accountListQa.load()})
+  await page.waitForFunction(()=>window.listFixture.pending.length===1)
+  assert.equal(await page.locator('.desktop-list tbody tr').count(),60)
+  await release(page);await waitRows(page,60)
+  const search=page.locator('.search-field input'),submit=page.locator('.filters button')
+  await search.fill('small');await submit.click();await waitRows(page,3)
+  assert.equal(await page.locator('.employee-list-progress').innerText(),'Showing 3 of 3 employees\nAll employees displayed')
+  await search.fill('');await submit.click();await waitRows(page,25)
+  await page.evaluate(()=>window.listFixture.failPage=2)
+  await page.locator('.employee-list-progress').scrollIntoViewIfNeeded()
+  await page.getByRole('button',{name:'Retry loading employees',exact:true}).waitFor()
+  assert.equal(await page.locator('.desktop-list tbody tr').count(),25)
+  const failedCalls=await page.evaluate(()=>window.listFixture.calls.length)
+  await page.waitForTimeout(250)
+  assert.equal(await page.evaluate(()=>window.listFixture.calls.length),failedCalls,'Failed batches do not auto-retry in a loop')
+  await page.getByRole('button',{name:'Retry loading employees',exact:true}).click();await waitRows(page,50)
+  await page.evaluate(()=>window.listFixture.delayPage=3)
+  await page.locator('.employee-list-progress').scrollIntoViewIfNeeded();await page.waitForFunction(()=>window.listFixture.pending.length===1)
+  await page.locator('.filters select').selectOption('2');await waitRows(page,25)
+  await release(page);await page.waitForTimeout(150)
+  assert.equal(await page.locator('.desktop-list tbody tr').count(),25,'Stale responses cannot append into a new agency filter')
+  assert.ok((await page.locator('.desktop-list tbody tr').first().innerText()).includes('TEST-1001'))
+  // Unsubmitted text must not change the query of the next batch.
+  await search.fill('empty')
+  await page.locator('.employee-list-progress').scrollIntoViewIfNeeded();await waitRows(page,30)
+  assert.equal(await page.evaluate(()=>window.listFixture.calls.at(-1).query.search),undefined)
+  await submit.click();await page.getByText('No employees match the selected filters.',{exact:true}).waitFor()
+  assert.equal(await page.locator('.employee-list-progress').count(),0)
+  // Cached workspaces pause requests while inactive, then resume with retained rows.
+  await search.fill('');await submit.click();await waitRows(page,25)
+  await page.evaluate(()=>window.listFixture.delayPage=2)
+  await page.locator('.employee-list-progress').scrollIntoViewIfNeeded();await page.waitForFunction(()=>window.listFixture.pending.length===1)
+  await page.evaluate(()=>window.accountListScene.value=false)
+  await page.locator('.employee-accounts-page').waitFor({state:'hidden'})
+  assert.equal(await page.evaluate(()=>window.listFixture.calls.at(-1).signal.aborted),true)
+  await release(page)
+  await page.evaluate(()=>window.accountListScene.value=true);await waitRows(page,25)
+  // Unmount also cancels outstanding work and disconnects the observer.
+  await page.evaluate(()=>window.listFixture.delayPage=2)
+  await page.locator('.employee-list-progress').scrollIntoViewIfNeeded();await page.waitForFunction(()=>window.listFixture.pending.length===1)
+  await page.evaluate(()=>window.interactionFixtureApp.unmount())
+  assert.equal(await page.evaluate(()=>window.listFixture.calls.at(-1).signal.aborted),true)
+  await release(page)
+  // The same batch display works with touch and a manual fallback without observers.
+  for(const fallback of [false,true]){
+   const mobile=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true});await mountList(mobile,fallback);await waitRows(mobile,25,true)
+   if(fallback)await mobile.getByRole('button',{name:'Load more employees',exact:true}).tap()
+   else await mobile.locator('.employee-list-progress').scrollIntoViewIfNeeded()
+   await waitRows(mobile,50,true)
+   assert.equal(await mobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+   await mobile.screenshot({path:path.join(output,`accounts-scroll-mobile-${fallback?'fallback':'auto'}.png`)})
+   await mobile.close()
+  }
+  assert.deepEqual(errors,[])
  }finally{await browser.close()}
 })

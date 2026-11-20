@@ -83,8 +83,18 @@ const agencyId = ref('')
 const items = ref<EmployeeRow[]>([])
 const agencies = ref<Array<{ AgencyID: number; AgencyName: string }>>([])
 const catalogItems = ref<CatalogItem[]>([])
-const page = ref(1)
-const pagination = reactive({ page: 1, pageSize: 25, total: 0, pages: 1 })
+const page = ref(0)
+const pagination = reactive({ page: 0, pageSize: 25, total: 0, pages: 1 })
+const loadingMore = ref(false)
+const loadMoreError = ref('')
+const loadMoreSentinel = ref<HTMLButtonElement | null>(null)
+const employeeListTop = ref<HTMLElement | null>(null)
+const appliedFilters = ref({ search: '', agencyId: '' })
+const hasMoreEmployees = computed(() => page.value < pagination.pages && items.value.length < pagination.total)
+let employeeObserver: IntersectionObserver | null = null
+let listController: AbortController | null = null
+let listRequestId = 0
+let employeeListActive = true
 const selectedEmployee = ref<EmployeeRow | null>(null)
 const profileEmployee = ref<any>(null)
 const profileRecords = ref<RecordItem[]>([])
@@ -291,23 +301,70 @@ function fifoLabel(record: RecordItem) {
   return `FIFO #${record.FifoPosition || '—'}`
 }
 
-async function load() {
-  loading.value = true
+async function load({ append = false, reset = false } = {}) {
+  if (!employeeListActive) return
+  if (append && (loading.value || loadingMore.value || !hasMoreEmployees.value)) return
+  const requestId = ++listRequestId
+  listController?.abort()
+  const controller = new AbortController()
+  listController = controller
+  loading.value = !append
+  loadingMore.value = append
   error.value = ''
+  loadMoreError.value = ''
+  if (reset) {
+    items.value = []
+    page.value = 0
+    Object.assign(pagination, { page: 0, total: 0, pages: 1 })
+  }
+  const filters = { ...appliedFilters.value }
+  const firstPage = append ? page.value + 1 : 1
+  // Refresh the visible batches after an issuance change without collapsing the list.
+  const lastPage = append ? firstPage : Math.max(1, page.value)
+  let refreshed: EmployeeRow[] = []
+  let response: any
   try {
-    const response = await $fetch<any>('/api/deductions-loans/employee-records', {
-      query: { search: search.value || undefined, agencyId: agencyId.value || undefined, page: page.value, pageSize: pagination.pageSize },
-    })
-    items.value = response.items || []
+    for (let requestedPage = firstPage; requestedPage <= lastPage; requestedPage++) {
+      response = await $fetch<any>('/api/deductions-loans/employee-records', {
+        query: { search: filters.search || undefined, agencyId: filters.agencyId || undefined, page: requestedPage, pageSize: pagination.pageSize },
+        signal: controller.signal,
+      })
+      if (requestId !== listRequestId) return
+      refreshed.push(...(response.items || []))
+      if (requestedPage >= response.pagination.pages) break
+    }
+    const combined = append ? [...items.value, ...refreshed] : refreshed
+    items.value = [...new Map(combined.map(employee => [employee.EmployeeID, employee])).values()]
     agencies.value = response.agencies || []
     catalogItems.value = response.catalogItems || []
-    Object.assign(pagination, response.pagination || {})
+    Object.assign(pagination, response.pagination)
+    page.value = pagination.page
   } catch (cause: any) {
-    error.value = requestErrorMessage(cause, 'Unable to load employee loan and deduction records.')
+    if (requestId !== listRequestId || controller.signal.aborted) return
+    if (append) loadMoreError.value = requestErrorMessage(cause, 'Unable to load more employees. Please try again.')
+    else error.value = requestErrorMessage(cause, 'Unable to load employee loan and deduction records.')
   } finally {
-    loading.value = false
+    if (requestId === listRequestId) {
+      loading.value = false
+      loadingMore.value = false
+      listController = null
+    }
   }
 }
+
+function loadMoreEmployees() {
+  if (!employeeListActive || profileOpen.value || issuanceOpen.value || pauseOpen.value || planOpen.value) return
+  void load({ append: true })
+}
+
+function observeEmployeeList() {
+  employeeObserver?.disconnect()
+  if (employeeListActive && loadMoreSentinel.value && !loading.value && !loadingMore.value && !loadMoreError.value
+      && !profileOpen.value && !issuanceOpen.value && !pauseOpen.value && !planOpen.value) {
+    employeeObserver?.observe(loadMoreSentinel.value)
+  }
+}
+watch([loadMoreSentinel, loading, loadingMore, loadMoreError, profileOpen, issuanceOpen, pauseOpen, planOpen], observeEmployeeList, { flush: 'post' })
 
 async function loadProfile(employee: EmployeeRow | { EmployeeID: number }) {
   profileLoading.value = true
@@ -454,12 +511,9 @@ async function resumePlan(item: RecordItem) {
 }
 
 function applyFilters() {
-  page.value = 1
-  load()
-}
-function goPage(next: number) {
-  page.value = Math.min(Math.max(1, next), pagination.pages)
-  load()
+  appliedFilters.value = { search: search.value.trim(), agencyId: agencyId.value }
+  employeeListTop.value?.scrollIntoView({ block: 'start', behavior: 'instant' })
+  void load({ reset: true })
 }
 watch(() => form.EntryType, type => {
   form.CatalogItemID = ''
@@ -468,11 +522,34 @@ watch(() => form.EntryType, type => {
 watch(() => form.IssuanceDate, value => {
   if (form.RepaymentStartDate < value) form.RepaymentStartDate = value
 })
-onMounted(load)
+onMounted(() => {
+  if (typeof IntersectionObserver !== 'undefined') {
+    employeeObserver = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) loadMoreEmployees()
+    }, { rootMargin: '500px 0px' })
+  }
+  void load()
+})
+function stopEmployeeList() {
+  employeeListActive = false
+  ++listRequestId
+  listController?.abort()
+  listController = null
+  employeeObserver?.disconnect()
+  loading.value = false
+  loadingMore.value = false
+}
+onBeforeUnmount(stopEmployeeList)
+onDeactivated(stopEmployeeList)
+onActivated(() => {
+  employeeListActive = true
+  if (!items.value.length && !loading.value && !error.value) void load()
+  else observeEmployeeList()
+})
 </script>
 
 <template>
-  <section class="employee-accounts-page">
+  <section ref="employeeListTop" class="employee-accounts-page">
     <header class="page-head">
       <div>
         <span class="eyebrow">DEDUCTIONS &amp; LOANS</span>
@@ -486,7 +563,7 @@ onMounted(load)
         <input v-model="search" placeholder="Employee ID, number, or name">
       </label>
       <label>Agency
-        <select v-model="agencyId">
+        <select v-model="agencyId" @change="applyFilters">
           <option value="">All agencies</option>
           <option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option>
         </select>
@@ -500,7 +577,7 @@ onMounted(load)
       <table>
         <thead><tr><th>Employee</th><th>Agency / Position</th><th>Active accounts</th><th>Lifetime issued</th><th>Outstanding balance</th><th>Actions</th></tr></thead>
         <tbody>
-          <tr v-if="loading"><td colspan="6" class="empty">Loading employees…</td></tr>
+          <tr v-if="loading && !items.length"><td colspan="6" class="empty">Loading employees…</td></tr>
           <tr v-else-if="!items.length"><td colspan="6" class="empty">No employees match the selected filters.</td></tr>
           <tr v-for="employee in items" v-else :key="employee.EmployeeID">
             <td><strong>{{ employee.EmployeeName }}</strong><small>{{ employeeNumber(employee) }}</small></td>
@@ -522,10 +599,16 @@ onMounted(load)
       </article>
     </div>
 
-    <footer v-if="pagination.total" class="pagination">
-      <span>Showing {{ (pagination.page - 1) * pagination.pageSize + 1 }}–{{ Math.min(pagination.page * pagination.pageSize, pagination.total) }} of {{ pagination.total }}</span>
-      <div><button :disabled="pagination.page <= 1" @click="goPage(pagination.page - 1)">Previous</button><strong>Page {{ pagination.page }} of {{ pagination.pages }}</strong><button :disabled="pagination.page >= pagination.pages" @click="goPage(pagination.page + 1)">Next</button></div>
-    </footer>
+    <div v-if="items.length" class="employee-list-progress">
+      <span role="status">Showing <strong>{{ items.length }}</strong> of <strong>{{ pagination.total }}</strong> employees</span>
+      <div>
+        <span v-if="loadMoreError" role="alert" class="load-more-error">{{ loadMoreError }}</span>
+        <button v-if="hasMoreEmployees" ref="loadMoreSentinel" type="button" :disabled="loading || loadingMore" @click="loadMoreEmployees">
+          {{ loadingMore ? 'Loading more employees?' : loadMoreError ? 'Retry loading employees' : 'Load more employees' }}
+        </button>
+        <span v-else>All employees displayed</span>
+      </div>
+    </div>
 
     <div v-if="profileOpen" class="modal-backdrop" @click.self="profileOpen=false">
       <section class="profile-modal" role="dialog" aria-modal="true" aria-label="Employee accounts">
@@ -676,12 +759,12 @@ onMounted(load)
 
 
 
-.employee-accounts-page{--ink:var(--theme-ink,#12284b);--muted:var(--theme-muted,#657792);--line:var(--theme-line,#d7e1ee);box-sizing:border-box;width:100%;padding:34px 36px 46px;color:var(--ink);font-family:Inter,'Segoe UI',sans-serif}.page-head{display:flex;justify-content:space-between;gap:20px;margin-bottom:25px}.eyebrow{color:var(--theme-accent,#2864d7);font-size:.72rem;font-weight:850;letter-spacing:.08em}.page-head h1,.profile-head h2,.issuance-modal h2,.pause-modal h2{margin:5px 0 5px;font-size:2rem}.page-head p,.profile-head p,.issuance-modal header p,.pause-modal header p{margin:0;color:var(--muted)}.filters{display:grid;grid-template-columns:minmax(320px,1fr) minmax(210px,280px) auto;align-items:end;gap:12px}.filters label,.form-grid label{display:grid;gap:7px;color:var(--theme-muted,#40516c);font-size:.76rem;font-weight:800}.filters input,.filters select,.form-grid input,.form-grid select,.form-grid textarea{box-sizing:border-box;width:100%;min-height:48px;border:1px solid var(--theme-line,#cbd8ea);border-radius:9px;background:var(--theme-surface,#fff);padding:0 13px;color:var(--theme-ink,#172d50);font:inherit;font-size:.86rem}.form-grid textarea{min-height:82px;padding:11px;resize:vertical}.primary{min-height:48px;border:1px solid #2867e8;border-radius:9px;background:#2867e8;padding:0 18px;color:#fff;font:inherit;font-weight:800;cursor:pointer}.workflow-note{margin:16px 0;padding:12px 14px;border:1px solid var(--theme-line,#c8daf8);border-radius:9px;background:var(--theme-soft,#f1f6ff);color:var(--theme-muted,#36577f);font-size:.78rem}.error{padding:10px 12px;border:1px solid #fecaca;border-radius:8px;background:#fff7f7;color:#b42318}.table-wrap,.history-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--theme-surface,#fff)}.table-wrap table,.history-wrap table{width:100%;border-collapse:collapse}.history-wrap table{min-width:1120px}.table-wrap th,.table-wrap td,.history-wrap th,.history-wrap td{padding:13px 15px;border-bottom:1px solid var(--theme-line,#e4eaf2);text-align:left;vertical-align:middle}.table-wrap th,.history-wrap th{background:var(--theme-soft,#f5f8fc);color:var(--theme-muted,#405371);font-size:.69rem;text-transform:uppercase;white-space:nowrap}.table-wrap td,.history-wrap td{font-size:.79rem}.table-wrap td strong,.table-wrap td small,.history-wrap td strong,.history-wrap td small{display:block}.table-wrap td small,.history-wrap td small{margin-top:4px;color:var(--muted);font-size:.68rem}.account-badges{display:flex;gap:6px;flex-wrap:wrap}.account-badges span,.kind,.status{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:.66rem;font-weight:850;white-space:nowrap}.loan{background:var(--theme-soft,#e7efff);color:var(--theme-accent,#2456b7)}.deduction{background:var(--theme-soft,#f3e8ff);color:var(--theme-accent,#7e22ce)}.actions,.record-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.record-actions{max-width:250px}.actions button,.record-actions button,.pagination button,.history-toolbar button,.profile-modal button:not(.primary):not(.close),.issuance-modal footer button:not(.primary),.pause-modal footer button:not(.primary){min-height:34px;border:1px solid var(--theme-line,#cbd8ea);border-radius:8px;background:var(--theme-surface,#fff);padding:6px 10px;color:var(--theme-accent,#254975);font:inherit;font-size:.72rem;font-weight:800;cursor:pointer}.actions .add{border-color:var(--theme-line,#b9cef5);background:var(--theme-soft,#edf4ff);color:var(--theme-accent,#1d54c6)}.empty{padding:38px!important;text-align:center!important;color:var(--muted)}.pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:15px;color:var(--muted);font-size:.75rem}.pagination div{display:flex;align-items:center;gap:9px}.pagination button:disabled{opacity:.45;cursor:not-allowed}.mobile-list{display:none}.modal-backdrop{position:fixed;z-index:500;inset:0;display:grid;place-items:center;padding:28px;background:rgba(13,30,59,.32)}.profile-modal,.issuance-modal,.pause-modal{position:relative;box-sizing:border-box;width:min(1220px,calc(100vw - 70px));max-height:calc(100vh - 56px);overflow:auto;border-radius:16px;background:var(--theme-surface,#fff);padding:28px 32px;box-shadow:0 24px 70px rgba(13,30,59,.25)}.close{position:absolute;right:16px;top:12px;border:0;background:transparent;color:var(--theme-muted,#34506f);font-size:1.65rem;cursor:pointer}.profile-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-right:36px}.profile-head h2,.issuance-modal h2,.pause-modal h2{font-size:1.65rem}.summary-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:22px 0}.summary-cards div{display:grid;gap:6px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--theme-soft,#f8faff)}.summary-cards span{color:var(--muted);font-size:.69rem;font-weight:800;text-transform:uppercase}.summary-cards strong{font-size:1.15rem}.history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:10px}.history-toolbar h3{margin:0}.history-toolbar div{display:flex;gap:5px}.history-toolbar button.active{border-color:#2867e8;background:var(--theme-soft,#eaf1ff);color:var(--theme-accent,#1d54c6)}.kind.loan{background:var(--theme-soft,#e7efff);color:var(--theme-accent,#2456b7)}.kind.deduction{background:var(--theme-soft,#f3e8ff);color:var(--theme-accent,#7e22ce)}.status{background:var(--theme-soft,#eef2f7);color:var(--theme-muted,#526174)}.status-active{background:#dcfce7;color:#147a3d}.status-paused{background:#fff3cd;color:#8a5a00}.status-paid,.status-completed{background:var(--theme-soft,#e7efff);color:var(--theme-accent,#2456b7)}.status-cancelled,.status-inactive{background:var(--theme-soft,#f1f5f9);color:var(--theme-muted,#64748b)}.issuance-layer{z-index:540;background:rgba(13,30,59,.34)}.pause-layer{z-index:580;background:rgba(13,30,59,.3)}.issuance-modal{width:min(820px,calc(100vw - 50px))}.pause-modal{width:min(640px,calc(100vw - 50px))}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}.form-grid .wide{grid-column:1/-1}.form-grid em{justify-self:end;margin-top:-21px;color:var(--theme-muted,#8996a9);font-size:.65rem;font-style:normal}.section-label{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:6px;padding-top:16px;border-top:1px solid var(--line)}.section-label span{color:var(--muted);font-size:.7rem;font-weight:500}.plan-preview{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border:1px solid var(--theme-line,#bfd3f7);border-radius:10px;background:var(--theme-soft,#f2f7ff)}.plan-preview div{display:grid;gap:4px}.plan-preview span{color:var(--theme-muted,#607392);font-size:.65rem;font-weight:750;text-transform:uppercase}.plan-preview strong{font-size:.9rem}.form-note{padding:11px 13px;border-radius:8px;background:var(--theme-soft,#f1f6ff);color:var(--theme-muted,#36577f);font-size:.75rem;line-height:1.5}.issuance-modal footer,.pause-modal footer{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}.issuance-modal footer button,.pause-modal footer button{min-height:42px}.primary:disabled{opacity:.55;cursor:not-allowed}
+.employee-accounts-page{--ink:var(--theme-ink,#12284b);--muted:var(--theme-muted,#657792);--line:var(--theme-line,#d7e1ee);box-sizing:border-box;width:100%;padding:34px 36px 46px;color:var(--ink);font-family:Inter,'Segoe UI',sans-serif}.page-head{display:flex;justify-content:space-between;gap:20px;margin-bottom:25px}.eyebrow{color:var(--theme-accent,#2864d7);font-size:.72rem;font-weight:850;letter-spacing:.08em}.page-head h1,.profile-head h2,.issuance-modal h2,.pause-modal h2{margin:5px 0 5px;font-size:2rem}.page-head p,.profile-head p,.issuance-modal header p,.pause-modal header p{margin:0;color:var(--muted)}.filters{display:grid;grid-template-columns:minmax(320px,1fr) minmax(210px,280px) auto;align-items:end;gap:12px}.filters label,.form-grid label{display:grid;gap:7px;color:var(--theme-muted,#40516c);font-size:.76rem;font-weight:800}.filters input,.filters select,.form-grid input,.form-grid select,.form-grid textarea{box-sizing:border-box;width:100%;min-height:48px;border:1px solid var(--theme-line,#cbd8ea);border-radius:9px;background:var(--theme-surface,#fff);padding:0 13px;color:var(--theme-ink,#172d50);font:inherit;font-size:.86rem}.form-grid textarea{min-height:82px;padding:11px;resize:vertical}.primary{min-height:48px;border:1px solid #2867e8;border-radius:9px;background:#2867e8;padding:0 18px;color:#fff;font:inherit;font-weight:800;cursor:pointer}.workflow-note{margin:16px 0;padding:12px 14px;border:1px solid var(--theme-line,#c8daf8);border-radius:9px;background:var(--theme-soft,#f1f6ff);color:var(--theme-muted,#36577f);font-size:.78rem}.error{padding:10px 12px;border:1px solid #fecaca;border-radius:8px;background:#fff7f7;color:#b42318}.table-wrap,.history-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--theme-surface,#fff)}.table-wrap table,.history-wrap table{width:100%;border-collapse:collapse}.history-wrap table{min-width:1120px}.table-wrap th,.table-wrap td,.history-wrap th,.history-wrap td{padding:13px 15px;border-bottom:1px solid var(--theme-line,#e4eaf2);text-align:left;vertical-align:middle}.table-wrap th,.history-wrap th{background:var(--theme-soft,#f5f8fc);color:var(--theme-muted,#405371);font-size:.69rem;text-transform:uppercase;white-space:nowrap}.table-wrap td,.history-wrap td{font-size:.79rem}.table-wrap td strong,.table-wrap td small,.history-wrap td strong,.history-wrap td small{display:block}.table-wrap td small,.history-wrap td small{margin-top:4px;color:var(--muted);font-size:.68rem}.account-badges{display:flex;gap:6px;flex-wrap:wrap}.account-badges span,.kind,.status{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:.66rem;font-weight:850;white-space:nowrap}.loan{background:var(--theme-soft,#e7efff);color:var(--theme-accent,#2456b7)}.deduction{background:var(--theme-soft,#f3e8ff);color:var(--theme-accent,#7e22ce)}.actions,.record-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.record-actions{max-width:250px}.actions button,.record-actions button,.employee-list-progress button,.history-toolbar button,.profile-modal button:not(.primary):not(.close),.issuance-modal footer button:not(.primary),.pause-modal footer button:not(.primary){min-height:34px;border:1px solid var(--theme-line,#cbd8ea);border-radius:8px;background:var(--theme-surface,#fff);padding:6px 10px;color:var(--theme-accent,#254975);font:inherit;font-size:.72rem;font-weight:800;cursor:pointer}.actions .add{border-color:var(--theme-line,#b9cef5);background:var(--theme-soft,#edf4ff);color:var(--theme-accent,#1d54c6)}.empty{padding:38px!important;text-align:center!important;color:var(--muted)}.employee-list-progress button:disabled{opacity:.45;cursor:not-allowed}.mobile-list{display:none}.modal-backdrop{position:fixed;z-index:500;inset:0;display:grid;place-items:center;padding:28px;background:rgba(13,30,59,.32)}.profile-modal,.issuance-modal,.pause-modal{position:relative;box-sizing:border-box;width:min(1220px,calc(100vw - 70px));max-height:calc(100vh - 56px);overflow:auto;border-radius:16px;background:var(--theme-surface,#fff);padding:28px 32px;box-shadow:0 24px 70px rgba(13,30,59,.25)}.close{position:absolute;right:16px;top:12px;border:0;background:transparent;color:var(--theme-muted,#34506f);font-size:1.65rem;cursor:pointer}.profile-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-right:36px}.profile-head h2,.issuance-modal h2,.pause-modal h2{font-size:1.65rem}.summary-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:22px 0}.summary-cards div{display:grid;gap:6px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--theme-soft,#f8faff)}.summary-cards span{color:var(--muted);font-size:.69rem;font-weight:800;text-transform:uppercase}.summary-cards strong{font-size:1.15rem}.history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:10px}.history-toolbar h3{margin:0}.history-toolbar div{display:flex;gap:5px}.history-toolbar button.active{border-color:#2867e8;background:var(--theme-soft,#eaf1ff);color:var(--theme-accent,#1d54c6)}.kind.loan{background:var(--theme-soft,#e7efff);color:var(--theme-accent,#2456b7)}.kind.deduction{background:var(--theme-soft,#f3e8ff);color:var(--theme-accent,#7e22ce)}.status{background:var(--theme-soft,#eef2f7);color:var(--theme-muted,#526174)}.status-active{background:#dcfce7;color:#147a3d}.status-paused{background:#fff3cd;color:#8a5a00}.status-paid,.status-completed{background:var(--theme-soft,#e7efff);color:var(--theme-accent,#2456b7)}.status-cancelled,.status-inactive{background:var(--theme-soft,#f1f5f9);color:var(--theme-muted,#64748b)}.issuance-layer{z-index:540;background:rgba(13,30,59,.34)}.pause-layer{z-index:580;background:rgba(13,30,59,.3)}.issuance-modal{width:min(820px,calc(100vw - 50px))}.pause-modal{width:min(640px,calc(100vw - 50px))}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}.form-grid .wide{grid-column:1/-1}.form-grid em{justify-self:end;margin-top:-21px;color:var(--theme-muted,#8996a9);font-size:.65rem;font-style:normal}.section-label{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:6px;padding-top:16px;border-top:1px solid var(--line)}.section-label span{color:var(--muted);font-size:.7rem;font-weight:500}.plan-preview{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border:1px solid var(--theme-line,#bfd3f7);border-radius:10px;background:var(--theme-soft,#f2f7ff)}.plan-preview div{display:grid;gap:4px}.plan-preview span{color:var(--theme-muted,#607392);font-size:.65rem;font-weight:750;text-transform:uppercase}.plan-preview strong{font-size:.9rem}.form-note{padding:11px 13px;border-radius:8px;background:var(--theme-soft,#f1f6ff);color:var(--theme-muted,#36577f);font-size:.75rem;line-height:1.5}.issuance-modal footer,.pause-modal footer{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}.issuance-modal footer button,.pause-modal footer button{min-height:42px}.primary:disabled{opacity:.55;cursor:not-allowed}
 .record-list{display:grid;gap:12px}.record-card{overflow:hidden;border:1px solid var(--line);border-radius:12px;background:var(--theme-surface,#fff)}.record-card>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:15px 17px;border-bottom:1px solid var(--theme-line,#e4eaf2);background:var(--theme-soft,#f8faff)}.record-heading{display:flex;align-items:flex-start;gap:10px}.record-heading strong,.record-heading small{display:block}.record-heading strong{font-size:.9rem}.record-heading small{margin-top:4px;color:var(--muted);font-size:.7rem}.record-details{display:grid;grid-template-columns:1fr 1.5fr 1fr 1fr;gap:0}.record-details>div{display:grid;align-content:start;gap:5px;min-height:74px;padding:14px 17px;border-right:1px solid var(--theme-line,#e4eaf2)}.record-details>div:last-child{border-right:0}.record-details span{color:var(--theme-muted,#607392);font-size:.65rem;font-weight:800;text-transform:uppercase}.record-details strong{font-size:.82rem}.record-details small{color:var(--muted);font-size:.68rem;line-height:1.4}.record-card>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 17px;border-top:1px solid var(--theme-line,#e4eaf2);background:var(--theme-surface,#fbfcfe)}.record-card button,.review-plan{min-height:36px;border:1px solid var(--theme-line,#cbd8ea);border-radius:8px;background:var(--theme-surface,#fff);padding:7px 11px;color:var(--theme-accent,#254975);font:inherit;font-size:.72rem;font-weight:800;cursor:pointer}.record-card .view-plan,.review-plan{border-color:var(--theme-line,#b9cef5);background:var(--theme-soft,#edf4ff);color:var(--theme-accent,#1d54c6)}.record-card .record-actions{justify-content:flex-end;max-width:none}.record-card .danger-action{border-color:#fecaca;color:#b42318}.review-plan{justify-self:start}.review-plan:disabled{opacity:.45;cursor:not-allowed}.plan-layer{z-index:570;background:rgba(13,30,59,.3)}.plan-modal{position:relative;box-sizing:border-box;width:min(1120px,calc(100vw - 70px));max-height:calc(100vh - 56px);overflow:auto;border-radius:16px;background:var(--theme-surface,#fff);padding:28px 32px;box-shadow:0 24px 70px rgba(13,30,59,.25)}.plan-modal h2{margin:5px 0;font-size:1.65rem}.plan-modal header p{margin:0;color:var(--muted)}.plan-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0 12px}.plan-summary div{display:grid;gap:5px;padding:13px;border:1px solid var(--line);border-radius:9px;background:var(--theme-soft,#f8faff)}.plan-summary span{color:var(--muted);font-size:.66rem;font-weight:800;text-transform:uppercase}.plan-summary strong{font-size:1rem}.schedule-note,.schedule-help{margin:0 0 12px;padding:11px 13px;border-radius:8px;background:var(--theme-soft,#f1f6ff);color:var(--theme-muted,#36577f);font-size:.75rem;line-height:1.45}.schedule-help{margin:12px 0 0;background:var(--theme-soft,#f8faff)}.schedule-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}.schedule-wrap table{width:100%;min-width:940px;border-collapse:collapse}.schedule-wrap th,.schedule-wrap td{padding:12px 13px;border-bottom:1px solid var(--theme-line,#e4eaf2);text-align:left;white-space:nowrap}.schedule-wrap th{background:var(--theme-soft,#f5f8fc);color:var(--theme-muted,#405371);font-size:.67rem;text-transform:uppercase}.schedule-wrap td{font-size:.76rem}.period-status{display:inline-flex;border-radius:999px;background:var(--theme-soft,#edf4ff);padding:4px 8px;color:var(--theme-accent,#2456b7);font-size:.66rem;font-weight:800}.plan-modal footer{display:flex;justify-content:flex-end;margin-top:16px}.plan-modal footer button{min-height:40px;border:1px solid var(--theme-line,#cbd8ea);border-radius:8px;background:var(--theme-surface,#fff);padding:6px 18px;color:var(--theme-accent,#254975);font:inherit;font-size:.75rem;font-weight:800;cursor:pointer}.form-grid label>small{color:var(--muted);font-size:.67rem;font-weight:500;line-height:1.35}
 .posted-transaction{color:var(--theme-accent,#1f5fbf)!important;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:750}
 .issuance-transactions{border-top:1px solid var(--theme-line,#e4eaf2);background:var(--theme-soft,#f8faff);padding:10px 17px}.issuance-transactions summary{width:max-content;color:var(--theme-accent,#2456b7);font-size:.72rem;font-weight:800;cursor:pointer}.issuance-transactions ul{display:grid;gap:7px;margin:10px 0 0;padding:0;list-style:none}.issuance-transactions li{display:grid;grid-template-columns:minmax(190px,1fr) 120px 110px minmax(170px,1fr);align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--theme-line,#dce5f1);border-radius:8px;background:var(--theme-surface,#fff);font-size:.7rem}.issuance-transactions code{color:var(--theme-accent,#1953bd);font-weight:800}.issuance-transactions small{color:var(--muted)}
 @media(max-width:950px){.employee-accounts-page{padding:24px 18px}.desktop-list{display:none}.mobile-list{display:grid;gap:10px}.mobile-list article{display:grid;gap:12px;padding:14px;border:1px solid var(--line);border-radius:11px;background:var(--theme-surface,#fff)}.mobile-list article header{display:flex;justify-content:space-between;gap:10px}.mobile-list article header strong,.mobile-list article header small{display:block}.mobile-list article header small{margin-top:4px;color:var(--muted);font-size:.68rem}.mobile-list article header>span{font-size:.76rem;font-weight:850}.mobile-list footer{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mobile-list footer button{min-height:38px;border:1px solid var(--theme-line,#cbd8ea);border-radius:8px;background:var(--theme-surface,#fff);color:var(--theme-accent,#254975);font:inherit;font-size:.72rem;font-weight:800}.filters{grid-template-columns:1fr 220px auto}.history-wrap table{min-width:920px}.plan-summary{grid-template-columns:repeat(2,1fr)}.record-details{grid-template-columns:1fr 1fr}.record-details>div:nth-child(2){border-right:0}.record-details>div:nth-child(-n+2){border-bottom:1px solid var(--theme-line,#e4eaf2)}}
-@media(max-width:650px){.employee-accounts-page{padding:18px 12px}.page-head h1{font-size:1.65rem}.filters{grid-template-columns:1fr}.workflow-note{line-height:1.5}.pagination{align-items:stretch;flex-direction:column}.pagination div{justify-content:space-between}.modal-backdrop{align-items:stretch;padding:0}.profile-modal,.issuance-modal,.pause-modal,.plan-modal{width:100%;max-height:100dvh;border-radius:0;padding:58px 14px 24px}.profile-head{display:grid;padding-right:0}.profile-head .primary{width:100%}.summary-cards{grid-template-columns:1fr}.history-toolbar{align-items:stretch;flex-direction:column}.history-toolbar div{display:grid;grid-template-columns:repeat(3,1fr)}.form-grid{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.section-label{align-items:flex-start;flex-direction:column}.plan-preview,.plan-summary{grid-template-columns:1fr}.issuance-modal footer,.pause-modal footer{display:grid;grid-template-columns:1fr 1fr}.issuance-modal footer button,.pause-modal footer button{width:100%}.record-card>header,.record-card>footer{align-items:stretch;flex-direction:column}.record-details{grid-template-columns:1fr}.record-details>div{min-height:auto;border-right:0;border-bottom:1px solid var(--theme-line,#e4eaf2)}.record-card .record-actions{display:grid;grid-template-columns:1fr 1fr}.record-card .record-actions button,.record-card .view-plan{width:100%}}
+@media(max-width:650px){.employee-accounts-page{padding:18px 12px}.page-head h1{font-size:1.65rem}.filters{grid-template-columns:1fr}.workflow-note{line-height:1.5}.modal-backdrop{align-items:stretch;padding:0}.profile-modal,.issuance-modal,.pause-modal,.plan-modal{width:100%;max-height:100dvh;border-radius:0;padding:58px 14px 24px}.profile-head{display:grid;padding-right:0}.profile-head .primary{width:100%}.summary-cards{grid-template-columns:1fr}.history-toolbar{align-items:stretch;flex-direction:column}.history-toolbar div{display:grid;grid-template-columns:repeat(3,1fr)}.form-grid{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.section-label{align-items:flex-start;flex-direction:column}.plan-preview,.plan-summary{grid-template-columns:1fr}.issuance-modal footer,.pause-modal footer{display:grid;grid-template-columns:1fr 1fr}.issuance-modal footer button,.pause-modal footer button{width:100%}.record-card>header,.record-card>footer{align-items:stretch;flex-direction:column}.record-details{grid-template-columns:1fr}.record-details>div{min-height:auto;border-right:0;border-bottom:1px solid var(--theme-line,#e4eaf2)}.record-card .record-actions{display:grid;grid-template-columns:1fr 1fr}.record-card .record-actions button,.record-card .view-plan{width:100%}}
 .employee-accounts-page button:not(:disabled){cursor:pointer}.employee-accounts-page button:focus-visible{outline:3px solid rgba(40,103,232,.24);outline-offset:2px}.primary:not(:disabled):hover{border-color:#174fc7;background:#174fc7}.close:hover{background:var(--theme-soft,#edf4ff);color:var(--theme-accent,#174fc7);box-shadow:none!important}.history-toolbar>div{display:flex;gap:4px;padding:4px;border:1px solid var(--theme-line,#d8e2ef);border-radius:11px;background:var(--theme-soft,#f1f5f9)}.history-toolbar .history-filter{display:flex;align-items:center;gap:7px;min-height:38px;border:1px solid transparent;border-radius:8px;background:transparent;padding:7px 11px;color:var(--theme-muted,#526783)}.history-toolbar .history-filter small{display:inline-grid;min-width:20px;height:20px;place-items:center;border-radius:999px;background:rgba(96,115,146,.12);font-size:.62rem}.history-toolbar .history-filter:not(.active):hover{border-color:var(--theme-line,#cbd8ea);background:var(--theme-surface,#fff);color:var(--theme-accent,#173e78)}.history-toolbar .history-filter.active{border-color:transparent;color:#fff;box-shadow:0 4px 11px rgba(30,64,115,.2)}.history-toolbar .filter-all.active{background:#2867e8}.history-toolbar .filter-loan.active{background:#2456b7}.history-toolbar .filter-deduction.active{background:#7e22ce}.history-toolbar .history-filter.active small{background:rgba(255,255,255,.22)}.filter-dot{width:7px;height:7px;border-radius:50%;background:#74849c}.filter-loan .filter-dot{background:#3b82f6}.filter-deduction .filter-dot{background:#a855f7}.history-filter.active .filter-dot{background:var(--theme-surface,#fff)}.record-card button:hover{border-color:#9db9e8;background:var(--theme-soft,#f5f8ff);color:var(--theme-accent,#174fc7)}.record-card .view-plan:hover,.review-plan:not(:disabled):hover{border-color:#2867e8;background:#2867e8;color:#fff}.record-card .danger-action:hover{border-color:#ef4444;background:#fff1f2;color:#b42318}
 .history-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:12px}.history-heading h3{margin:0 0 4px}.history-heading p{margin:0;color:var(--muted);font-size:.72rem}.scope-tabs{display:flex;gap:4px;padding:4px;border:1px solid var(--theme-line,#d8e2ef);border-radius:11px;background:var(--theme-soft,#f1f5f9)}.scope-filter{display:flex;align-items:center;gap:8px;min-height:38px;border:1px solid transparent;border-radius:8px;background:transparent;padding:7px 13px;color:var(--theme-muted,#526783);font:inherit;font-size:.74rem;font-weight:800}.scope-filter small{display:inline-grid;min-width:21px;height:21px;place-items:center;border-radius:999px;background:rgba(96,115,146,.12);font-size:.62rem}.scope-filter:not(.active):hover{border-color:var(--theme-line,#cbd8ea);background:var(--theme-surface,#fff);color:var(--theme-accent,#173e78)}.scope-filter.active{border-color:#2867e8;background:#2867e8;color:#fff;box-shadow:0 4px 11px rgba(30,64,115,.18)}.scope-filter.active small{background:rgba(255,255,255,.22)}.history-toolbar>strong{color:var(--theme-muted,#405371);font-size:.76rem}.issuance-modal{width:min(900px,calc(100vw - 50px))}.issuance-form-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:16px}.form-field{align-content:start}.field-help{min-height:18px;color:var(--muted);font-size:.67rem;font-weight:500;line-height:1.35}.issuance-form-grid :deep(.modern-date-field){align-content:start;gap:7px;font-size:.76rem}.issuance-form-grid :deep(.modern-date-field__trigger){min-height:48px;border-color:var(--theme-line,#cbd8ea);border-radius:9px;padding:0 13px;font-size:.86rem}.issuance-form-grid :deep(.modern-date-field__panel){z-index:60}
 @media(max-width:650px){.history-heading{align-items:stretch;flex-direction:column}.scope-tabs{display:grid;grid-template-columns:1fr 1fr}.scope-filter{justify-content:center}.history-toolbar>div{display:grid;grid-template-columns:repeat(3,1fr)}.history-toolbar .history-filter{justify-content:center;padding:7px 6px}.issuance-form-grid{grid-template-columns:1fr}.issuance-form-grid .wide{grid-column:auto}}
@@ -714,5 +797,11 @@ onMounted(load)
 .issuance-modal .primary:active,
 .pause-modal .primary:active {
   translate: none;
+}
+.employee-list-progress { display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:16px;color:var(--muted);font-size:.75rem; }
+.employee-list-progress>div { display:flex;align-items:center;gap:10px; }
+.load-more-error { max-width:380px;color:var(--theme-danger,#b42318); }
+@media(max-width:650px) {
+  .employee-list-progress,.employee-list-progress>div { align-items:stretch;flex-direction:column; }
 }
 </style>
