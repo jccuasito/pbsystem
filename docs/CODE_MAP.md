@@ -43,7 +43,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrCompactPrintView.vue`
   - `app/components/DtrEmployeeAttendanceDetailsModal.vue`
   - `app/components/DtrImportResultModal.vue`
+  - `app/components/ListProgress.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
@@ -110,6 +112,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/attendance/dtr-reliever/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `shared/utils/requestError.ts`
 - API calls and handlers:
@@ -131,6 +135,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/attendance/holiday-manager/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `shared/utils/philippineLegalHolidays.ts`
@@ -157,6 +163,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/attendance/shift-code/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernTimeField.vue`
   - `shared/utils/requestError.ts`
@@ -185,6 +193,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
   - `app/components/ClientBillingSetupModal.vue`
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/utils/printBillingInvoice.ts`
   - `shared/utils/billingDraft.ts`
   - `shared/utils/billingInvoicePrint.ts`
@@ -223,6 +233,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
   - `app/components/ClientBillingSetupModal.vue`
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/utils/printBillingInvoice.ts`
   - `shared/utils/billingDraft.ts`
   - `shared/utils/billingInvoicePrint.ts`
@@ -276,6 +288,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePositionChangeModal.vue`
   - `app/components/EmployeeRehireModal.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/ListProgress.vue`
   - `app/components/NotificationBell.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
@@ -284,6 +297,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/RefundableDeductionBalances.vue`
   - `app/components/RequestChatWindow.vue`
   - `app/composables/useAppTheme.ts`
+  - `app/composables/useInfiniteCollection.ts`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
   - `app/pages/attendance/dtr-reliever/index.vue`
@@ -607,6 +622,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/deductions-loans/catalog/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `assets/css/setup-directory.css`
   - `shared/utils/requestError.ts`
@@ -636,6 +653,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/deductions-loans/contributions/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `assets/css/setup-directory.css`
   - `components/ModernDateField.vue`
   - `shared/utils/requestError.ts`
@@ -664,7 +683,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/deductions-loans/employees/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
   - `app/components/RefundableDeductionBalances.vue`
+  - `app/composables/useProgressiveList.ts`
   - `components/ModernDateField.vue`
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/requestError.ts`
@@ -702,6 +723,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/deductions-loans/transactions/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `shared/utils/requestError.ts`
@@ -730,9 +753,12 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeeInformationPanel.vue`
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/ListProgress.vue`
   - `app/components/NotificationBell.vue`
   - `app/components/RequestChatWindow.vue`
   - `app/composables/useAppTheme.ts`
+  - `app/composables/useInfiniteCollection.ts`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
@@ -844,6 +870,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/employees/deployment-history/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
   - `components/alertmessage/messages.ts`
@@ -877,6 +905,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/employees/documents/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
   - `components/SearchableSelect.vue`
@@ -916,8 +946,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/EmployeePayslipWorkspace.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/ListProgress.vue`
   - `app/components/PortalRequestsAdmin.vue`
   - `app/components/RequestChatWindow.vue`
+  - `app/composables/useInfiniteCollection.ts`
+  - `app/composables/useProgressiveList.ts`
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
@@ -959,6 +992,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/employees/status/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
@@ -1049,6 +1084,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/organization/agency/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
@@ -1076,6 +1113,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/organization/client/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
@@ -1103,6 +1142,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/organization/position/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `DELETE /api/organization/positions` → `server/api/organization/positions.delete.ts`
@@ -1126,6 +1167,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/organization/region/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
@@ -1153,6 +1196,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/organization/site/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
@@ -1180,6 +1225,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/organization/site-accounts/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
@@ -1221,6 +1268,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/payroll/history/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useInfiniteCollection.ts`
   - `shared/utils/requestError.ts`
 - API calls and handlers:
   - `GET /api/payroll/history` → `server/api/payroll/history.get.ts`
@@ -1246,8 +1295,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/EmployeePayslipWorkspace.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/ListProgress.vue`
   - `app/components/PortalRequestsAdmin.vue`
   - `app/components/RequestChatWindow.vue`
+  - `app/composables/useInfiniteCollection.ts`
+  - `app/composables/useProgressiveList.ts`
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
   - `shared/utils/payslipPresentation.ts`
@@ -1293,8 +1345,11 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeePayslipSheet.vue`
   - `app/components/EmployeePayslipWorkspace.vue`
   - `app/components/InformationRequestThread.vue`
+  - `app/components/ListProgress.vue`
   - `app/components/PortalRequestsAdmin.vue`
   - `app/components/RequestChatWindow.vue`
+  - `app/composables/useInfiniteCollection.ts`
+  - `app/composables/useProgressiveList.ts`
   - `app/pages/payroll/payslip/index.vue`
   - `app/utils/bodyScrollLock.ts`
   - `shared/utils/payslipArchiveImport.ts`
@@ -1341,7 +1396,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/payroll/processing/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/utils/employee.ts`
   - `components/SearchableSelect.vue`
   - `shared/utils/payrollPreview.ts`
@@ -1381,6 +1438,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/payroll/summary/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `shared/utils/requestError.ts`
 - API calls and handlers:
@@ -1429,6 +1488,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/rates/billing/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/RateCrud.vue`
@@ -1471,6 +1532,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/rates/payroll/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
   - `components/RateCrud.vue`
@@ -1513,6 +1576,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/rates/site/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
+  - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
   - `components/RateMoneyFields.vue`
   - `components/SearchableSelect.vue`
@@ -1566,7 +1631,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/settings/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ListProgress.vue`
   - `app/composables/useAppTheme.ts`
+  - `app/composables/useProgressiveList.ts`
   - `components/modals/editprofile.vue`
   - `components/WorkspaceLoading.vue`
   - `shared/utils/requestError.ts`

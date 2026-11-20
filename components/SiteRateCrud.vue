@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref } from 'vue'
@@ -135,6 +137,8 @@ async function deactivate(item: any) {
 
 onMounted(load)
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredItems, { resetKey: () => [search.value,clientFilter.value,agencyFilter.value,statusFilter.value] })
 </script>
 
 <template>
@@ -151,7 +155,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       <label><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency" :value="agency">{{ agency }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
-    <div class="list-summary"><span>{{ loading ? 'Loading site rates…' : `Showing ${filteredItems.length} of ${items.length} site rates` }}</span><button v-if="search || clientFilter || agencyFilter || statusFilter" type="button" @click="clearFilters">Clear filters</button></div>
+    <div class="list-summary"><span>{{ loading ? 'Loading site rates…' : `${filteredItems.length} matching site rates / ${items.length} total` }}</span><button v-if="search || clientFilter || agencyFilter || statusFilter" type="button" @click="clearFilters">Clear filters</button></div>
 
     <div class="desktop-table">
       <table>
@@ -160,7 +164,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
         <tbody>
           <tr v-if="loading" class="table-message"><td colspan="8">Loading site rates…</td></tr>
           <tr v-else-if="!filteredItems.length" class="table-message"><td colspan="8">No site rates match the current filters.</td></tr>
-          <tr v-for="item in filteredItems" :key="item.SiteRateID">
+          <tr v-for="item in displayedItems" :key="item.SiteRateID">
             <td><strong>{{ item.SiteName }}</strong></td><td>{{ item.ClientName }}</td>
             <td><strong class="agency-name">{{ item.AgencyName }}</strong><small>{{ item.PositionName }}</small></td>
             <td>{{ item.RegionCode || item.RegionName || 'Not set' }}</td><td class="money">{{ formatMoney(item.PayrollRegularRate) }}</td><td class="money">{{ formatMoney(item.BillingRegularRate) }}</td>
@@ -173,13 +177,15 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <section class="mobile-list" aria-label="Site rates">
       <p v-if="loading" class="mobile-message">Loading site rates…</p><p v-else-if="!filteredItems.length" class="mobile-message">No site rates match the current filters.</p>
-      <article v-for="item in filteredItems" :key="item.SiteRateID" class="rate-card">
+      <article v-for="item in displayedItems" :key="item.SiteRateID" class="rate-card">
         <div class="rate-card__head"><div><strong>{{ item.SiteName }}</strong><span>{{ item.ClientName }}</span></div><span class="status-pill" :class="{ inactive: item.Status === 'Inactive' }">{{ item.Status }}</span></div>
         <dl><div><dt>Agency</dt><dd>{{ item.AgencyName }}</dd></div><div><dt>Position</dt><dd>{{ item.PositionName }}</dd></div><div><dt>Region</dt><dd>{{ item.RegionCode || item.RegionName || 'Not set' }}</dd></div></dl>
         <div class="rate-card__amounts"><span>Payroll<strong>{{ formatMoney(item.PayrollRegularRate) }}</strong></span><span>Billing<strong>{{ formatMoney(item.BillingRegularRate) }}</strong></span></div>
         <footer><button type="button" @click="showForm(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></footer>
       </article>
     </section>
+    <ListProgress v-bind="listProgress" unit="site rates" :paused="loading || busy || open" @load-more="loadMoreItems" />
+
 
     <Teleport to="body"><div v-if="open" class="backdrop" @click.self="!busy && (open = false)"><form class="modal site-rate-modal" role="dialog" aria-modal="true" aria-labelledby="site-rate-modal-title" @submit.prevent="save">
       <button class="close" type="button" aria-label="Close site rate form" :disabled="busy" @click="open = false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>

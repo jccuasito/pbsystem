@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed,onMounted,onBeforeUnmount,ref,watch } from 'vue'
@@ -67,6 +69,7 @@ function warnBeforeUnload(event:BeforeUnloadEvent){if(selectedFiles.value.length
 onMounted(()=>{void load();window.addEventListener('beforeunload',warnBeforeUnload)})
 watch(()=>props.employeeId,()=>{owner++;operationController?.abort();clearDrafts();void load()})
 onBeforeUnmount(()=>{owner++;loadOwner++;controller?.abort();operationController?.abort();clearDrafts();window.removeEventListener('beforeunload',warnBeforeUnload);emit('processing',false);emit('dirty',false)})
+const {visibleItems:displayedArchives,progress:progressArchives,loadMore:loadMoreArchives}=useProgressiveList(visible,{resetKey:()=>[props.employeeId,search.value,year.value]})
 </script>
 <template>
  <section class="archive-panel" :class="{'employee-view':!staff}">
@@ -83,7 +86,9 @@ onBeforeUnmount(()=>{owner++;loadOwner++;controller?.abort();operationController
     <td class="document-actions"><template v-if="record?.selected"><a :href="selections[cutoff.key].url" target="_blank" rel="noopener">Preview</a><button type="button" :disabled="busy||Boolean(review)" :aria-label="'Remove selected PDF for '+cutoff.label" @click="removeSelection(cutoff.key)">Remove</button></template><template v-else-if="record"><a :href="fileUrl(record)" target="_blank" rel="noopener">View PDF &nearr;</a><template v-if="canManage"><button v-if="['Draft','Withdrawn'].includes(record.Status)" type="button" :disabled="busy||Boolean(review)" @click="prepareAction(record,'post')">Post PDF</button><button v-if="record.Status==='Posted'" type="button" :disabled="busy||Boolean(review)" @click="prepareAction(record,'withdraw')">Withdraw</button><button v-if="['Draft','Withdrawn'].includes(record.Status)" type="button" class="quiet" :disabled="busy||Boolean(review)" @click="prepareAction(record,'remove')">Remove</button></template></template><button v-else-if="canManage" type="button" :disabled="busy||Boolean(review)" :aria-label="'Upload PDF for '+cutoff.label" @click="chooseUpload(cutoff)">Upload PDF</button><span v-else class="no-document">&mdash;</span></td>
    </tr>
   </tbody><tbody v-if="!cutoffs.length"><tr><td colspan="3" class="empty">No cutoffs match these filters.</td></tr></tbody></table></div><p class="archive-footnote">One employee, one cutoff per PDF. Files up to 5 MB and 30 pages are supported.</p></template>
-  <div v-else class="archive-list"><article v-for="item in visible" :key="item.ArchiveID"><div><span class="badge posted">Posted</span><h4>{{period(item)}}</h4><p>{{item.AgencyName || 'Historical payslip'}}<span v-if="item.SiteLabel"> &middot; {{item.SiteLabel}}</span></p><small>{{item.FileName}}<span v-if="item.PostedAt"> &middot; Posted {{payslipPostedLabel(item.PostedAt)}}</span></small></div><div class="card-actions"><a :href="fileUrl(item)" target="_blank" rel="noopener">View PDF &nearr;</a><a :href="fileUrl(item,true)" download>Download</a></div></article><p v-if="!visible.length" class="empty">{{loading?'Loading historical payslips...':'No historical PDFs match this view.'}}</p></div>
+  <div v-else class="archive-list"><article v-for="item in displayedArchives" :key="item.ArchiveID"><div><span class="badge posted">Posted</span><h4>{{period(item)}}</h4><p>{{item.AgencyName || 'Historical payslip'}}<span v-if="item.SiteLabel"> &middot; {{item.SiteLabel}}</span></p><small>{{item.FileName}}<span v-if="item.PostedAt"> &middot; Posted {{payslipPostedLabel(item.PostedAt)}}</span></small></div><div class="card-actions"><a :href="fileUrl(item)" target="_blank" rel="noopener">View PDF &nearr;</a><a :href="fileUrl(item,true)" download>Download</a></div></article><p v-if="!visible.length" class="empty">{{loading?'Loading historical payslips...':'No historical PDFs match this view.'}}</p></div>
+<ListProgress v-bind="progressArchives" unit="archived payslips" :paused="loading || busy || !!review" @load-more="loadMoreArchives" />
+
  </section>
 </template>
 <style scoped>

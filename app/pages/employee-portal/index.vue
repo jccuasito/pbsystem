@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -195,6 +197,7 @@ function modalKeydown(event:KeyboardEvent){
  else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
 }
 onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSettings();resolveLeave?.(false);resolveLeave=null;window.removeEventListener('beforeunload',warnBeforeUnload);releaseScroll?.();releaseScroll=null})
+const {visibleItems:displayedPayslips,progress:progressPayslips,loadMore:loadMorePayslips}=useProgressiveList(visible,{resetKey:()=>[search.value,year.value,account.value?.EmployeeID]})
 </script>
 
 <template>
@@ -260,8 +263,8 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
      <p v-if="imageError" class="portal-error" role="alert">{{imageError}}</p>
      <EmployeePayslipSheet :employee="selected.employee" :cutoff="selected.cutoff" :show-record-note="false" />
     </template>
-    <section v-else class="portal-card portal-payslips"><div class="payslip-list-heading"><div><p class="portal-eyebrow">PAYROLL HISTORY</p><h2>Your payslips</h2><p>View a breakdown or save a copy for your records.</p></div><button type="button" class="portal-sync" :disabled="busy" @click="loadSession"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M18 5a8 8 0 0 0-13 4M6 19a8 8 0 0 0 13-4"/></svg>Refresh</button></div><div class="portal-filters"><label>Search payslips<input v-model="search" type="search" placeholder="Cutoff or site"></label><label>Year<select v-model="year"><option value="">All years</option><option v-for="value in years" :key="value" :value="value">{{value}}</option></select></label><span>{{visible.length}} posted payslips</span></div><div class="portal-table"><table><thead><tr><th>Payroll cutoff</th><th>Assignment / site</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Action</th></tr></thead><tbody><tr v-for="item in visible" :key="item.publicationId"><td><strong>{{period(item.cutoff)}}</strong><span v-if="item.publicationId===latestPayslip?.publicationId" class="latest-label">Latest</span><small>Posted {{payslipPostedLabel(item.postedAt)}}</small></td><td>{{item.cutoff.assignmentType}}<small>{{payslipSiteNames(item.cutoff).join(' / ') || 'Site not recorded'}}</small></td><td>{{money(item.cutoff.gross)}}</td><td>{{money(item.cutoff.deductions)}}</td><td><strong>{{money(item.cutoff.net)}}</strong></td><td><button type="button" @click="selected=item">View payslip</button></td></tr><tr v-if="!visible.length"><td colspan="6" class="portal-empty">{{payslips.length?'No posted payslips match your search.':'No system-generated payslips posted yet. Check the historical PDF archive below.'}}</td></tr></tbody></table></div><div class="portal-mobile-payslips">
-      <article v-for="item in visible" :key="item.publicationId" class="mobile-payslip-card">
+    <section v-else class="portal-card portal-payslips"><div class="payslip-list-heading"><div><p class="portal-eyebrow">PAYROLL HISTORY</p><h2>Your payslips</h2><p>View a breakdown or save a copy for your records.</p></div><button type="button" class="portal-sync" :disabled="busy" @click="loadSession"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M18 5a8 8 0 0 0-13 4M6 19a8 8 0 0 0 13-4"/></svg>Refresh</button></div><div class="portal-filters"><label>Search payslips<input v-model="search" type="search" placeholder="Cutoff or site"></label><label>Year<select v-model="year"><option value="">All years</option><option v-for="value in years" :key="value" :value="value">{{value}}</option></select></label><span>{{visible.length}} posted payslips</span></div><div class="portal-table"><table><thead><tr><th>Payroll cutoff</th><th>Assignment / site</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Action</th></tr></thead><tbody><tr v-for="item in displayedPayslips" :key="item.publicationId"><td><strong>{{period(item.cutoff)}}</strong><span v-if="item.publicationId===latestPayslip?.publicationId" class="latest-label">Latest</span><small>Posted {{payslipPostedLabel(item.postedAt)}}</small></td><td>{{item.cutoff.assignmentType}}<small>{{payslipSiteNames(item.cutoff).join(' / ') || 'Site not recorded'}}</small></td><td>{{money(item.cutoff.gross)}}</td><td>{{money(item.cutoff.deductions)}}</td><td><strong>{{money(item.cutoff.net)}}</strong></td><td><button type="button" @click="selected=item">View payslip</button></td></tr><tr v-if="!visible.length"><td colspan="6" class="portal-empty">{{payslips.length?'No posted payslips match your search.':'No system-generated payslips posted yet. Check the historical PDF archive below.'}}</td></tr></tbody></table></div><div class="portal-mobile-payslips">
+      <article v-for="item in displayedPayslips" :key="item.publicationId" class="mobile-payslip-card">
        <header><div class="mobile-card-label"><span>Posted payslip</span><small v-if="item.publicationId===latestPayslip?.publicationId" class="latest-label">Latest</small></div><strong>{{period(item.cutoff)}}</strong></header>
        <p class="mobile-payslip-site">{{payslipSiteNames(item.cutoff).join(' / ') || 'Site not recorded'}}</p>
        <span class="mobile-assignment">{{item.cutoff.assignmentType}}</span>
@@ -270,7 +273,9 @@ onBeforeUnmount(()=>{request++;closeImage();pendingSettings.value=null;clearSett
        <footer><small>Posted {{payslipPostedLabel(item.postedAt)}}</small><button type="button" @click="selected=item">View payslip</button></footer>
       </article>
       <p v-if="!visible.length" class="portal-empty">{{payslips.length?'No posted payslips match your search.':'No payslips have been posted for you yet.'}}</p>
-     </div><ArchivedPayslipsPanel /></section>
+     </div>
+<ListProgress v-bind="progressPayslips" unit="payslips" :paused="loading || busy || !!selected || settingsOpen || privacyOpen || informationOpen" @load-more="loadMorePayslips" />
+<ArchivedPayslipsPanel /></section>
    </template>
    <footer class="portal-footer"><button type="button" class="portal-text" @click="privacyOpen=true">Privacy notice and account terms</button><span>For payroll corrections and account support, contact your agency HR office.</span></footer>
   </div>

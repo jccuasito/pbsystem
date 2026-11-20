@@ -12,6 +12,9 @@ function evaluate(source, dependencies = {}, globals = {}) {
     { module, require: name => dependencies[name] || {}, ...globals })
   return module.exports
 }
+const progressiveLists = evaluate(fs.readFileSync('app/composables/useProgressiveList.ts', 'utf8'), {
+  vue: { ...vue, onMounted() {}, onBeforeUnmount() {} },
+})
 const fields = evaluate(fs.readFileSync('shared/utils/rateFields.ts', 'utf8'))
 const rateVersions = evaluate(fs.readFileSync('server/utils/rateVersions.ts', 'utf8'), { '../../shared/utils/rateFields': fields })
 const regionalRates = evaluate(fs.readFileSync('shared/utils/regionalRates.ts', 'utf8'), { './rateFields': fields })
@@ -48,6 +51,7 @@ function component(filename, exposed, props = {}) {
     '~~/shared/utils/rateFields': fields,
     '~~/shared/utils/regionalRates': regionalRates,
     '~/composables/useRealtimeRefresh': { useRealtimeRefresh() {} },
+    '~~/app/composables/useProgressiveList': progressiveLists,
   }, { defineProps: () => props, $fetch: async (url, options) => { calls.push({ url, options }); return { items: [], payrollRates: [], billingRates: [] } } })
   return { state, calls }
 }

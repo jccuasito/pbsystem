@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useInfiniteCollection } from '~~/app/composables/useInfiniteCollection'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onActivated, onDeactivated, onMounted, ref } from 'vue'
@@ -34,9 +36,6 @@ const search = ref('')
 const agencyId = ref('')
 const cutoff = ref('')
 const status = ref('all')
-const page = ref(1)
-const loading = ref(false)
-const error = ref('')
 const detail = ref<HistoryDetail | null>(null)
 const selectedBatchId = ref<number | null>(null)
 const detailLoading = ref(false)
@@ -60,19 +59,18 @@ const rowGross = (row: HistoryRow) => row.status === 'Finalized' ? row.Gross : r
 const rowDeductions = (row: HistoryRow) => row.status === 'Finalized' ? row.Deductions : row.CancelledDeductions
 const rowNet = (row: HistoryRow) => row.status === 'Finalized' ? row.Net : row.CancelledNet
 
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
+const collection = useInfiniteCollection<HistoryRow, HistoryList>({
+  query: () => {
     const [periodStart, periodEnd] = cutoff.value.split(':')
-    data.value = await $fetch<HistoryList>('/api/payroll/history', { query: {
-      search: search.value.trim(), agencyId: agencyId.value || undefined, status: status.value,
-      periodStart: periodStart || undefined, periodEnd: periodEnd || undefined, page: page.value,
-    } })
-  } catch (caught: any) {
-    error.value = requestErrorMessage(caught, 'Unable to load payroll history.')
-  } finally { loading.value = false }
-}
+    return { search: search.value.trim(), agencyId: agencyId.value || undefined, status: status.value, periodStart: periodStart || undefined, periodEnd: periodEnd || undefined }
+  },
+  key: item => item.BatchID,
+  paused: () => selectedBatchId.value !== null,
+  fetchPage: (page, query, signal) => $fetch<HistoryList>('/api/payroll/history', { query: { ...query, page }, signal, retry: 0 }),
+  onLoaded: response => { data.value = { ...response, items: collection.items.value } },
+})
+const { loading, error, progress: listProgress, loadMore: loadMoreItems } = collection
+async function load() { await collection.refresh() }
 
 async function openDetail(batchId: number) {
   selectedBatchId.value = batchId
@@ -91,8 +89,7 @@ async function openDetail(batchId: number) {
   } finally { if (selectedBatchId.value === batchId) detailLoading.value = false }
 }
 function closeDetail() { selectedBatchId.value = null; detail.value = null; detailError.value = ''; detailTab.value = 'current' }
-function applyFilters() { page.value = 1; load() }
-function changePage(next: number) { page.value = next; load() }
+function applyFilters() { data.value = { ...data.value, items: [] }; void collection.reset() }
 onMounted(load)
 let wasDeactivated = false
 onDeactivated(() => { wasDeactivated = true })
@@ -119,7 +116,7 @@ onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
       <tr v-for="row in data.items" :key="row.BatchID"><td><strong>{{ period(row.PeriodStart, row.PeriodEnd) }}</strong><small>DTR-{{ String(row.BatchID).padStart(4, '0') }}</small></td><td><strong>{{ row.SiteName }}</strong><small>{{ row.ClientName }}</small></td><td>{{ row.AgencyName }}</td><td>{{ row.status === 'Finalized' ? row.ActiveCount : row.CancelledCount }}</td><td>{{ money(rowGross(row)) }}</td><td>{{ money(rowDeductions(row)) }}</td><td><strong>{{ money(rowNet(row)) }}</strong><small v-if="row.status === 'Cancelled'">Voided amount</small></td><td><span class="status-chip" :class="row.status.toLowerCase()">{{ row.status }}</span><small v-if="row.LastActionAt">{{ moment(row.LastActionAt) }}</small></td><td><button type="button" class="secondary" @click="openDetail(row.BatchID)">View details</button></td></tr>
       <tr v-if="!data.items.length"><td colspan="9" class="empty">{{ loading ? 'Loading payroll history…' : 'No finalized or cancelled payroll matches these filters.' }}</td></tr>
     </tbody></table></div>
-    <div class="pagination"><button type="button" class="secondary" :disabled="loading || page <= 1" @click="changePage(page - 1)">Previous</button><span>Page {{ data.pagination.page }} of {{ data.pagination.pages }}</span><button type="button" class="secondary" :disabled="loading || page >= data.pagination.pages" @click="changePage(page + 1)">Next</button></div>
+    <ListProgress v-bind="listProgress" unit="site cutoffs" :paused="selectedBatchId !== null" @load-more="loadMoreItems" />
 
     <div v-if="selectedBatchId" class="modal-backdrop" @click.self="closeDetail">
       <section class="detail-modal" role="dialog" aria-modal="true" aria-label="Payroll history details">

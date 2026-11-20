@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList, useProgressiveGroups } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
@@ -385,6 +387,8 @@ function bulkPosition(id: number) { return bulkRows.value.find(row => row.Agency
 function bulkCatalog(id: number) { return catalog.value.find(item => Number(item.DeductionTypeID) === id) }
 
 onMounted(load)
+const {visibleItems:displayedAgencyGroups,progress:listProgress,loadMore:loadMoreItems}=useProgressiveList(agencyGroups,{resetKey:()=>[kindFilter.value,search.value,agencyFilter.value,statusFilter.value]})
+const {rowsFor,progressFor,loadMoreGroup}=useProgressiveGroups({resetKey:()=>[kindFilter.value,search.value,agencyFilter.value,statusFilter.value]})
 </script>
 
 <template>
@@ -412,7 +416,7 @@ onMounted(load)
     <p v-if="!agencyGroups.length" class="empty">{{ loading ? 'Loading plans...' : 'No plans match the filters.' }}</p>
     <div v-else class="agency-groups setup-directory">
       <div class="directory-columns" aria-hidden="true"><span>Agency</span><span>Positions</span><span>Plans</span><span></span></div>
-      <section v-for="agency in agencyGroups" :key="agency.id" class="agency-group" :class="{'is-open':expandedAgencies.has(agency.id)}" :aria-labelledby="`plan-agency-${agency.id}`">
+      <section v-for="agency in displayedAgencyGroups" :key="agency.id" class="agency-group" :class="{'is-open':expandedAgencies.has(agency.id)}" :aria-labelledby="`plan-agency-${agency.id}`">
         <header class="agency-heading">
           <h2 :id="`plan-agency-${agency.id}`"><button type="button" class="agency-toggle directory-row" :aria-expanded="expandedAgencies.has(agency.id)" :aria-controls="`agency-plans-${agency.id}`" @click="toggleAgency(agency.id)">
             <span class="directory-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21V5h10v16M14 10h6v11M2 21h20M8 9h2M8 13h2M8 17h2M17 14h1M17 18h1"/></svg></span>
@@ -431,7 +435,7 @@ onMounted(load)
             <span class="position-name">{{ position.name }}</span><span class="group-count">{{ position.items.length }} {{ position.items.length === 1 ? 'item' : 'items' }}</span>
           </button></h3></header>
           <div v-show="expandedPositions.has(positionKey(agency.id,position.id))" :id="`position-plans-${agency.id}-${position.id}`" class="table-wrap plan-table"><table :aria-label="`${agency.name} / ${position.name} plans`"><thead><tr><th>Item</th><th class="numeric">Amount / cutoff</th><th>Deduct every</th><th>Effective</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-            <tr v-for="item in position.items" :key="item.AgencyContributionID">
+            <tr v-for="item in rowsFor('plans-'+agency.id+'-'+position.id,position.items)" :key="item.AgencyContributionID">
               <td class="plan-item"><strong>{{ planLabel(item) }}</strong><small>{{ item.CatalogKind }}</small></td>
               <td class="numeric" data-label="Amount / cutoff"><strong>{{ money(item.CurrentAmountPerCutoff) }}</strong></td>
               <td data-label="Deduct every">{{ cutoffLabel(item.CurrentDeductOn) }}</td>
@@ -445,14 +449,15 @@ onMounted(load)
                 <button v-else class="rate-icon-action rate-icon-action--danger" type="button" :title="Number(item.PayrollLinkCount) || Number(item.OverrideLinkCount) ? 'Cannot delete: payroll or deduction review history exists' : 'Permanently delete unused plan'" :aria-label="`Delete ${planLabel(item)} / ${item.PositionName}`" :disabled="!!Number(item.PayrollLinkCount) || !!Number(item.OverrideLinkCount)" @click="openDelete(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg></button>
               </div></td>
             </tr>
-          </tbody></table></div>
+          </tbody></table></div><ListProgress v-if="position.items.length>25" v-show="expandedPositions.has(positionKey(agency.id,position.id))" v-bind="progressFor('plans-'+agency.id+'-'+position.id,position.items)" unit="plans" :paused="loading || saving || createOpen || !!editTarget || !!updateTarget || !!historyTarget || bulkOpen || bulkReviewOpen" @load-more="loadMoreGroup('plans-'+agency.id+'-'+position.id,position.items)" />
         </section>
         </div>
       </section>
     </div>
     <p class="setup-directory-note"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5m0-8v.5"/></svg>Employee collections and refunds are available in Employee Accounts.</p>
 
-    <div v-if="createOpen" class="modal-backdrop" @click.self="!saving && (createOpen = false)">
+    <ListProgress v-bind="listProgress" unit="agencies" :paused="loading || saving || createOpen || !!editTarget || !!updateTarget || !!historyTarget || bulkOpen || bulkReviewOpen" @load-more="loadMoreItems" />
+  <div v-if="createOpen" class="modal-backdrop" @click.self="!saving && (createOpen = false)">
       <form class="modal small-modal" role="dialog" aria-modal="true" aria-label="Add plan" @submit.prevent="saveCreate">
         <button class="close" type="button" aria-label="Close" :disabled="saving" @click="createOpen = false">×</button>
         <header><span class="eyebrow">AGENCY POSITION PLAN</span><h2>Add plan</h2><p>Create one amount for this position across the agency's sites.</p></header>

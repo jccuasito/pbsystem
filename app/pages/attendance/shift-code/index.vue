@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref } from 'vue'
@@ -138,6 +140,8 @@ function displayTime(value: unknown) {
 
 onMounted(load)
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !modalOpen.value && !confirmation.value && !confirmBusy.value })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredItems, { resetKey: () => [appliedSearch.value,agencyFilter.value,shiftTypeFilter.value] })
 </script>
 
 <template>
@@ -170,7 +174,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
         <tbody>
           <tr v-if="loading"><td colspan="11">Loading…</td></tr>
           <tr v-else-if="!filteredItems.length"><td colspan="11">No shift codes found.</td></tr>
-          <tr v-for="item in filteredItems" :key="item.ShiftCodeID">
+          <tr v-for="item in displayedItems" :key="item.ShiftCodeID">
             <td class="code" :title="item.ShiftCode">{{ item.ShiftCode }}</td><td>{{ item.ShiftName }}</td><td>{{ item.AgencyName }}</td><td>{{ item.ShiftType }}</td><td>{{ displayTime(item.TimeIn) }}</td><td>{{ displayTime(item.TimeOut) }}</td><td>{{ item.RegularHours }}</td><td>{{ item.RegularOTCap }}</td>
             <td>{{ Number(item.NDEnabled) ? `${displayTime(item.NDStartTime)}–${displayTime(item.NDEndTime)}` : 'Disabled' }}</td>
             <td><span class="status" :class="`status--${String(item.Status).toLowerCase()}`">{{ item.Status }}</span></td>
@@ -183,6 +187,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
         </tbody>
       </table>
     </div>
+    <ListProgress v-bind="listProgress" unit="shift codes" :paused="loading || busy || modalOpen || !!confirmation" @load-more="loadMoreItems" />
+
 
     <Teleport to="body">
       <div v-if="modalOpen" class="backdrop" @click.self="closeShiftModal">

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -411,6 +413,8 @@ async function remove(section: SectionKey, item: any) {
 
 onMounted(load)
 useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: () => !saving.value })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredEmployees, { resetKey: () => [search.value,filters.value] })
 </script>
 
 <template>
@@ -462,7 +466,7 @@ useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: ()
         <tbody>
           <tr v-if="loading"><td colspan="6" class="table-empty">Loading employees…</td></tr>
           <tr v-else-if="!filteredEmployees.length"><td colspan="6" class="table-empty">No employees match these filters.</td></tr>
-          <tr v-for="item in loading ? [] : filteredEmployees" :key="item.EmployeeID">
+          <tr v-for="item in loading ? [] : displayedItems" :key="item.EmployeeID">
             <td class="employee-id">{{ formatEmployeeId(item.EmployeeID) }}</td>
             <td>{{ formatEmployeeNumber(item.EmployeeNumber) }}</td>
             <td><strong>{{ formatEmployeeName(item) }}</strong></td>
@@ -476,6 +480,8 @@ useRealtimeRefresh(() => load(activeEmployeeId.value, true), { shouldRefresh: ()
         </tbody>
       </table>
     </section>
+    <ListProgress v-bind="listProgress" unit="employees" :paused="loading || saving || detailOpen || formOpen" @load-more="loadMoreItems" />
+
 
     <Teleport to="body">
       <div v-if="detailOpen" class="backdrop" @click.self="detailOpen = false">

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
@@ -115,6 +117,8 @@ onMounted(load)
 let wasDeactivated = false
 onDeactivated(() => { wasDeactivated = true })
 onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(visible, { resetKey: () => [cutoff.value,search.value,agency.value,client.value,siteAccount.value,statusFilter.value] })
 </script>
 
 <template>
@@ -132,9 +136,11 @@ onActivated(() => { if (wasDeactivated) void load(); wasDeactivated = false })
     <div class="list-top"><p>Showing {{ visible.length }} site DTRs<span v-if="data.selectedCutoff"> · {{ range(data.selectedCutoff) }}</span></p><div class="status-tabs" aria-label="Review status filters"><button v-for="item in [{key:'current',label:'Current'}, {key:'Pending',label:'To review'}, {key:'Approved',label:'Finalized'}, {key:'Rejected',label:'Returned'}, {key:'Cancelled',label:'Cancelled'}]" :key="item.key" type="button" :class="{active:statusFilter===item.key}" @click="statusFilter=item.key">{{ item.label }} <span>{{ item.key==='current'?matchingSites.length-(counts.Rejected||0)-(counts.Cancelled||0):counts[item.key]||0 }}</span></button></div></div>
     <div v-if="visible.length" class="summary-strip"><div><span>Employees</span><strong>{{ totals.people }}</strong></div><div><span>Gross</span><strong>{{ money(totals.gross) }}</strong></div><div><span>Deductions</span><strong>{{ money(totals.deductions) }}</strong></div><div><span>Net for review</span><strong>{{ money(totals.net) }}</strong></div></div>
     <div class="table-wrap"><table class="processing-table"><thead><tr><th>Site / Client</th><th>Agency / DTR</th><th>Employees</th><th>Gross</th><th>Deductions</th><th>Net</th><th>Review</th><th>Action</th></tr></thead><tbody>
-      <tr v-for="site in visible" :key="site.BatchID"><td><strong>{{ site.SiteName }}</strong><small>{{ site.ClientName }}</small><small>Site Account: {{ site.SiteAccountName || 'Unassigned' }}</small></td><td><strong>{{ site.AgencyName }}</strong><small>DTR-{{ String(site.BatchID).padStart(4, '0') }}</small></td><td>{{ site.peopleCount }}</td><td>{{ money(site.gross) }}</td><td>{{ money(site.deductions) }}</td><td><strong>{{ money(site.netPreview) }}</strong></td><td><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus==='Approved'?'Finalized':site.ReviewStatus==='Rejected'?'Returned':site.ReviewStatus==='Cancelled'?'Cancelled':'To review' }}</span><small v-if="site.warningCount && site.ReviewStatus==='Pending'" class="note-count">{{ site.warningCount }} payroll note{{ site.warningCount===1?'':'s' }}</small></td><td><button type="button" class="secondary" @click="selectedId=Number(site.BatchID);actionError='';success=''">{{ site.ReviewStatus==='Pending'?'Review':'View details' }}</button></td></tr>
+      <tr v-for="site in displayedItems" :key="site.BatchID"><td><strong>{{ site.SiteName }}</strong><small>{{ site.ClientName }}</small><small>Site Account: {{ site.SiteAccountName || 'Unassigned' }}</small></td><td><strong>{{ site.AgencyName }}</strong><small>DTR-{{ String(site.BatchID).padStart(4, '0') }}</small></td><td>{{ site.peopleCount }}</td><td>{{ money(site.gross) }}</td><td>{{ money(site.deductions) }}</td><td><strong>{{ money(site.netPreview) }}</strong></td><td><span class="review-chip" :class="String(site.ReviewStatus || 'Pending').toLowerCase()">{{ site.ReviewStatus==='Approved'?'Finalized':site.ReviewStatus==='Rejected'?'Returned':site.ReviewStatus==='Cancelled'?'Cancelled':'To review' }}</span><small v-if="site.warningCount && site.ReviewStatus==='Pending'" class="note-count">{{ site.warningCount }} payroll note{{ site.warningCount===1?'':'s' }}</small></td><td><button type="button" class="secondary" @click="selectedId=Number(site.BatchID);actionError='';success=''">{{ site.ReviewStatus==='Pending'?'Review':'View details' }}</button></td></tr>
       <tr v-if="!visible.length"><td colspan="8" class="empty">{{ loading?'Loading site DTRs…':statusFilter==='current' && counts.Rejected?'No current DTRs. Open Returned to view rejected history.':'No site DTRs match these filters.' }}</td></tr>
     </tbody></table></div>
+    <ListProgress v-bind="listProgress" unit="payrolls" :paused="loading || busy || !!selectedSite" @load-more="loadMoreItems" />
+
     <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview" :busy="busy" :error="actionError" @close="selectedId=null" @approve="review('finalize')" @reject="reason=>review('reject', reason)" @cancel="reason=>review('cancel', reason)" @deduction="changeDeduction" @pause-plan="pausePlan" @cash-bond="changeCashBond" />
   </section>
 </template>

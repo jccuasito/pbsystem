@@ -40,7 +40,7 @@ const globals=['base','theme','components','auth','dashboard','payroll-processin
  })
  await page.addScriptTag({content:bundle})
  const table=page.getByRole('table',{name:'Employee cutoff summaries'})
- await table.waitFor();assert.equal(await table.locator('tbody tr').count(),200)
+ await table.waitFor();assert.equal(await table.locator('tbody tr').count(),25,'Render the first batch while keeping all 200 employees available to filters')
  await table.evaluate(el=>{window.originalStatusTable=el;window.originalTableTop=el.getBoundingClientRect().top})
  await page.waitForFunction(()=>window.metaCalls>=2&&window.cutoffPending)
  const count=await table.count()

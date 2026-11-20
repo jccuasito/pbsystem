@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import { useInfiniteCollection } from '~~/app/composables/useInfiniteCollection'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
@@ -22,12 +25,12 @@ let pendingRequestSection=false
 function applyRequestedSection(){if(pendingRequestSection&&isAccounts.value&&list.value.canManageAccounts&&!serviceBusy.value){workspace.value='requests';pendingRequestSection=false}}
 watch(()=>[props.initialSection,props.initialSectionRequest],()=>{pendingRequestSection=props.initialSection==='requests';applyRequestedSection()},{immediate:true})
 const profileTabs=computed(()=>isAccounts.value?[{key:'account',label:'Portal account'},...(portalAccount.value?.canManage?[{key:'requests',label:'Information requests'}]:[]),{key:'activity',label:'Account activity'}]:[{key:'history',label:'Payslip history'},{key:'archive',label:'PDF archive'}])
-const search=ref(''),agencyId=ref(''),accountStatus=ref(''),postingStatus=ref(''),page=ref(1),loading=ref(false),error=ref('')
+const search=ref(''),agencyId=ref(''),accountStatus=ref(''),postingStatus=ref('')
 const profile=ref<Profile|null>(null),portalAccount=ref<AccountData|null>(null),profileTab=ref(isAccounts.value?'account':'history'),profileBody=ref<HTMLElement|null>(null),profileDialog=ref<HTMLElement|null>(null)
 const historyLoading=ref(false),accountLoading=ref(false),historyError=ref(''),accountError=ref(''),actionError=ref(''),actionNotice=ref(''),accountBusy=ref(false)
-const historySearch=ref(''),historyYear=ref(''),historyStatus=ref(''),historyPage=ref(1),selectedPayslipKey=ref('')
+const historySearch=ref(''),historyYear=ref(''),historyStatus=ref(''),selectedPayslipKey=ref('')
 const recoveryCode=ref(''),recoveryExpiresAt=ref(''),copyNotice=ref('')
-let listRequest=0,profileRequest=0,accountRequest=0,listAbort:AbortController|null=null,profileAbort:AbortController|null=null,recoveryTimer:ReturnType<typeof setTimeout>|undefined
+let profileRequest=0,accountRequest=0,profileAbort:AbortController|null=null,recoveryTimer:ReturnType<typeof setTimeout>|undefined
 const money=(value:number)=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(value||0))
 const date=(value?:string|null)=>value?new Date(value+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}):'-'
 const timestamp=(value?:string|null)=>payslipPostedLabel(value)||'Not recorded'
@@ -39,20 +42,21 @@ const statusClass=(status?:string)=>status==='Active'||status==='Posted'?'active
 const cards=computed(()=>[{key:'',label:'All employees',value:list.value.accountSummary.total},{key:'active',label:'Active accounts',value:list.value.accountSummary.active},{key:'inactive',label:'Inactive accounts',value:list.value.accountSummary.inactive},{key:'unregistered',label:'Not registered',value:list.value.accountSummary.unregistered}])
 const historyYears=computed(()=>[...new Set(profile.value?.cutoffs.map(item=>item.periodEnd.slice(0,4))||[])].sort().reverse())
 const filteredHistory=computed(()=>profile.value?.cutoffs.filter(item=>(!historyYear.value||item.periodEnd.startsWith(historyYear.value))&&(!historyStatus.value||item.publicationStatus===historyStatus.value)&&[period(item),item.assignmentType,...payslipSiteNames(item),...item.sources.map(source=>source.clientName)].join(' ').toLowerCase().includes(historySearch.value.trim().toLowerCase()))||[])
-const historyPages=computed(()=>Math.max(1,Math.ceil(filteredHistory.value.length/10)))
-const historyRows=computed(()=>filteredHistory.value.slice((historyPage.value-1)*10,historyPage.value*10))
+const {visibleItems:historyRows,progress:historyProgress,loadMore:loadMoreHistory}=useProgressiveList(filteredHistory,{resetKey:()=>[profile.value?.employee.EmployeeID,historySearch.value,historyYear.value,historyStatus.value]})
 const activeCutoff=computed(()=>profile.value?.cutoffs.find(item=>item.key===selectedPayslipKey.value)||null)
 const postedCount=computed(()=>profile.value?.cutoffs.filter(item=>item.publicationStatus==='Posted').length||0)
 const account=computed(()=>portalAccount.value?.account)
 const isLatest=(item:Cutoff)=>item.periodStart===profile.value?.cutoffs[0]?.periodStart&&item.periodEnd===profile.value?.cutoffs[0]?.periodEnd
-watch(historyPages,value=>{historyPage.value=Math.min(historyPage.value,value)})
 function clearRecovery(){recoveryCode.value='';recoveryExpiresAt.value='';copyNotice.value='';if(recoveryTimer)clearTimeout(recoveryTimer);recoveryTimer=undefined}
-async function load(){
- const request=++listRequest;listAbort?.abort();listAbort=new AbortController();loading.value=true;error.value=''
- try{const result=await $fetch<List>(isAccounts.value?'/api/employees/portal-accounts':'/api/payroll/payslips',{query:{search:search.value.trim(),agencyId:agencyId.value||undefined,...(isAccounts.value?{accountStatus:accountStatus.value||undefined}:{postingStatus:postingStatus.value||undefined}),page:page.value},signal:listAbort.signal,timeout:15000,retry:0});if(request===listRequest){list.value=result;page.value=result.pagination.page;applyRequestedSection()}}
- catch(cause:any){if(request===listRequest)error.value=requestErrorMessage(cause, 'Unable to load employee accounts. Please try again.')}
- finally{if(request===listRequest)loading.value=false}
-}
+const collection=useInfiniteCollection<Employee,List>({
+ query:()=>({search:search.value.trim(),agencyId:agencyId.value||undefined,...(isAccounts.value?{accountStatus:accountStatus.value||undefined}:{postingStatus:postingStatus.value||undefined})}),
+ key:item=>item.EmployeeID,
+ paused:()=>Boolean(profile.value)||serviceBusy.value||workspace.value!=='accounts',
+ fetchPage:(page,query,signal)=>$fetch<List>(isAccounts.value?'/api/employees/portal-accounts':'/api/payroll/payslips',{query:{...query,page},signal,timeout:15000,retry:0}),
+ onLoaded:result=>{list.value={...result,items:collection.items.value};applyRequestedSection()},
+})
+const {loading,error,progress:listProgress,loadMore:loadMoreItems}=collection
+async function load(){await collection.refresh()}
 async function loadAccount(employeeId:number,activityPage=1){
  const request=++accountRequest,owner=profileRequest;accountLoading.value=true;accountError.value=''
  try{const result=await $fetch<AccountData>('/api/employees/portal-accounts/account',{query:{employeeId,activityPage},signal:profileAbort?.signal,timeout:15000,retry:0});if(request===accountRequest&&owner===profileRequest)portalAccount.value=result}
@@ -61,7 +65,7 @@ async function loadAccount(employeeId:number,activityPage=1){
 }
 async function openProfile(employee:Employee,tab=isAccounts.value?'account':'history'){
  const request=++profileRequest;profileAbort?.abort();const controller=new AbortController();profileAbort=controller;profile.value={employee,cutoffs:[]};profileTab.value=tab;portalAccount.value=null
- historySearch.value='';historyYear.value='';historyStatus.value='';historyPage.value=1;selectedPayslipKey.value='';historyError.value='';accountError.value='';actionError.value='';actionNotice.value='';clearRecovery();historyLoading.value=!isAccounts.value;accountLoading.value=isAccounts.value
+ historySearch.value='';historyYear.value='';historyStatus.value='';selectedPayslipKey.value='';historyError.value='';accountError.value='';actionError.value='';actionNotice.value='';clearRecovery();historyLoading.value=!isAccounts.value;accountLoading.value=isAccounts.value
  await nextTick();if(request!==profileRequest)return;profileDialog.value?.focus()
  if(isAccounts.value){await loadAccount(employee.EmployeeID);return}
  const history=(async()=>{try{const result=await $fetch<Profile>('/api/payroll/payslips',{query:{employeeId:employee.EmployeeID},signal:controller.signal,timeout:15000,retry:0});if(request===profileRequest)profile.value=result}catch(cause:any){if(request===profileRequest)historyError.value=requestErrorMessage(cause, 'Unable to load payslip history.')}finally{if(request===profileRequest)historyLoading.value=false}})()
@@ -91,9 +95,8 @@ function cancelDiscard(){discardOpen.value=false;void nextTick(()=>profileDialog
 watch(discardOpen,async value=>{if(value){await nextTick();discardCancel.value?.focus()}})
 function discardKeydown(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();cancelDiscard()}else if(event.key==='Tab'){const buttons=[...(event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button')];if(event.shiftKey&&document.activeElement===buttons[0]){event.preventDefault();buttons[1]?.focus()}else if(!event.shiftKey&&document.activeElement===buttons[1]){event.preventDefault();buttons[0]?.focus()}}}
 async function viewPayslip(item:Cutoff){selectedPayslipKey.value=item.key;await nextTick();profileBody.value?.scrollTo({top:0})}
-function applyFilters(){page.value=1;void load()}
+function applyFilters(){list.value={...list.value,items:[]};void collection.reset()}
 function filterAccounts(status:string){accountStatus.value=status;applyFilters()}
-function changePage(value:number){page.value=value;void load()}
 function trapFocus(event:KeyboardEvent){
  const controls=[...profileDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input,select,[tabindex="0"]')||[]].filter(node=>node.offsetParent!==null)
  if(!controls.length)return
@@ -109,9 +112,9 @@ watch(()=>Boolean(profile.value),async(open,previous)=>{
 watch(()=>props.employee?.EmployeeID,()=>{if(props.embedded&&props.employee)void openProfile(props.employee)})
 onMounted(()=>{if(props.embedded&&props.employee)void openProfile(props.employee);else void load()})
 let wasDeactivated=false
-onDeactivated(()=>{wasDeactivated=true;listRequest++;listAbort?.abort();closeProfile(true)})
+onDeactivated(()=>{wasDeactivated=true;closeProfile(true)})
 onActivated(()=>{if(wasDeactivated&&!props.embedded)void load();wasDeactivated=false})
-onBeforeUnmount(()=>{listRequest++;profileRequest++;accountRequest++;listAbort?.abort();profileAbort?.abort();clearRecovery();releaseScroll?.();releaseScroll=null})
+onBeforeUnmount(()=>{profileRequest++;accountRequest++;profileAbort?.abort();clearRecovery();releaseScroll?.();releaseScroll=null})
 </script>
 
 <template>
@@ -128,7 +131,7 @@ onBeforeUnmount(()=>{listRequest++;profileRequest++;accountRequest++;listAbort?.
     <tr v-for="employee in list.items" :key="employee.EmployeeID"><td><strong>{{ employee.EmployeeName }}</strong><small>{{ displayNumber(employee) }}<span v-if="employee.Status!=='Active'"> &middot; Employee {{ employee.Status }}</span></small></td><td>{{ employee.AgencyName || 'Unassigned agency' }}<small>{{ employee.PositionName || 'Unassigned position' }}</small></td><template v-if="isAccounts"><td><template v-if="employee.PortalEmail"><span class="email">{{ employee.PortalEmail }}</span><small>{{ employee.PortalContactNumber }}</small></template><span v-else class="muted">{{ portalStatus(employee)==='Not registered'?'No portal account':list.canManageAccounts?'Not recorded':'Restricted' }}</span></td><td><span class="badge" :class="statusClass(portalStatus(employee))">{{ portalStatus(employee) }}</span><small v-if="employee.PortalLastSignInAt">Last sign-in {{ timestamp(employee.PortalLastSignInAt) }}</small></td></template><template v-else><td>{{date(employee.LastCutoffEnd)}}</td><td><strong>{{employee.PayslipCount||0}} payslips</strong><small>{{employee.PostedPayslipCount||0}} posted</small></td><td><span class="badge" :class="statusClass(employee.PublicationStatus)">{{employee.PublicationStatus||'No payslips'}}</span></td></template><td><button class="secondary" @click="openProfile(employee)">{{isAccounts?(portalStatus(employee)==='Not registered'?'View employee':'Manage account'):'View payslips'}}</button></td></tr>
     <tr v-if="!list.items.length"><td :colspan="isAccounts?5:6" class="empty">{{ loading?isAccounts?'Loading employee accounts...':'Loading payslips...':'No employees match these filters.' }}</td></tr>
    </tbody></table></div>
-   <div class="pagination"><button class="secondary" :disabled="loading||page<=1" @click="changePage(page-1)">Previous</button><span>Page {{ list.pagination.page }} of {{ list.pagination.pages }}</span><button class="secondary" :disabled="loading||page>=list.pagination.pages" @click="changePage(page+1)">Next</button></div>
+   <ListProgress v-bind="listProgress" unit="employees" :paused="!!profile || serviceBusy || workspace!=='accounts'" @load-more="loadMoreItems" />
    </template>
   </template>
 
@@ -153,9 +156,9 @@ onBeforeUnmount(()=>{listRequest++;profileRequest++;accountRequest++;listAbort?.
      <PortalRequestsAdmin v-else-if="profileTab==='requests'&&portalAccount?.canManage" :key="profile.employee.EmployeeID" :employee-id="profile.employee.EmployeeID" @processing="serviceBusy=$event"/>
      <template v-else-if="profileTab==='history'">
       <div v-if="activeCutoff" class="payslip-detail"><div class="detail-toolbar"><button class="secondary" @click="selectedPayslipKey=''">&larr; Back to history</button><span class="badge" :class="statusClass(activeCutoff.publicationStatus)">{{ activeCutoff.publicationStatus }}</span></div><EmployeePayslipSheet :employee="profile.employee" :cutoff="activeCutoff" /></div>
-      <template v-else><div class="section-head"><div><h3>Payslip history</h3><p>{{ profile.cutoffs.length }} finalized payslips &middot; {{ postedCount }} posted</p></div><span class="field-note">Posting is managed in Payslips by Site Account.</span></div><div class="history-filters"><label>Search payslips<input v-model="historySearch" type="search" placeholder="Cutoff, site, or client" @input="historyPage=1"></label><label>Year<select v-model="historyYear" @change="historyPage=1"><option value="">All years</option><option v-for="year in historyYears" :key="year">{{ year }}</option></select></label><label>Posting status<select v-model="historyStatus" @change="historyPage=1"><option value="">All payslips</option><option>Posted</option><option>Not Posted</option></select></label></div>
+      <template v-else><div class="section-head"><div><h3>Payslip history</h3><p>{{ profile.cutoffs.length }} finalized payslips &middot; {{ postedCount }} posted</p></div><span class="field-note">Posting is managed in Payslips by Site Account.</span></div><div class="history-filters"><label>Search payslips<input v-model="historySearch" type="search" placeholder="Cutoff, site, or client"></label><label>Year<select v-model="historyYear"><option value="">All years</option><option v-for="year in historyYears" :key="year">{{ year }}</option></select></label><label>Posting status<select v-model="historyStatus"><option value="">All payslips</option><option>Posted</option><option>Not Posted</option></select></label></div>
        <p v-if="historyError" class="error" role="alert">{{ historyError }} <button class="text-button" @click="openProfile(profile.employee,'history')">Retry</button></p>
-       <div class="table-wrap"><table class="history-table"><thead><tr><th>Payroll cutoff</th><th>Assignment / Sites</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Posting</th><th>Action</th></tr></thead><tbody><tr v-for="item in historyRows" :key="item.key"><td><strong>{{ period(item) }}</strong><small v-if="isLatest(item)" class="latest-label">Latest cutoff</small></td><td>{{ item.assignmentType }}<small>{{ payslipSiteNames(item).join(' / ') }}</small></td><td class="amount">{{ money(item.gross) }}</td><td class="amount">{{ money(item.deductions) }}</td><td class="amount"><strong>{{ money(item.net) }}</strong></td><td><span class="badge" :class="statusClass(item.publicationStatus)">{{ item.publicationStatus }}</span><small v-if="item.publicationStatus==='Posted'">{{ timestamp(item.postedAt) }}</small></td><td><button class="secondary" @click="viewPayslip(item)">View payslip</button></td></tr><tr v-if="!historyRows.length"><td colspan="7" class="empty">{{ historyLoading?'Loading payslips...':historyError?'Payslip history is unavailable.':'No payslips match these filters.' }}</td></tr></tbody></table></div><div class="pagination"><span>{{ filteredHistory.length }} payslips</span><button class="secondary" :disabled="historyPage<=1" @click="historyPage--">Previous</button><span>{{ historyPage }} / {{ historyPages }}</span><button class="secondary" :disabled="historyPage>=historyPages" @click="historyPage++">Next</button></div>
+       <div class="table-wrap"><table class="history-table"><thead><tr><th>Payroll cutoff</th><th>Assignment / Sites</th><th>Gross</th><th>Deductions</th><th>Net pay</th><th>Posting</th><th>Action</th></tr></thead><tbody><tr v-for="item in historyRows" :key="item.key"><td><strong>{{ period(item) }}</strong><small v-if="isLatest(item)" class="latest-label">Latest cutoff</small></td><td>{{ item.assignmentType }}<small>{{ payslipSiteNames(item).join(' / ') }}</small></td><td class="amount">{{ money(item.gross) }}</td><td class="amount">{{ money(item.deductions) }}</td><td class="amount"><strong>{{ money(item.net) }}</strong></td><td><span class="badge" :class="statusClass(item.publicationStatus)">{{ item.publicationStatus }}</span><small v-if="item.publicationStatus==='Posted'">{{ timestamp(item.postedAt) }}</small></td><td><button class="secondary" @click="viewPayslip(item)">View payslip</button></td></tr><tr v-if="!historyRows.length"><td colspan="7" class="empty">{{ historyLoading?'Loading payslips...':historyError?'Payslip history is unavailable.':'No payslips match these filters.' }}</td></tr></tbody></table></div><ListProgress v-bind="historyProgress" unit="payslips" :paused="historyLoading || !!selectedPayslipKey || serviceBusy" @load-more="loadMoreHistory" />
       </template>
      </template>
 

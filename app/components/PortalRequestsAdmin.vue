@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useInfiniteCollection } from '~~/app/composables/useInfiniteCollection'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed,onMounted,onBeforeUnmount,ref,watch } from 'vue'
@@ -6,20 +8,29 @@ import InformationRequestThread from './InformationRequestThread.vue'
 import RequestChatWindow from './RequestChatWindow.vue'
 const emit=defineEmits<{processing:[value:boolean]}>()
 const props=defineProps<{employeeId?:number}>()
-const items=ref<any[]>([]),pagination=ref({page:1,pages:1,total:0}),status=ref('Pending'),search=ref(''),loading=ref(false),busy=ref(false),error=ref(''),notice=ref(''),opened=ref<number|null>(null),drafts=ref<Record<number,{message:string;status:string}>>({}),review=ref<any>(null)
+const status=ref('Pending'),search=ref(''),busy=ref(false),notice=ref(''),opened=ref<number|null>(null),drafts=ref<Record<number,{message:string;status:string}>>({}),review=ref<any>(null)
 const activeRequest=computed(()=>items.value.find(item=>item.RequestID===opened.value))
 const canReply=computed(()=>['Pending','In review'].includes(activeRequest.value?.Status))
 const draft=computed(()=>opened.value?drafts.value[opened.value]:undefined)
 const preview=(item:any)=>item.messages?.[item.messages.length-1]?.Message||item.Message||'Open conversation'
 const initials=(name:string)=>name.split(/[\s,]+/).filter(Boolean).slice(0,2).map(part=>part[0]).join('')
-let owner=0,controller:AbortController|null=null
+let owner=0
 watch(busy,value=>emit('processing',value))
-async function load(page=1){const current=++owner;controller?.abort();controller=new AbortController();loading.value=true;error.value='';try{const result:any=await $fetch('/api/employees/portal-accounts/requests',{query:{employeeId:props.employeeId,status:status.value||undefined,search:search.value.trim(),page},signal:controller.signal,retry:0,timeout:15000});if(current===owner){items.value=[...result.items];pagination.value=result.pagination;for(const item of items.value)if(!['Pending','In review'].includes(item.Status))delete drafts.value[item.RequestID];if(!activeRequest.value)opened.value=null;if(!canReply.value)review.value=null}}catch(cause:any){if(current===owner)error.value=requestErrorMessage(cause, 'Unable to load information requests.')}finally{if(current===owner)loading.value=false}}
+const collection=useInfiniteCollection<any,any>({
+ query:()=>({employeeId:props.employeeId,status:status.value||undefined,search:search.value.trim()}),
+ key:item=>item.RequestID,
+ paused:()=>busy.value||opened.value!==null,
+ fetchPage:(page,query,signal)=>$fetch<any>('/api/employees/portal-accounts/requests',{query:{...query,page},signal,retry:0,timeout:15000}),
+ onLoaded:()=>{for(const item of items.value)if(!['Pending','In review'].includes(item.Status))delete drafts.value[item.RequestID];if(!activeRequest.value)opened.value=null;if(!canReply.value)review.value=null},
+})
+const {items,pagination,loading,error,progress:listProgress,loadMore:loadMoreItems}=collection
+async function load(page=1){++owner;if(page===1)await collection.reset();else await collection.refresh()}
+
 function open(item:any){if(busy.value)return;if(['Pending','In review'].includes(item.Status))drafts.value[item.RequestID]??={message:'',status:'In review'};else delete drafts.value[item.RequestID];opened.value=item.RequestID;review.value=null;error.value='';notice.value=''}
 function close(){if(busy.value)return;opened.value=null;review.value=null}
 function prepare(item:any){if(!canReply.value||!draft.value||activeRequest.value?.RequestID!==item.RequestID)return;review.value={requestId:item.RequestID,version:item.Version,message:draft.value.message.trim(),status:draft.value.status}}
 async function send(){if(!review.value||busy.value||!canReply.value)return;const body={...review.value},current=owner;busy.value=true;error.value='';notice.value='';try{await $fetch('/api/employees/portal-accounts/requests',{method:'POST',body,retry:0,timeout:20000});if(current!==owner)return;delete drafts.value[body.requestId];review.value=null;notice.value='Reply and request status saved. The employee record was not changed.';await load(pagination.value.page);if(activeRequest.value&&canReply.value)drafts.value[body.requestId]={message:'',status:activeRequest.value.Status}}catch(cause:any){if(current===owner)error.value=requestErrorMessage(cause, 'Unable to send this reply. Reload if the request changed.')}finally{busy.value=false}}
-onMounted(()=>void load());watch(()=>props.employeeId,()=>{opened.value=null;drafts.value={};review.value=null;void load()});onBeforeUnmount(()=>{owner++;controller?.abort();emit('processing',false)})
+onMounted(()=>void load());watch(()=>props.employeeId,()=>{opened.value=null;drafts.value={};review.value=null;void load()});onBeforeUnmount(()=>{owner++;emit('processing',false)})
 </script>
 <template>
  <section class="admin-requests"><header><p class="eyebrow">HR / PAYROLL INBOX</p><h3>Employee information requests</h3><p>Open a conversation to review a correction and reply. Update approved details in Employee Management before marking the request Resolved.</p></header>
@@ -27,7 +38,7 @@ onMounted(()=>void load());watch(()=>props.employeeId,()=>{opened.value=null;dra
   <p v-if="error&&!activeRequest" class="error" role="alert">{{error}} <button type="button" :disabled="busy" @click="load()">Reload</button></p><p v-if="notice&&!activeRequest" class="success" role="status">{{notice}}</p>
   <div class="list-heading"><small>{{pagination.total}} request{{pagination.total===1?'':'s'}}</small><span>Click a request to open messages</span></div>
   <div class="request-list"><article v-for="item in items" :key="item.RequestID"><button type="button" class="row" aria-haspopup="dialog" :disabled="busy" @click="open(item)"><span class="list-avatar" aria-hidden="true">{{initials(item.EmployeeName)}}</span><span class="list-identity"><strong>{{item.EmployeeName}}</strong><small>{{[item.EmployeeNumber,item.AgencyName].filter(Boolean).join(' / ')}}</small><span class="list-preview">{{preview(item)}}</span></span><span class="list-topic"><strong>{{item.FieldLabel}}</strong><small>#{{item.RequestID}} <span v-if="drafts[item.RequestID]?.message" class="draft-label"> / Draft</span></small></span><span class="status-badge" :class="{resolved:item.Status==='Resolved'}">{{item.Status}}</span><span class="open-arrow" aria-hidden="true">&#8599;</span></button></article><p v-if="!items.length" class="empty">{{loading?'Loading requests...':'No requests match your filters.'}}</p></div>
-  <div v-if="pagination.pages>1" class="pages"><button type="button" :disabled="busy||loading||pagination.page<=1" @click="load(pagination.page-1)">Previous</button><small>{{pagination.page}} / {{pagination.pages}}</small><button type="button" :disabled="busy||loading||pagination.page>=pagination.pages" @click="load(pagination.page+1)">Next</button></div>
+  <ListProgress v-bind="listProgress" unit="requests" :paused="busy || opened !== null" @load-more="loadMoreItems" />
   <RequestChatWindow v-if="activeRequest" :title="activeRequest.EmployeeName" :subtitle="[activeRequest.EmployeeNumber,activeRequest.AgencyName].filter(Boolean).join(' / ')" :busy="busy" @close="close"><InformationRequestThread :request="activeRequest" viewer="staff" compact><template #composer><p v-if="error" class="error" role="alert">{{error}}</p><p v-if="notice" class="success" role="status">{{notice}}</p><form v-if="canReply&&!review&&draft" class="reply-form" @submit.prevent="prepare(activeRequest)"><label>Reply to employee<textarea v-model="draft.message" required maxlength="2000" rows="2" :disabled="busy" placeholder="Write a reply..."></textarea></label><div class="reply-actions"><label>Set request status<select v-model="draft.status" :disabled="busy" required><option>In review</option><option>Resolved</option><option>Declined</option></select></label><button type="submit" class="primary" :disabled="busy">Review response</button></div><small>Closing this window keeps your draft. Employee details are updated separately.</small></form><div v-else-if="canReply&&review" class="review" aria-label="Review staff reply"><h4>Confirm reply &amp; status</h4><p>{{review.message}}</p><p>Status: <strong>{{review.status}}</strong></p><div><button type="button" :disabled="busy" @click="review=null">Keep editing</button><button type="button" class="primary" :disabled="busy" @click="send">{{busy?'Saving...':'Confirm and send'}}</button></div></div><p v-else class="closed-note">This request is {{activeRequest.Status.toLowerCase()}}. The conversation is read-only; further replies and status changes are disabled.</p></template></InformationRequestThread></RequestChatWindow>
  </section>
 </template>

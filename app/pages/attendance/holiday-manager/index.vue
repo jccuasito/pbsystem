@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref } from 'vue'
@@ -96,6 +98,8 @@ async function deactivate(item: any) {
 
 onMounted(load)
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !modalOpen.value })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredItems, { resetKey: () => [appliedSearch.value,typeFilter.value,yearFilter.value] })
 </script>
 
 <template>
@@ -113,7 +117,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
     <p v-if="yearFilter" class="calendar-note">Recurring dates and weekdays follow {{ yearFilter }}.<template v-if="legalHolidaySources[Number(yearFilter)]">&nbsp;<a :href="legalHolidaySources[Number(yearFilter)]" target="_blank" rel="noopener noreferrer">Legal holiday reference</a>.</template><template v-if="yearFilter === '2027'"> Eid dates will be added once officially declared.</template><template v-else-if="!legalHolidaySources[Number(yearFilter)]"> Official movable holiday dates for this year are not yet installed.</template></p>
     <div class="table-wrap"><table><thead><tr><th>Holiday name</th><th>Date</th><th>Type</th><th>Recurring yearly</th><th>Status</th><th>Actions</th></tr></thead><tbody>
       <tr v-if="loading"><td colspan="6">Loading…</td></tr><tr v-else-if="!filteredItems.length"><td colspan="6">No holidays found.</td></tr>
-      <tr v-for="item in filteredItems" :key="item.HolidayID">
+      <tr v-for="item in displayedItems" :key="item.HolidayID">
         <td class="name" data-label="Holiday name">{{ item.HolidayName }}</td>
         <td data-label="Date">{{ formatHolidayDate(item.DisplayDate) }}<small class="holiday-weekday">{{ holidayWeekday(item.DisplayDate) }}</small></td>
         <td data-label="Type"><span class="type" :class="`type--${String(item.HolidayType).toLowerCase()}`">{{ item.HolidayType }}</span></td>
@@ -125,6 +129,8 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
         </div></td>
       </tr>
     </tbody></table></div>
+    <ListProgress v-bind="listProgress" unit="holidays" :paused="loading || busy || modalOpen" @load-more="loadMoreItems" />
+
 
     <Teleport to="body">
       <div v-if="modalOpen" class="backdrop" @click.self="!busy && (modalOpen = false)">

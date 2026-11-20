@@ -6,6 +6,9 @@ const { transformSync } = require('esbuild')
 const { parse } = require('@vue/compiler-sfc')
 const vue = require('vue')
 const { employeeStatusCutoffSummary } = require('../shared/utils/employeeStatusSheet.ts')
+const listModule = { exports: {} }
+vm.runInNewContext(transformSync(fs.readFileSync('app/composables/useProgressiveList.ts', 'utf8'), { loader: 'ts', format: 'cjs' }).code,
+  { module: listModule, require: () => ({ ...vue, onMounted() {}, onBeforeUnmount() {} }) })
 
 test('cutoff counts include only assigned dates and keep blanks separate from absence', () => {
   const statuses = { '2026-09-16': 'Absent', '2026-09-18': 'Present', '2026-09-19': 'Absent' }
@@ -36,7 +39,8 @@ function workspace(fetch) {
     : name.includes('requestError') ? require('../shared/utils/requestError.ts')
     : name.includes('attendanceStatuses') ? require('../shared/utils/attendanceStatuses.ts')
     : name.includes('employeeStatusSheet') ? require('../shared/utils/employeeStatusSheet.ts')
-    : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} } : {} }
+    : name.includes('useRealtimeRefresh') ? { useRealtimeRefresh() {} }
+    : name.includes('useProgressiveList') ? listModule.exports : {} }
   scope.run(() => vm.runInNewContext(transformSync(descriptor.scriptSetup.content + '\nmodule.exports={employees,deployments,cutoffs,cutoffHistory,cutoffAssignments,cutoffLoading,cutoffError,loadCutoffHistory,listedEmployees,search,agencyFilter,positionFilter,statusFilter,cutoffSummary,sheetEmployees,openStatusSheet,selectedYear,selectedCutoffKey,sheetEmployeeId,sheetOpen,cutoffRefreshing,refreshError,sheetTotals,summaryOpen,summaryEmployeeId,summaryHistoryRows,summaryLoading,summaryError,openSummary,loadSummary,statusForm,statusReadOnly,canSaveStatus,statusAt,openStatusCell,load,saving,saveStatus,statusOpen,error,alert};', { loader: 'ts', format: 'cjs' }).code, context))
   const state = module.exports
   state.employees.value = [{ EmployeeID: 8, EmployeeName: 'Test Employee' }]

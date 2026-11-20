@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useInfiniteCollection } from '~~/app/composables/useInfiniteCollection'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed,nextTick,onMounted,onBeforeUnmount,ref,watch } from 'vue'
@@ -6,9 +8,9 @@ import InformationRequestThread from './InformationRequestThread.vue'
 import RequestChatWindow from './RequestChatWindow.vue'
 const props=defineProps<{employee?:{EmployeeID?:number;EmployeeNumber?:string|null;EmployeeName?:string;AgencyName?:string;PositionName?:string}}>()
 const emit=defineEmits<{dirty:[value:boolean];processing:[value:boolean]}>()
-const fields=ref<any[]>([]),choices=ref<any[]>([]),requests=ref<any[]>([]),pagination=ref({page:1,pages:1,total:0}),loading=ref(false),busy=ref(false),error=ref(''),notice=ref('')
+const fields=ref<any[]>([]),choices=ref<any[]>([]),busy=ref(false),notice=ref('')
 const tab=ref('details'),showForm=ref(false),fieldKey=ref(''),proposedValue=ref(''),message=ref(''),replies=ref<Record<number,string>>({}),opened=ref<number|null>(null),pending=ref<any>(null),requestForm=ref<HTMLElement|null>(null),reviewPanel=ref<HTMLElement|null>(null)
-let owner=0,controller:AbortController|null=null
+let owner=0
 const sections=computed(()=>[...new Set(fields.value.map(field=>field.section))])
 const activeRequest=computed(()=>{const requestId=opened.value;return requests.value.find(item=>item.RequestID===requestId)})
 const preview=(item:any)=>{const last=item.messages?.[item.messages.length-1];return last?(last.Sender==='Staff'?'HR: ':'You: ')+last.Message:'No messages yet'}
@@ -23,7 +25,15 @@ function closeConversation(){if(busy.value)return;opened.value=null;if(pending.v
 function display(field:any){if(!field.value)return 'Not recorded';if(['Birthday','DateHired'].includes(field.key)&&/^\d{4}-\d{2}-\d{2}$/.test(field.value)){const date=new Date(field.value+'T00:00:00Z');if(Number.isFinite(date.getTime()))return date.toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric',timeZone:'Asia/Singapore'})}return field.value}
 const hasDraft=computed(()=>Boolean(proposedValue.value||message.value||Object.values(replies.value).some(Boolean)))
 watch(busy,value=>emit('processing',value));watch(hasDraft,value=>emit('dirty',value))
-async function load(page=1){const current=++owner;controller?.abort();controller=new AbortController();loading.value=true;error.value='';try{const result:any=await $fetch('/api/employee-portal/information',{query:{page},signal:controller.signal,retry:0,timeout:15000});if(current===owner){fields.value=result.fields;choices.value=result.requestFields;requests.value=[...result.requests.items];pagination.value=result.requests.pagination}}catch(cause:any){if(current===owner)error.value=requestErrorMessage(cause, 'Unable to load your employee information.')}finally{if(current===owner)loading.value=false}}
+const collection=useInfiniteCollection<any,any>({
+ query:()=>({}),key:item=>item.RequestID,
+ paused:()=>busy.value||opened.value!==null||Boolean(pending.value)||tab.value!=='requests',
+ fetchPage:async(page,query,signal)=>{const result:any=await $fetch('/api/employee-portal/information',{query:{page},signal,retry:0,timeout:15000});return{...result,items:result.requests.items,pagination:result.requests.pagination}},
+ onLoaded:result=>{fields.value=result.fields;choices.value=result.requestFields},
+})
+const {items:requests,pagination,loading,error,progress:listProgress,loadMore:loadMoreItems}=collection
+async function load(_page?:number){++owner;await collection.refresh()}
+
 async function startRequest(){showForm.value=true;await nextTick();requestForm.value?.scrollIntoView({block:'start',behavior:'smooth'});requestForm.value?.querySelector('select')?.focus({preventScroll:true})}
 async function reviewRequest(){pending.value={action:'create',fieldKey:fieldKey.value,proposedValue:proposedValue.value.trim(),message:message.value.trim()};await focusReview()}
 async function focusReview(){await nextTick();reviewPanel.value?.scrollIntoView({block:'center',behavior:'smooth'});reviewPanel.value?.focus({preventScroll:true})}
@@ -38,7 +48,7 @@ async function send(){
   notice.value=body.action==='create'?'Your request was sent to HR. Your employee record has not been changed.':'Request updated.';await load()
  }catch(cause:any){if(current===owner)error.value=requestErrorMessage(cause, 'Unable to send this request.')}finally{busy.value=false}
 }
-onMounted(()=>void load());onBeforeUnmount(()=>{owner++;controller?.abort();emit('dirty',false);emit('processing',false)})
+onMounted(()=>void load());onBeforeUnmount(()=>{owner++;emit('dirty',false);emit('processing',false)})
 </script>
 <template>
  <section class="information-panel" :aria-busy="loading||busy">
@@ -55,7 +65,7 @@ onMounted(()=>void load());onBeforeUnmount(()=>{owner++;controller?.abort();emit
    <header class="requests-heading"><div><h3>Messages with HR</h3><p>Each correction request has its own conversation.</p></div><span class="request-total">{{pagination.total}} request{{pagination.total===1?'':'s'}}</span></header>
    <div v-if="requests.length&&tab==='requests'" class="request-inbox" aria-label="Correction requests"><button v-for="item in requests" :key="item.RequestID" type="button" class="request-heading" aria-haspopup="dialog" :disabled="busy||Boolean(pending)" @click="opened=item.RequestID"><span class="request-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 3V6a2 2 0 0 1 2-2Z"/><path d="M7 8h10M7 12h7"/></svg></span><span class="request-list-copy"><span class="request-row-title"><strong>{{item.FieldLabel}}</strong><small>Request #{{item.RequestID}}<span v-if="replies[item.RequestID]"> / Draft</span></small></span><span class="request-preview">{{preview(item)}}</span></span><span class="request-state" :class="{resolved:item.Status==='Resolved'}">{{item.Status}}</span><span class="request-arrow" aria-hidden="true">&#8599;</span></button></div>
    <div v-if="!requests.length&&!loading" class="empty"><span aria-hidden="true">&#10003;</span><h4>No conversations yet</h4><p>Use Request correction to send HR a question about your recorded details.</p></div>
-   <div v-if="pagination.pages>1" class="pages"><button type="button" :disabled="loading||busy||pagination.page<=1||Boolean(pending)" @click="load(pagination.page-1)">Previous</button><small>{{pagination.page}} / {{pagination.pages}}</small><button type="button" :disabled="loading||busy||pagination.page>=pagination.pages||Boolean(pending)" @click="load(pagination.page+1)">Next</button></div>
+   <ListProgress v-bind="listProgress" unit="requests" :paused="busy || opened !== null || !!pending || tab!=='requests'" @load-more="loadMoreItems" />
   </section>
   <section v-show="showForm" ref="requestForm" class="new-request"><header class="requests-heading"><div><p class="eyebrow">CONTACT HR</p><h3>Request an information correction</h3><p>Choose the detail and explain what should be corrected.</p></div><button type="button" :disabled="busy||Boolean(pending)" @click="showForm=false">Hide form</button></header><form @submit.prevent="reviewRequest"><fieldset :disabled="busy||Boolean(pending)"><label>Information to correct<select v-model="fieldKey" required><option value="" disabled>Choose information</option><option v-for="field in choices" :key="field.key" :value="field.key">{{field.label}}</option></select></label><div v-if="selectedField" class="recorded"><span>Currently recorded</span><strong>{{display(selectedField)}}</strong></div><label>Correct information<textarea v-model="proposedValue" required maxlength="2000" rows="2" placeholder="Enter the correct detail"></textarea></label><label>Message to HR<textarea v-model="message" required maxlength="2000" rows="3" placeholder="Please explain the correction you are requesting."></textarea></label><p class="form-note">Do not include passwords, recovery codes or full ID document numbers. Your record changes only after HR reviews and updates it.</p><button class="primary" type="submit">Review request</button></fieldset></form></section>
   <p v-if="!showForm&&(proposedValue||message)" class="draft-note">You have an unsent correction request. <button type="button" :disabled="busy" @click="startRequest">Continue editing</button></p>

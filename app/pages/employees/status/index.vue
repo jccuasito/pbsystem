@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -430,6 +432,8 @@ async function saveStatus() {
 
 onMounted(() => load())
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !saving.value && !exporting.value && !cutoffLoading.value && !statusOpen.value && !summaryOpen.value && !sheetOpen.value })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(listedEmployees, { resetKey: () => [search.value,agencyFilter.value,positionFilter.value,statusFilter.value,selectedCutoffKey.value] })
 </script>
 
 <template>
@@ -453,13 +457,14 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !s
     <p v-else-if="cutoffError || (error && !statusOpen && !sheetOpen)" class="state error" role="alert">{{ cutoffError || error }} <button class="secondary" type="button" @click="load()">Retry</button></p>
     <section v-else class="table-shell employee-table-shell"><table class="employee-table" aria-label="Employee cutoff summaries">
       <thead><tr><th>Employee ID</th><th>Employee No.</th><th>Name</th><th>Agency</th><th>Position</th><th>Cutoff summary</th><th>Actions</th></tr></thead>
-      <tbody><tr v-for="employee in listedEmployees" :key="employee.EmployeeID">
+      <tbody><tr v-for="employee in displayedItems" :key="employee.EmployeeID">
         <td><strong class="employee-id">{{ employeeCode(employee.EmployeeID) }}</strong></td><td>{{ employeeNumber(employee.EmployeeNumber) }}</td><td class="employee-name">{{ employee.EmployeeName }}<small v-if="employee.Status==='Inactive'" class="resigned-label">Resigned — {{ employee.ResignationDate ? formatDate(employee.ResignationDate) : 'Date not recorded' }}</small></td><td>{{ employee.AgencyName }}</td><td>{{ employee.PositionName }}</td>
         <td class="employee-cutoff-summary"><div v-if="summaryItems(employee.EmployeeID).length" class="daily-counts"><span v-for="item in summaryItems(employee.EmployeeID)" :key="item.label"><i :class="item.label === 'Leave' ? 'status-on-leave' : statusClass(item.label)"></i><strong>{{ item.count }}</strong> {{ item.label }}</span></div><span v-else class="muted">No statuses encoded</span><small class="encoding-progress">{{ cutoffSummary(employee.EmployeeID).missingDays }} Not yet encoded &middot; {{ cutoffSummary(employee.EmployeeID).encodedDays }}/{{ cutoffDates.length }} days</small></td>
         <td><div class="row-actions"><button class="action-button action-primary" type="button" :disabled="employee.Status==='Inactive'" :title="employee.Status==='Inactive' ? 'Resigned employees are read-only' : 'Update daily status'" @click="openStatusSheet(employee)">Update status</button><button class="action-button" type="button" @click="openSummary(employee)">View summary</button></div></td>
       </tr><tr v-if="!listedEmployees.length"><td colspan="7" class="state">No employees match the selected filters.</td></tr></tbody>
     </table></section>
-    <footer class="list-footer">Showing {{ listedEmployees.length }} of {{ employees.length }} employees for the selected cutoff</footer>
+    <ListProgress v-bind="listProgress" unit="employees" :paused="loading || cutoffLoading || sheetOpen || statusOpen || summaryOpen" @load-more="loadMoreItems" />
+
 
     <div v-if="sheetOpen" class="modal-layer sheet-layer"><section class="modal sheet-modal"><button class="modal-close" type="button" aria-label="Close" @click="sheetOpen=false">×</button><header class="sheet-head"><div><p class="eyebrow">HR STATUS ENCODING</p><h2>{{ sheetEmployeeId ? 'Employee status sheet' : 'Cutoff status sheet' }}</h2><small>{{ sheetEmployeeId ? 'Choose a date to view or update this employee status.' : 'Daily statuses for all employees matching your filters.' }}</small></div></header>
       <section class="filters sheet-filters"><label class="year-field">Year<select v-model="selectedYear"><option v-for="year in yearOptions" :key="year" :value="year">{{ year }}</option></select></label><label>Cutoff<select v-model="selectedCutoffKey"><option v-for="option in cutoffOptions" :key="option.key" :value="option.key">{{ periodLabel(option) }}</option></select></label><div v-if="sheetEmployeeId" class="agency-assignment"><span>Agency</span><strong>{{ selectedSheetAgency }}</strong></div><label v-else>Agency<select v-model="agencyFilter"><option value="">All Agencies</option><option v-for="agency in agencies" :key="agency">{{ agency }}</option></select></label></section>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -232,6 +234,9 @@ async function save() {
   } finally { busy.value = false }
 }
 onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredEmployees, { resetKey: () => [employeeSearch.value,agencyFilter.value,clientFilter.value,siteFilter.value,cutoffFilter.value] })
+const {visibleItems:displayedRosters,progress:progressRosters,loadMore:loadMoreRosters}=useProgressiveList(siteRosters,{resetKey:()=>[agencyFilter.value,clientFilter.value,siteFilter.value,cutoffFilter.value]})
 </script>
 
 <template>
@@ -252,7 +257,7 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
           <tbody>
             <tr v-if="loading" class="message-row"><td colspan="6">Loading...</td></tr>
             <tr v-else-if="!filteredEmployees.length" class="message-row"><td colspan="6">No deployment records found.</td></tr>
-            <tr v-for="group in filteredEmployees" :key="group.EmployeeID">
+            <tr v-for="group in displayedItems" :key="group.EmployeeID">
               <td data-label="Employee"><strong class="record-name">{{ formatEmployeeName(group) }}</strong><span class="record-meta"><b>{{ formatEmployeeId(group.EmployeeID) }}</b><span aria-hidden="true">&middot;</span>{{ formatEmployeeNumber(group.EmployeeNumber) }}</span></td>
               <td data-label="Agency">{{ display(group.current.AgencyName) }}</td>
               <td data-label="Assignment"><strong class="record-client">{{ display(group.current.ClientName) }}</strong><span class="record-meta">{{ display(group.current.SiteName) }}</span></td>
@@ -263,6 +268,8 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
           </tbody>
         </table>
       </div>
+    <ListProgress v-bind="listProgress" unit="employees" :paused="loading || busy || modalOpen || detailsOpen || rosterOpen" @load-more="loadMoreItems" />
+
     </section>
     <section v-else class="records-section">
       <p class="view-note">{{ cutoffFilter ? 'Showing the DTR roster for the selected cutoff.' : 'Showing all saved DTR cutoffs.' }}</p>
@@ -272,7 +279,7 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
           <tbody>
             <tr v-if="loading" class="message-row"><td colspan="6">Loading...</td></tr>
             <tr v-else-if="!siteRosters.length" class="message-row"><td colspan="6">No DTR assignments found for this search and cutoff.</td></tr>
-            <tr v-for="roster in siteRosters" :key="roster.BatchID">
+            <tr v-for="roster in displayedRosters" :key="roster.BatchID">
               <td data-label="Client / site"><strong class="record-client">{{ roster.ClientName }}</strong><span class="record-meta">{{ roster.SiteName }}</span></td>
               <td data-label="Agency">{{ roster.AgencyName }}</td>
               <td data-label="Cutoff" class="period-cell">{{ cutoffLabel(roster.PeriodStart, roster.PeriodEnd) }}</td>
@@ -283,6 +290,8 @@ onMounted(load); useRealtimeRefresh(() => load(true), { shouldRefresh: () => !bu
           </tbody>
         </table>
       </div>
+<ListProgress v-bind="progressRosters" unit="site rosters" :paused="loading || busy || modalOpen || detailsOpen || rosterOpen" @load-more="loadMoreRosters" />
+
     </section>
     <Teleport to="body"><div v-if="modalOpen" class="backdrop" @click.self="!busy && (modalOpen = false)">
       <form class="modal deployment-form" @submit.prevent="save">

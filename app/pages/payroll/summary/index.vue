@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, ref } from 'vue'
@@ -31,6 +33,8 @@ async function loadSummary(silent=false){
  }finally{if(current===request){loading.value=false;refreshing.value=false}}
 }
 useRealtimeRefresh(()=>loadSummary(true),{immediate:true,shouldRefresh:()=>!refreshing.value})
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(rows, { resetKey: () => [search.value,cutoff.value] })
 </script>
 <template>
  <div class="payroll-summary-workspace">
@@ -44,9 +48,11 @@ useRealtimeRefresh(()=>loadSummary(true),{immediate:true,shouldRefresh:()=>!refr
     <section class="total-cards" aria-label="All accounts cutoff totals" :aria-busy="loading"><article><span>Total gross pay</span><strong>{{loading?'—':money(report.totals.Gross)}}</strong></article><article><span>Total deductions</span><strong>{{loading?'—':money(report.totals.Deductions)}}</strong></article><article><span>Total net pay</span><strong>{{loading?'—':money(report.totals.Net)}}</strong></article><article><span>Finalized DTRs</span><strong>{{loading?'—':`${report.totals.FinalizedDtrCount||0} / ${report.totals.DtrCount||0}`}}</strong><small>{{report.totals.SitesWithoutDtr||0}} sites without a DTR</small></article></section>
     <div class="summary-table"><table><thead><tr><th>Site Account</th><th>Site payrolls</th><th>Cutoff status</th><th class="amount">Gross pay</th><th class="amount">Deductions</th><th class="amount">Net pay</th><th>Details</th></tr></thead><tbody>
      <tr v-if="loading"><td colspan="7">Loading payroll totals…</td></tr><tr v-else-if="!rows.length"><td colspan="7">No Site Accounts match. Add accounts and link sites in Organization > Site.</td></tr>
-     <template v-for="row in loading?[]:rows" :key="row.SiteAccountID"><tr><td><strong>{{row.SiteAccountName}}</strong><small v-if="row.Status==='Inactive'">Inactive account</small><small>{{row.PayrollEntries}} finalized payroll entries</small></td><td>{{row.SiteCount}}</td><td><span class="badge" :class="{ready:row.Ready}">{{status(row)}}</span><small>{{row.FinalizedDtrCount}} / {{row.DtrCount}} DTRs finalized</small></td><td class="amount">{{money(row.Gross)}}</td><td class="amount">{{money(row.Deductions)}}</td><td class="amount"><strong>{{money(row.Net)}}</strong></td><td><button type="button" :aria-expanded="expanded===row.SiteAccountID" @click="expanded=expanded===row.SiteAccountID?null:row.SiteAccountID">{{expanded===row.SiteAccountID?'Hide sites':'View sites'}}</button></td></tr>
+     <template v-for="row in loading?[]:displayedItems" :key="row.SiteAccountID"><tr><td><strong>{{row.SiteAccountName}}</strong><small v-if="row.Status==='Inactive'">Inactive account</small><small>{{row.PayrollEntries}} finalized payroll entries</small></td><td>{{row.SiteCount}}</td><td><span class="badge" :class="{ready:row.Ready}">{{status(row)}}</span><small>{{row.FinalizedDtrCount}} / {{row.DtrCount}} DTRs finalized</small></td><td class="amount">{{money(row.Gross)}}</td><td class="amount">{{money(row.Deductions)}}</td><td class="amount"><strong>{{money(row.Net)}}</strong></td><td><button type="button" :aria-expanded="expanded===row.SiteAccountID" @click="expanded=expanded===row.SiteAccountID?null:row.SiteAccountID">{{expanded===row.SiteAccountID?'Hide sites':'View sites'}}</button></td></tr>
      <tr v-if="expanded===row.SiteAccountID"><td colspan="7" class="site-details"><p v-if="!row.sites.length">No sites linked for this cutoff.</p><table v-else><thead><tr><th>Site / client</th><th>DTRs finalized</th><th class="amount">Gross pay</th><th class="amount">Deductions</th><th class="amount">Net pay</th></tr></thead><tbody><tr v-for="site in row.sites" :key="site.SiteID+':'+site.AgencyID"><td><strong>{{site.SiteName}}</strong><small>{{site.ClientName}}</small><small>{{site.AgencyName || 'No company assigned'}}</small></td><td>{{site.FinalizedDtrCount}} / {{site.DtrCount}}</td><td class="amount">{{money(site.Gross)}}</td><td class="amount">{{money(site.Deductions)}}</td><td class="amount">{{money(site.Net)}}</td></tr></tbody></table></td></tr></template>
     </tbody></table></div>
+    <ListProgress v-bind="listProgress" unit="site accounts" :paused="loading || refreshing" @load-more="loadMoreItems" />
+
    </template>
   </main>
  </div>

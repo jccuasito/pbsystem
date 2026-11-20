@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveGroups } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { useAppTheme } from '~/composables/useAppTheme'
@@ -239,6 +241,7 @@ async function importBackup() {
 }
 
 onMounted(() => { loadSettings() })
+const {rowsFor,progressFor,loadMoreGroup}=useProgressiveGroups({resetKey:()=>userSearch.value})
 </script>
 
 <template>
@@ -290,7 +293,7 @@ onMounted(() => { loadSettings() })
               <div v-else class="directory-name"><span class="department-icon" aria-hidden="true">{{ group.name.slice(0, 1).toUpperCase() }}</span><strong>{{ group.name }}</strong><span class="member-count">0 users</span></div>
               <button v-if="group.id !== null && !group.users.length" class="department-remove" type="button" :disabled="busy" :aria-label="`Remove ${group.name}`" @click="askRemoveDepartment(group)">Remove</button>
             </div>
-            <div v-if="group.users.length" v-show="isGroupExpanded(group.key)" :id="`members-${group.key}`" class="directory-members"><div v-for="user in group.users" :key="user.id" class="directory-user-row"><div class="member-identity"><span class="member-avatar"><img v-if="user.image" :src="user.image" alt="" /><template v-else>{{ initials(user.name) }}</template></span><span><strong>{{ user.name }}</strong><small>{{ user.email }}</small></span></div><span class="role-badge" :class="{ 'role-admin': user.role === 'Admin' }">{{ user.role }}</span><span class="mini-status" :class="{ inactive: user.status !== 'Active' }">{{ user.status }}</span><button class="button secondary" type="button" @click="selectUser(user)">Manage</button></div></div>
+            <div v-if="group.users.length" v-show="isGroupExpanded(group.key)" :id="`members-${group.key}`" class="directory-members"><div v-for="user in rowsFor(group.key,group.users)" :key="user.id" class="directory-user-row"><div class="member-identity"><span class="member-avatar"><img v-if="user.image" :src="user.image" alt="" /><template v-else>{{ initials(user.name) }}</template></span><span><strong>{{ user.name }}</strong><small>{{ user.email }}</small></span></div><span class="role-badge" :class="{ 'role-admin': user.role === 'Admin' }">{{ user.role }}</span><span class="mini-status" :class="{ inactive: user.status !== 'Active' }">{{ user.status }}</span><button class="button secondary" type="button" @click="selectUser(user)">Manage</button></div><ListProgress v-if="group.users.length>25" v-bind="progressFor(group.key,group.users)" unit="users" :paused="loading || busy || selectedUserId !== null" @load-more="loadMoreGroup(group.key,group.users)" /></div>
           </section>
         </div>
       </div>
@@ -308,7 +311,7 @@ onMounted(() => { loadSettings() })
           <template v-else>
             <button class="button secondary history-toggle" type="button" :aria-expanded="showBackups" @click="toggleBackups">{{ showBackups ? 'Hide saved backups' : `View saved backups (${backups.length})` }}</button>
             <div v-if="showBackups" class="backup-table-wrap"><table><thead><tr><th>Date saved</th><th>Backup type</th><th>Size</th><th>Actions</th></tr></thead><tbody><tr v-for="backup in visibleBackups" :key="backup.name"><td><strong>{{ formatDate(backup.createdAt) }}</strong></td><td>{{ backupLabel(backup.kind) }}</td><td>{{ formatSize(backup.size) }}</td><td><div class="row-actions"><button class="button secondary" type="button" @click="downloadBackup(backup.name)">Download</button><button class="button text-button" type="button" @click="askRestore(backup)">Restore</button></div></td></tr></tbody></table></div>
-            <button v-if="showBackups && backupLimit < backups.length" class="button secondary more-backups" type="button" @click="backupLimit += 3">Show 3 more</button>
+            <ListProgress v-if="showBackups" :shown="visibleBackups.length" :total="backups.length" :has-more="backupLimit < backups.length" unit="backups" :paused="loading || busy || !!restoreCandidate" @load-more="backupLimit += 10" />
           </template>
           <button class="upload-link" type="button" :aria-expanded="uploading" @click="uploading = !uploading">{{ uploading ? 'Hide upload' : 'Upload a downloaded backup' }}</button>
           <div v-if="uploading" class="upload-area"><p>Have a backup file from this system? Add it here so it appears in your saved copies.</p><label>Choose saved backup file<input type="file" accept=".sql" @change="uploadFile = ($event.target as HTMLInputElement).files?.[0] || null" /></label><button class="button secondary" type="button" :disabled="busy || !uploadFile" @click="importBackup">Add backup</button></div>

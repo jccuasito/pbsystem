@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import RefundableDeductionBalances from '../../../components/RefundableDeductionBalances.vue'
@@ -111,8 +113,6 @@ const historyYear = ref('')
 const historyFrom = ref('')
 const historyTo = ref('')
 const historySearch = ref('')
-const historyPage = ref(1)
-const historyPageSize = 5
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const form = reactive({ EntryType: 'Loan' as 'Loan' | 'Deduction', CatalogItemID: '', IssuanceNumber: '', IssuanceDate: today(), OriginalAmount: '', RepaymentStartDate: today(), RepaymentPeriods: '1', RepaymentCutoff: 'Second' as RepaymentCutoff, Remarks: '' })
 const pauseForm = reactive({ PauseStartDate: today(), ResumeDate: '', PauseReason: '' })
@@ -141,18 +141,15 @@ const filteredContributionReceipts = computed(() => contributionReceipts.value.f
 }))
 const visibleContributionTotal = computed(() => filteredContributionReceipts.value.reduce((total, receipt) => total + Number(receipt.Amount || 0), 0))
 const historyTotal = computed(() => historyType.value === 'Contribution' ? filteredContributionReceipts.value.length : filteredHistory.value.length)
-const historyPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize)))
-const pageStart = computed(() => (historyPage.value - 1) * historyPageSize)
-const pagedHistory = computed(() => filteredHistory.value.slice(pageStart.value, pageStart.value + historyPageSize))
-const pagedContributions = computed(() => filteredContributionReceipts.value.slice(pageStart.value, pageStart.value + historyPageSize))
-watch([historyScope, historyType, historyYear, historyFrom, historyTo, historySearch], () => { historyPage.value = 1 })
-watch(historyPages, pages => { if (historyPage.value > pages) historyPage.value = pages })
+const historyRows = computed<Array<RecordItem | ContributionReceipt>>(() => historyType.value === 'Contribution' ? filteredContributionReceipts.value : filteredHistory.value)
+const { visibleItems: displayedHistory, progress: historyProgress, loadMore: loadMoreHistory } = useProgressiveList(historyRows, { resetKey: () => [selectedEmployee.value?.EmployeeID, historyScope.value, historyType.value, historyYear.value, historyFrom.value, historyTo.value, historySearch.value] })
+const pagedHistory = computed(() => historyType.value === 'Contribution' ? [] : displayedHistory.value as RecordItem[])
+const pagedContributions = computed(() => historyType.value === 'Contribution' ? displayedHistory.value as ContributionReceipt[] : [])
 function clearHistoryFilters() {
   historyYear.value = ''
   historyFrom.value = ''
   historyTo.value = ''
   historySearch.value = ''
-  historyPage.value = 1
 }
 const contributionGroups = computed(() => {
   const groups = new Map<string, { name: string; item: string; total: number; count: number }>()
@@ -683,7 +680,7 @@ onActivated(() => {
             </footer>
           </article>
         </div>
-        <footer v-if="!profileLoading && historyTotal > historyPageSize" class="history-pagination"><span>Showing {{ pageStart + 1 }}–{{ Math.min(pageStart + historyPageSize, historyTotal) }} of {{ historyTotal }}</span><div><button type="button" :disabled="historyPage === 1" @click="historyPage--">Previous</button><span>Page {{ historyPage }} of {{ historyPages }}</span><button type="button" :disabled="historyPage === historyPages" @click="historyPage++">Next</button></div></footer>
+        <ListProgress v-if="!profileLoading" v-bind="historyProgress" unit="history records" :paused="profileLoading || issuanceOpen || pauseOpen || planOpen" @load-more="loadMoreHistory" />
       </section>
     </div>
 

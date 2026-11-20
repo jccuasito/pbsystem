@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref } from 'vue'
@@ -191,6 +193,8 @@ function display(item: any, column: Column) {
 
 onMounted(load)
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredItems, { resetKey: () => [props.resource,search.value,statusFilter.value,agencyFilter.value] })
 </script>
 
 <template>
@@ -206,14 +210,14 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
       <label v-if="resource === 'site'"><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in lookups.agencies || []" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
-    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `Showing ${filteredItems.length} of ${displayItems.length} ${title.toLowerCase()}` }}</span><button v-if="search || statusFilter || agencyFilter" type="button" @click="clearFilters">Clear filters</button></div>
+    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `${filteredItems.length} matching ${title.toLowerCase()} / ${displayItems.length} total` }}</span><button v-if="search || statusFilter || agencyFilter" type="button" @click="clearFilters">Clear filters</button></div>
 
     <div class="desktop-table">
       <table><thead><tr><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th class="actions-heading">Actions</th></tr></thead>
         <tbody>
           <tr v-if="loading" class="table-message"><td :colspan="columns.length + 1">Loading {{ title.toLowerCase() }}…</td></tr>
           <tr v-else-if="!filteredItems.length" class="table-message"><td :colspan="columns.length + 1">No {{ title.toLowerCase() }} match the current filters.</td></tr>
-          <tr v-for="item in filteredItems" :key="item.rowKey || item[idKey]">
+          <tr v-for="item in displayedItems" :key="item.rowKey || item[idKey]">
             <td v-for="column in columns" :key="column.key"><img v-if="column.key === 'Logo' && item.HasLogo" class="table-logo" :src="logoUrl(item)" alt="Saved logo"><span v-else-if="column.key === 'Logo'">—</span><span v-else-if="column.key === 'Status'" class="status" :class="`status--${item.Status?.toLowerCase()}`">{{ item.Status }}</span><strong v-else-if="column.key === primaryColumn?.key">{{ display(item, column) }}</strong><template v-else>{{ display(item, column) }}</template></td>
             <td><div v-if="canEdit" class="actions"><button type="button" @click="edit(item)">Edit</button><button v-if="resource === 'site' && item.Status === 'Inactive'" type="button" :disabled="busy" @click="activate(item)">Activate</button><button v-else type="button" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></div><span v-else>View only</span></td>
           </tr>
@@ -223,12 +227,14 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
 
     <section class="mobile-list" :aria-label="title">
       <p v-if="loading" class="mobile-message">Loading {{ title.toLowerCase() }}…</p><p v-else-if="!filteredItems.length" class="mobile-message">No {{ title.toLowerCase() }} match the current filters.</p>
-      <article v-for="item in filteredItems" :key="item.rowKey || item[idKey]" class="record-card">
+      <article v-for="item in displayedItems" :key="item.rowKey || item[idKey]" class="record-card">
         <header><div class="record-card__identity"><img v-if="item.HasLogo" :src="logoUrl(item)" alt="Saved logo"><strong>{{ display(item, primaryColumn) }}</strong></div><span class="status" :class="`status--${item.Status?.toLowerCase()}`">{{ item.Status }}</span></header>
         <dl><div v-for="column in cardColumns" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ display(item, column) }}</dd></div></dl>
         <footer v-if="canEdit"><button type="button" @click="edit(item)">Edit</button><button v-if="resource === 'site' && item.Status === 'Inactive'" type="button" :disabled="busy" @click="activate(item)">Activate</button><button v-else type="button" :disabled="item.Status === 'Inactive'" @click="deactivate(item)">Deactivate</button></footer>
       </article>
     </section>
+    <ListProgress v-bind="listProgress" :unit="title.toLowerCase()" :paused="loading || busy || modalOpen" @load-more="loadMoreItems" />
+
 
     <Teleport to="body"><div v-if="modalOpen" class="modal-backdrop" :class="{ 'organization-modal-backdrop--account': resource === 'site-account' }" @click.self="!busy && (modalOpen = false)"><form class="modal organization-crud-modal" :class="{ 'organization-crud-modal--site': resource === 'site', 'organization-crud-modal--account': resource === 'site-account' }" role="dialog" aria-modal="true" aria-labelledby="organization-modal-title" @submit.prevent="save">
       <button type="button" class="close" aria-label="Close" :disabled="busy" @click="modalOpen = false">×</button>

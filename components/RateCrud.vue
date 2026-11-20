@@ -169,7 +169,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open
     </div>
     <p v-if="error && !open" class="error" role="alert">{{ error }}</p>
 
-    <RateGroups :resource="resource" :items="filteredItems" :all-items="items" :agency-positions="agencyPositions" :regional-rates="regionalRates" :filters="{search,agencyFilter,positionFilter,regionFilter,statusFilter}" :loading="loading" @regional="openRegional" @add="startAdd" @edit="openCurrentEdit" @update="openUpdate" @history="viewingHistory=$event" @deactivate="deactivate" @navigate="regionalGroupOpen=$event" />
+    <RateGroups :resource="resource" :items="filteredItems" :all-items="items" :agency-positions="agencyPositions" :regional-rates="regionalRates" :filters="{search,agencyFilter,positionFilter,regionFilter,statusFilter}" :loading="loading" :paused="open || !!editingCurrent || !!updating || !!viewingHistory || !!regionalModal" @regional="openRegional" @add="startAdd" @edit="openCurrentEdit" @update="openUpdate" @history="viewingHistory=$event" @deactivate="deactivate" @navigate="regionalGroupOpen=$event" />
     <Teleport to="body">
       <div v-if="editingCurrent" class="backdrop" @click.self="!editBusy && (editingCurrent = null)">
         <form class="modal rate-form-modal" role="dialog" aria-modal="true" aria-labelledby="rate-edit-title" @submit.prevent="saveCurrentEdit">

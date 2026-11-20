@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -202,6 +204,8 @@ watch(entryMode, (mode, previous) => {
 })
 onMounted(async () => { await load(); if (props.initialEmployeeId && props.targetDtr) openCreate(props.initialEmployeeId) })
 defineExpose({ openCreate })
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredItems, { resetKey: () => [search.value,statusFilter.value,props.targetDtr?.BatchID,props.initialEmployeeId] })
 </script>
 
 <template>
@@ -227,7 +231,7 @@ defineExpose({ openCreate })
           <table class="adjustment-table">
             <thead><tr><th>Adjustment</th><th>Employee</th><th>Source</th><th>Target cutoff</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
-              <template v-for="item in filteredItems" :key="item.AdjustmentID">
+              <template v-for="item in displayedItems" :key="item.AdjustmentID">
                 <tr>
                   <td><strong>#{{ item.AdjustmentID }} · {{ adjustmentLabel(item) }}</strong><small>{{ item.Reason }}</small><small v-if="item.VerificationReference">Evidence: {{ item.VerificationReference }}</small></td>
                   <td><strong>{{ item.EmployeeName }}</strong><small>{{ item.EmployeeNumber || `EMP-${String(item.EmployeeID).padStart(4, '0')}` }}</small></td>
@@ -246,7 +250,7 @@ defineExpose({ openCreate })
 
         <div class="mobile-adjustments">
           <p v-if="!loading && !filteredItems.length" class="mobile-empty-state">No payroll adjustments found.</p>
-          <article v-for="item in filteredItems" :key="`mobile-${item.AdjustmentID}`">
+          <article v-for="item in displayedItems" :key="`mobile-${item.AdjustmentID}`">
             <header><div><strong>#{{ item.AdjustmentID }} · {{ item.EmployeeName }}</strong><small>{{ adjustmentLabel(item) }}</small></div><span class="status-pill" :class="statusClass(item.Status)">{{ item.Status }}</span></header>
             <dl><div><dt>Original dates</dt><dd>{{ lineDates(item) }}</dd></div><div><dt>Target cutoff</dt><dd>{{ period(item.TargetPeriodStart, item.TargetPeriodEnd) }}</dd></div><div><dt>Amount</dt><dd>{{ money(item.TotalAmount) }}</dd></div><div><dt>Reason</dt><dd>{{ item.Reason }}</dd></div><div v-if="item.VerificationReference"><dt>Evidence</dt><dd>{{ item.VerificationReference }}</dd></div></dl>
             <button class="line-toggle" type="button" @click="toggleLines(item.AdjustmentID)">{{ expanded.has(item.AdjustmentID) ? 'Hide' : 'View' }} breakdown</button>
@@ -254,6 +258,8 @@ defineExpose({ openCreate })
             <footer class="row-actions"><button v-if="permissions.canCreate && ['Draft','For Approval','Approved','Ready for Payroll'].includes(item.Status)" type="button" @click="act(item, 'cancel')">Cancel</button></footer>
           </article>
         </div>
+    <ListProgress v-bind="listProgress" unit="adjustments" :paused="loading || busy || creating" @load-more="loadMoreItems" />
+
 
         <div v-if="creating" class="form-backdrop" @click.self="closeCreate">
           <form class="adjustment-form" @submit.prevent="save">

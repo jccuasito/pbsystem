@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useInfiniteCollection } from '~~/app/composables/useInfiniteCollection'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import ModernDateField from '~~/components/ModernDateField.vue'
@@ -32,16 +34,11 @@ type Transaction = {
   CreatedAt: string
 }
 
-const loading = ref(false)
-const error = ref('')
-const items = ref<Transaction[]>([])
 const agencies = ref<Array<{ AgencyID: number; AgencyName: string }>>([])
 const selected = ref<Transaction | null>(null)
 const receiptCloseButton = ref<HTMLButtonElement | null>(null)
 let receiptTrigger: HTMLElement | null = null
-const page = ref(1)
 const filters = reactive({ search: '', entryType: '', status: '', agencyId: '', dateFrom: '', dateTo: '' })
-const pagination = reactive({ page: 1, pageSize: 25, total: 0, pages: 1 })
 const summary = reactive({ Total: 0, Loans: 0, Deductions: 0, TotalAmount: 0 })
 
 function money(value: unknown) {
@@ -55,32 +52,19 @@ function employeeNumber(item: Transaction) {
   return item.EmployeeNumber || `EMP-${String(item.EmployeeID).padStart(4, '0')}`
 }
 
-async function load(quiet = false) {
-  if (!quiet) loading.value = true
-  error.value = ''
-  try {
-    const query: Record<string, string | number> = { page: page.value, pageSize: pagination.pageSize }
-    for (const [key, value] of Object.entries(filters)) if (value) query[key] = value
-    const response = await $fetch<any>('/api/deductions-loans/transactions', { query })
-    if (quiet && selected.value) return
-    items.value = response.items || []
-    agencies.value = response.agencies || []
-    Object.assign(summary, response.summary || {})
-    Object.assign(pagination, response.pagination || {})
-  } catch (cause: any) {
-    error.value = requestErrorMessage(cause, 'Unable to load transaction receipts.')
-  } finally {
-    if (!quiet) loading.value = false
-  }
-}
-function applyFilters() { page.value = 1; load() }
+const collection = useInfiniteCollection<Transaction, any>({
+  query: () => ({ ...filters, pageSize: 25 }),
+  key: item => `${item.EntryType}-${item.TransactionRecordID}`,
+  paused: () => Boolean(selected.value),
+  fetchPage: (page, query, signal) => $fetch<any>('/api/deductions-loans/transactions', { query: { ...query, page }, signal, retry: 0 }),
+  onLoaded: response => { agencies.value = response.agencies || []; Object.assign(summary, response.summary || {}) },
+})
+const { items, loading, error, progress: listProgress, loadMore: loadMoreItems } = collection
+async function load(quiet = false) { if (!quiet || !selected.value) await collection.refresh() }
+function applyFilters() { void collection.reset() }
 function clearFilters() {
   Object.assign(filters, { search: '', entryType: '', status: '', agencyId: '', dateFrom: '', dateTo: '' })
   applyFilters()
-}
-function goPage(next: number) {
-  page.value = Math.min(Math.max(1, next), pagination.pages)
-  load()
 }
 async function openReceipt(item: Transaction, event: MouseEvent) {
   receiptTrigger = event.currentTarget as HTMLElement
@@ -100,7 +84,7 @@ function onReceiptKeydown(event: KeyboardEvent) {
 
 onMounted(() => { load(); window.addEventListener('keydown', onReceiptKeydown) })
 onBeforeUnmount(() => window.removeEventListener('keydown', onReceiptKeydown))
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !selected.value })
+useRealtimeRefresh(() => load(true), { shouldRefresh: () => !selected.value && collection.pagination.value.page <= 1 })
 </script>
 
 <template>
@@ -141,13 +125,13 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !selected.value })
             <td><span class="receipt-status" :class="item.Status.toLowerCase()">{{ item.Status }}</span></td>
             <td><button class="view-button" type="button" @click="openReceipt(item, $event)">View receipt</button></td>
           </tr>
-          <tr v-if="loading"><td colspan="8" class="empty">Loading transaction receipts…</td></tr>
+          <tr v-if="loading && !items.length"><td colspan="8" class="empty">Loading transaction receipts…</td></tr>
           <tr v-else-if="!items.length"><td colspan="8" class="empty">No transaction receipts match the selected filters.</td></tr>
         </tbody>
       </table>
     </div>
 
-    <footer class="pagination"><span>Showing {{ items.length }} of {{ pagination.total }} transactions</span><div><button :disabled="page<=1" @click="goPage(page-1)">Previous</button><strong>Page {{ pagination.page }} of {{ pagination.pages }}</strong><button :disabled="page>=pagination.pages" @click="goPage(page+1)">Next</button></div></footer>
+    <ListProgress v-bind="listProgress" unit="transactions" :paused="!!selected" @load-more="loadMoreItems" />
 
     <Teleport to="body">
     <div v-if="selected" class="receipt-layer" @click.self="closeReceipt">

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
@@ -116,6 +118,8 @@ onBeforeUnmount(()=>{
 function blurActions(event:FocusEvent){
   if(!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node|null))closeActions(event)
 }
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(items, { resetKey: () => [search.value,agencyId.value,clientId.value,selectedYear.value,selectedCutoff.value] })
 </script>
 <template><section class="dtr-page"><div class="dtr-heading"><div><p class="eyebrow">ATTENDANCE</p><h1>Daily Time Records</h1><p>Review and prepare employee attendance per payroll cutoff.</p></div><button class="primary" @click="openCreate">+ Create DTR</button></div><form class="filters" @submit.prevent="load"><input aria-label="Search DTRs" v-model.trim="search" type="search" placeholder="Search client, site, or DTR ID"><select aria-label="Agency" v-model="agencyId"><option value="">All agencies</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select><select aria-label="Client" v-model="clientId"><option value="">All clients</option><option v-for="c in availableClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select><select aria-label="Year" class="year-filter" v-model="selectedYear"><option v-for="y in yearOptions" :key="y">{{y}}</option></select><select aria-label="Cutoff" class="cutoff-filter" v-model="selectedCutoff"><option v-for="c in cutoffs" :key="c.value" :value="c.value">{{c.label}}</option></select><button class="primary">Search</button></form><p class="period">Selected cutoff: <strong>{{cutoffLabel}}</strong></p><p v-if="error" class="error">{{error}}</p>
 <div class="dtr-list-panel" :aria-busy="loading">
@@ -123,7 +127,7 @@ function blurActions(event:FocusEvent){
     <colgroup><col class="identity-col"><col class="site-col"><col class="period-col"><col class="status-col"><col class="action-col"></colgroup>
     <thead><tr><th scope="col">DTR / Agency</th><th scope="col">Client / Site</th><th scope="col">Cutoff</th><th scope="col">People / Status</th><th scope="col" class="action-heading">Actions</th></tr></thead>
     <tbody>
-      <tr v-for="i in items" :key="i.BatchID" class="dtr-list-row">
+      <tr v-for="i in displayedItems" :key="i.BatchID" class="dtr-list-row">
         <td data-label="DTR / Agency">
           <div class="dtr-brand-cell">
             <span class="dtr-logo">
@@ -166,6 +170,8 @@ function blurActions(event:FocusEvent){
     </tbody>
   </table>
 </div>
+    <ListProgress v-bind="listProgress" unit="DTRs" :paused="loading || saving || !!workspace || formOpen || !!btrWorkspace || !!detailsData || !!computeConfirmation" @load-more="loadMoreItems" />
+
 <div v-if="formOpen" class="overlay" @click.self="formOpen=false"><form class="modal" @submit.prevent="save"><button class="close" type="button" @click="formOpen=false">×</button><h2>Create DTR</h2><p>Create one DTR batch per agency, site, and payroll cutoff.</p><div class="grid"><label>Agency<select v-model="form.AgencyID" required @change="form.ClientID='';form.SiteID=''"><option disabled value="">Select agency</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select></label><label>Client<select v-model="form.ClientID" required :disabled="!form.AgencyID" @change="form.SiteID=''"><option disabled value="">Select client</option><option v-for="c in formClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select></label><label>Site<select v-model="form.SiteID" required :disabled="!form.ClientID"><option disabled value="">Select site</option><option v-for="s in formSites" :key="s.SiteID" :value="String(s.SiteID)">{{s.SiteName}}</option></select></label><label>Period start<input v-model="form.PeriodStart" type="date" required></label><label>Period end<input v-model="form.PeriodEnd" type="date" required></label></div><p v-if="error" class="error">{{error}}</p><div class="modal-actions"><button class="secondary" type="button" @click="formOpen=false">Cancel</button><button class="primary" :disabled="saving">{{saving?'Saving…':'Save DTR'}}</button></div></form></div>
 <div v-if="computeConfirmation" class="overlay" @click.self="closeComputeConfirmation">
   <section ref="computeDialog" class="modal compute-modal" role="dialog" aria-modal="true" aria-labelledby="compute-confirm-title" tabindex="-1" @keydown.esc.stop.prevent="closeComputeConfirmation">

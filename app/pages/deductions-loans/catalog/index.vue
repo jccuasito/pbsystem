@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveGroups } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -311,6 +313,7 @@ function addButtonLabel() {
 
 onMounted(load)
 useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !modalOpen.value && !confirmItem.value })
+const {rowsFor,progressFor,loadMoreGroup}=useProgressiveGroups({resetKey:()=>[search.value,kindFilter.value,classificationFilter.value,statusFilter.value]})
 </script>
 
 <template>
@@ -334,7 +337,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
     </section>
 
     <div class="list-summary setup-directory-heading"><div><h2>Catalog types</h2><p>Browse classifications and their reusable items.</p></div>
-      <span class="directory-total">{{ loading ? 'Loading catalog…' : `Showing ${groupedTypes.length} ${groupedTypes.length === 1 ? 'classification' : 'classifications'} and ${groupedChildCount} ${groupedChildCount === 1 ? 'sub-classification' : 'sub-classifications'}` }}</span>
+      <span class="directory-total">{{ loading ? 'Loading catalog…' : `Matches: ${groupedTypes.length} ${groupedTypes.length === 1 ? 'classification' : 'classifications'} and ${groupedChildCount} ${groupedChildCount === 1 ? 'sub-classification' : 'sub-classifications'}` }}</span>
       <button v-if="search || kindFilter || classificationFilter || statusFilter !== 'Active'" type="button" @click="clearFilters">Clear filters</button>
     </div>
 
@@ -364,7 +367,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
         <table>
           <thead><tr><th>Name</th><th>Status</th><th class="actions-heading">Actions</th></tr></thead>
           <tbody>
-            <template v-for="group in section.groups" :key="group.key">
+            <template v-for="group in rowsFor('classifications-'+section.kind,section.groups)" :key="group.key">
               <tr class="classification-group-row">
                 <td colspan="3">
                   <div class="classification-bar">
@@ -384,7 +387,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
                   </div>
                 </td>
               </tr>
-              <tr v-for="item in isCollapsed(group.key) ? [] : group.items" :key="`${item.kind}-${item.id}`" class="subclassification-row">
+              <tr v-for="item in isCollapsed(group.key) ? [] : rowsFor(group.key,group.items)" :key="`${item.kind}-${item.id}`" class="subclassification-row">
                 <td><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small></td>
                 <td><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></td>
                 <td><div class="actions"><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></div></td>
@@ -392,6 +395,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
               <tr v-if="!isCollapsed(group.key) && !group.items.length" class="empty-children-row">
                 <td colspan="3"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></td>
               </tr>
+<tr v-if="!isCollapsed(group.key) && group.items.length>25"><td colspan="3"><ListProgress v-bind="progressFor(group.key,group.items)" unit="items" :paused="loading || busy || modalOpen || !!confirmItem" @load-more="loadMoreGroup(group.key,group.items)" /></td></tr>
             </template>
           </tbody>
         </table>
@@ -399,7 +403,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
 
       <section class="mobile-list" aria-label="Catalog hierarchy">
 
-        <section v-for="group in section.groups" :key="group.key" class="mobile-group">
+        <section v-for="group in rowsFor('classifications-'+section.kind,section.groups)" :key="group.key" class="mobile-group">
             <button type="button" class="mobile-group__head" :aria-expanded="!isCollapsed(group.key)" @click="toggleClassification(group.key)">
               <span class="chevron" :class="{ collapsed: isCollapsed(group.key) }">⌄</span>
               <span class="mobile-group__title"><strong>{{ group.name }}</strong><small>Classification · {{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }}</small></span>
@@ -409,17 +413,20 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !moda
             <div v-if="!isCollapsed(group.key)" class="mobile-group__items">
               <div class="mobile-group__items-head"><strong>Sub-classifications</strong><span>{{ group.items.length }}</span></div>
               <div v-if="!group.items.length" class="mobile-empty"><span>No sub-classifications yet.</span><button type="button" :disabled="group.classification.Status === 'Inactive'" @click="openTypeForClassification(group.classification)">Add the first one</button></div>
-              <article v-for="item in group.items" :key="`${item.kind}-${item.id}`" class="record-card">
+              <article v-for="item in rowsFor(group.key,group.items)" :key="`${item.kind}-${item.id}`" class="record-card">
                 <header><strong>{{ item.name }}</strong><small v-if="Number(item.IsRefundable)">Refundable deduction</small><span class="status" :class="`status--${item.Status.toLowerCase()}`">{{ item.Status }}</span></header>
                 <footer><button type="button" @click="openType(item)">Edit</button><button type="button" :disabled="item.Status === 'Inactive'" @click="requestDeactivate(typeResource(item), item.id, item.name)">Deactivate</button></footer>
               </article>
-            </div>
+            <template v-if="group.items.length>25"><ListProgress v-bind="progressFor(group.key,group.items)" unit="items" :paused="loading || busy || modalOpen || !!confirmItem" @load-more="loadMoreGroup(group.key,group.items)" /></template></div>
         </section>
 
       </section>
+      <ListProgress v-if="section.groups.length>25" v-bind="progressFor('classifications-'+section.kind,section.groups)" unit="classifications" :paused="loading || busy || modalOpen || !!confirmItem || !expandedKinds.has(section.kind)" @load-more="loadMoreGroup('classifications-'+section.kind,section.groups)" />
       </div>
     </section>
     </div>
+
+
 
     <Teleport to="body">
       <div v-if="modalOpen" class="modal-backdrop" @click.self="closeModal">

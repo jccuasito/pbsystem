@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
@@ -29,6 +31,8 @@ watch([cutoff,agencyId],()=>{closeDetails();load()})
 onMounted(()=>{load();window.addEventListener('keydown',onKeydown)})
 onBeforeUnmount(()=>window.removeEventListener('keydown',onKeydown))
 useRealtimeRefresh(load)
+
+const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(groups, { resetKey: () => [year.value,cutoff.value,agencyId.value,search.value] })
 </script>
 
 <template>
@@ -54,7 +58,7 @@ useRealtimeRefresh(load)
       <table class="summary-table">
         <thead><tr><th>Employee</th><th>Regular site</th><th>Reliever sites</th><th>Combined total</th><th class="action-head">DTR</th></tr></thead>
         <tbody>
-          <tr v-for="group in groups" :key="group.employee.EmployeeID">
+          <tr v-for="group in displayedItems" :key="group.employee.EmployeeID">
             <td class="employee"><strong>{{ group.employee.EmployeeName }}</strong><small>EMP-{{ String(group.employee.EmployeeID).padStart(4, '0') }} · {{ group.employee.EmployeeNumber || 'No employee number' }} · {{ group.employee.AgencyName }} · {{ group.employee.PositionName }}</small></td>
             <td><strong>{{ group.fixed.days }} {{ group.fixed.days === 1 ? 'day' : 'days' }}</strong><small>{{ hours(group.fixed.hours) }} hrs</small></td>
             <td><strong>{{ group.relief.days }} {{ group.relief.days === 1 ? 'day' : 'days' }}</strong><small>{{ group.relief.sites }} {{ group.relief.sites === 1 ? 'site' : 'sites' }} · {{ hours(group.relief.hours) }} hrs</small></td>
@@ -64,6 +68,8 @@ useRealtimeRefresh(load)
         </tbody>
       </table>
     </div>
+    <ListProgress v-bind="listProgress" unit="employees" :paused="loading || selectedEmployeeId !== null" @load-more="loadMoreItems" />
+
 
     <div v-if="selectedGroup" class="modal-backdrop" @click.self="closeDetails">
       <section class="dtr-modal" role="dialog" aria-modal="true" :aria-label="`${selectedGroup.employee.EmployeeName} DTR`">
