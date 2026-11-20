@@ -209,12 +209,12 @@ function close() { if (!busy.value) emit('update:modelValue', false) }
 .edit-profile__photo-row { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
 .edit-profile__avatar {
   width: 60px; height: 60px; flex-shrink: 0; border-radius: 50%; overflow: hidden;
-  display: grid; place-items: center;
+  display: grid; place-items: center; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
   background: var(--navy);
   color: #fff; font-weight: 700; font-size: 1.1rem;
   border: 1px solid var(--line);
 }
-.edit-profile__avatar img { width: 100%; height: 100%; object-fit: cover; }
+.edit-profile__avatar img { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: cover; object-position: center; }
 .edit-profile__photo-actions { min-width: 0; }
 .edit-profile__photo-btn { min-height: 36px; padding: 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-weight: 700; font-size: .82rem; cursor: pointer; font-family: inherit; }
 .edit-profile__photo-btn:hover { border-color: var(--accent); color: var(--accent); }
