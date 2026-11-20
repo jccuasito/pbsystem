@@ -2,7 +2,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto')
 const sfc=require('@vue/compiler-sfc'),esbuild=require('esbuild'),root=path.resolve(__dirname,'..')
 async function fixture(){
- const styles=['base','theme','dashboard'].map(name=>fs.readFileSync(path.join(root,'assets/css',name+'.css'),'utf8'))
+ const styles=['base','theme','dashboard','interactions'].map(name=>fs.readFileSync(path.join(root,'assets/css',name+'.css'),'utf8'))
  const built=await esbuild.build({stdin:{resolveDir:root,loader:'ts',contents:`
  import {createApp,h,ref,watchEffect} from 'vue';import {ofetch} from 'ofetch';import Bell from './app/components/NotificationBell.vue';import {provideAppTheme} from './app/composables/useAppTheme';
  globalThis.$fetch=ofetch;const portal=ref(false),authenticated=ref(true);window.portal=portal;window.authenticated=authenticated;window.navigation=[];
@@ -74,7 +74,7 @@ test('bell read state, safe errors, navigation, keyboard, mobile and portal isol
   await page.emulateMedia({media:'print'});assert.equal(await bell.isVisible(),false);await page.emulateMedia({media:'screen'})
   const before=calls.length;rows=[entry('own-payslip:1','A payslip is available',{view:'payslips'})]
   await page.evaluate(()=>window.portal.value=true);await bell.click();await page.getByText('Only your account is shown.',{exact:true}).waitFor()
-  await page.getByRole('button',{name:/A payslip is available/}).click();assert.deepEqual((await page.evaluate(()=>window.navigation)).at(-1),{view:'payslips'})
+  await page.getByRole('button',{name:/A payslip is available/}).click();await dialog.waitFor({state:'hidden'});assert.deepEqual((await page.evaluate(()=>window.navigation)).at(-1),{view:'payslips'})
   assert.ok(calls.slice(before).every(call=>call.path.startsWith('/api/employee-portal/notifications')&&!call.query))
   await page.evaluate(()=>window.authenticated.value=false);await bell.waitFor({state:'hidden'})
   assert.deepEqual(errors,[])

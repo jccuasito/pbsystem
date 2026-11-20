@@ -29,7 +29,7 @@ const rows=[
   const page=await browser.newPage({viewport:{width:1440,height:1100},acceptDownloads:true}),errors=[]
   page.on('pageerror',error=>errors.push(error.message))
   await page.route('https://**/*',route=>route.abort())
-  const css=['base','theme','components','auth','dashboard'].map(name=>fs.readFileSync(path.join(root,'assets/css/'+name+'.css'),'utf8')).join('\n')
+  const css=['base','theme','components','auth','dashboard','interactions'].map(name=>fs.readFileSync(path.join(root,'assets/css/'+name+'.css'),'utf8')).join('\n')
   await page.setContent(`<html><head><style>${css}\n${styles.join('\n')}</style></head><body><div id="app"></div></body></html>`)
   await page.evaluate(reviewRows=>window.fixture={imported:0,updated:61,skipped:2,blank:2,preservedEmployeeStatusDays:1,issues:[{row:30,reason:reviewRows[3].reason}],reviewRows},rows)
   await page.addScriptTag({content:bundle.outputFiles[0].text})

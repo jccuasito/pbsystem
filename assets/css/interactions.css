@@ -1,0 +1,81 @@
+/* Shared feedback, independent of each screen's layout and button palette.
+   Keep selectors light so controls with their own states can retain them. */
+@media screen {
+  :root {
+    --ui-hover-filter: brightness(.96);
+    --ui-pressed-filter: brightness(.88);
+  }
+
+  :where(html[data-theme='dark'], [data-theme='dark']) {
+    --ui-hover-filter: brightness(1.12);
+    --ui-pressed-filter: brightness(.9);
+  }
+
+  :where(button, [role='button'], summary, a.app-button, a.button) {
+    -webkit-tap-highlight-color: rgba(40, 100, 215, .12);
+    touch-action: manipulation;
+    transition: background-color 140ms ease, border-color 140ms ease,
+      color 140ms ease, box-shadow 140ms ease, filter 140ms ease,
+      opacity 140ms ease, translate 100ms ease;
+  }
+
+  :where(button:disabled, button[aria-disabled='true'], [role='button'][aria-disabled='true'], a[aria-disabled='true']) {
+    cursor: not-allowed;
+    opacity: .55;
+  }
+
+  :where(button, [role='button'], a.app-button, a.button)[aria-busy='true'] {
+    cursor: progress;
+  }
+
+  :where(input, select, textarea) {
+    transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+  }
+
+  :where(button, [role='button'], summary, a.app-button, a.button, a[href], input, select, textarea):focus-visible {
+    outline: 3px solid var(--theme-accent, var(--accent, #2864d7));
+    outline-offset: 3px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    :where(button:enabled, [role='button'], summary, a.app-button, a.button):not(:disabled, [aria-disabled='true'], [aria-busy='true']):hover {
+      filter: var(--ui-hover-filter);
+    }
+
+    :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']), select, textarea):enabled:not([readonly], [aria-invalid='true']):hover {
+      border-color: color-mix(in srgb, var(--theme-accent, var(--accent, #2864d7)) 50%, var(--theme-line, var(--line, #d5ddeb)));
+    }
+  }
+
+  :where(button:enabled, [role='button'], summary, a.app-button, a.button):not(:disabled, [aria-disabled='true'], [aria-busy='true']):active {
+    filter: var(--ui-pressed-filter);
+    transition-duration: 60ms;
+  }
+
+  /* Tactile feedback only on standalone actions; table/calendar cells stay put. */
+  :where(button.button, button.primary, button.secondary, button.danger,
+    .auth-submit, .auth-google-btn, .edit-profile__save, .edit-profile__cancel,
+    .dash-icon-btn, .notification-trigger):enabled:not(:disabled, [aria-disabled='true'], [aria-busy='true']):active {
+    translate: 0 1px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :where(button, [role='button'], summary, a.app-button, a.button) {
+      transition: none;
+    }
+    :where(button, [role='button'], summary, a.app-button, a.button):active {
+      translate: none !important;
+    }
+    .app-button:not(:disabled):not([aria-disabled='true']):not([aria-busy='true']):is(:hover, :active),
+    .auth-submit:not(:disabled):is(:hover, :active) {
+      transform: none;
+    }
+  }
+
+  @media (forced-colors: active) {
+    :where(button:enabled, [role='button'], summary, a.app-button, a.button):not(:disabled, [aria-disabled='true'], [aria-busy='true']):is(:hover, :active) {
+      filter: none;
+      border-color: Highlight;
+    }
+  }
+}

@@ -15,13 +15,14 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - `assets/css/auth.css` — global style loaded on every page.
 - `assets/css/dashboard.css` — global style loaded on every page.
 - `assets/css/payroll-processing.css` — global style loaded on every page.
+- `assets/css/interactions.css` — global style loaded on every page.
 
 ## Page routes
 
 ### `/`
 
 - Page: `app/pages/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - None detected.
 - API calls and handlers:
@@ -35,7 +36,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/attendance/daily-time-records`
 
 - Page: `app/pages/attendance/daily-time-records/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/DtrAttendanceWorkspace.vue`
   - `app/components/DtrBtrModal.vue`
@@ -107,7 +108,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/attendance/dtr-reliever`
 
 - Page: `app/pages/attendance/dtr-reliever/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `shared/utils/requestError.ts`
@@ -128,7 +129,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/attendance/holiday-manager`
 
 - Page: `app/pages/attendance/holiday-manager/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -154,7 +155,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/attendance/shift-code`
 
 - Page: `app/pages/attendance/shift-code/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernTimeField.vue`
@@ -179,7 +180,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/billing/generate`
 
 - Page: `app/pages/billing/generate/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
@@ -217,7 +218,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/billing/history`
 
 - Page: `app/pages/billing/history/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
@@ -255,7 +256,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/dashboard`
 
 - Page: `app/pages/dashboard/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ArchivedPayslipsPanel.vue`
   - `app/components/BillingDraftModal.vue`
@@ -590,7 +591,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/deductions-loans/cash-bonds`
 
 - Page: `app/pages/deductions-loans/cash-bonds/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - None detected.
 - API calls and handlers:
@@ -604,7 +605,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/deductions-loans/catalog`
 
 - Page: `app/pages/deductions-loans/catalog/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `assets/css/setup-directory.css`
@@ -633,7 +634,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/deductions-loans/contributions`
 
 - Page: `app/pages/deductions-loans/contributions/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `assets/css/setup-directory.css`
   - `components/ModernDateField.vue`
@@ -661,7 +662,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/deductions-loans/employees`
 
 - Page: `app/pages/deductions-loans/employees/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/RefundableDeductionBalances.vue`
   - `components/ModernDateField.vue`
@@ -699,7 +700,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/deductions-loans/transactions`
 
 - Page: `app/pages/deductions-loans/transactions/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -721,7 +722,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/employee-portal`
 
 - Page: `app/pages/employee-portal/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ArchivedPayslipsPanel.vue`
   - `app/components/DjaAssistant.vue`
@@ -784,7 +785,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/employees`
 
 - Page: `app/pages/employees/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/EmployeeActions.vue`
   - `app/components/EmployeeAddressFields.vue`
@@ -841,7 +842,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/employees/deployment-history`
 
 - Page: `app/pages/employees/deployment-history/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
@@ -874,7 +875,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/employees/documents`
 
 - Page: `app/pages/employees/documents/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/employee.ts`
@@ -909,7 +910,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/employees/portal-accounts`
 
 - Page: `app/pages/employees/portal-accounts/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ArchivedPayslipsPanel.vue`
   - `app/components/EmployeePayslipSheet.vue`
@@ -956,7 +957,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/employees/status`
 
 - Page: `app/pages/employees/status/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/alertmessage/messages.ts`
@@ -986,7 +987,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/forgotpass`
 
 - Page: `app/pages/forgotpass/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `shared/utils/requestError.ts`
@@ -1007,7 +1008,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/funnelpage`
 
 - Page: `app/pages/funnelpage/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
 - API calls and handlers:
@@ -1023,7 +1024,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/loginscreen`
 
 - Page: `app/pages/loginscreen/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `shared/utils/requestError.ts`
@@ -1046,7 +1047,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/organization/agency`
 
 - Page: `app/pages/organization/agency/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -1073,7 +1074,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/organization/client`
 
 - Page: `app/pages/organization/client/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -1100,7 +1101,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/organization/position`
 
 - Page: `app/pages/organization/position/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `shared/utils/requestError.ts`
 - API calls and handlers:
@@ -1123,7 +1124,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/organization/region`
 
 - Page: `app/pages/organization/region/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -1150,7 +1151,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/organization/site`
 
 - Page: `app/pages/organization/site/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -1177,7 +1178,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/organization/site-accounts`
 
 - Page: `app/pages/organization/site-accounts/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -1204,7 +1205,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/payroll/adjustments`
 
 - Page: `app/pages/payroll/adjustments/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - None detected.
 - API calls and handlers:
@@ -1218,7 +1219,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/payroll/history`
 
 - Page: `app/pages/payroll/history/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `shared/utils/requestError.ts`
 - API calls and handlers:
@@ -1239,7 +1240,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/payroll/payslip`
 
 - Page: `app/pages/payroll/payslip/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ArchivedPayslipsPanel.vue`
   - `app/components/EmployeePayslipSheet.vue`
@@ -1286,7 +1287,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/payroll/payslip-sites`
 
 - Page: `app/pages/payroll/payslip-sites/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ArchivedPayslipsPanel.vue`
   - `app/components/EmployeePayslipSheet.vue`
@@ -1338,7 +1339,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/payroll/processing`
 
 - Page: `app/pages/payroll/processing/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/PayrollProcessingDetailModal.vue`
   - `app/utils/employee.ts`
@@ -1378,7 +1379,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/payroll/summary`
 
 - Page: `app/pages/payroll/summary/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `shared/utils/requestError.ts`
@@ -1399,7 +1400,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/payroll/thirteenth-month`
 
 - Page: `app/pages/payroll/thirteenth-month/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `app/utils/bodyScrollLock.ts`
@@ -1426,7 +1427,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/rates/billing`
 
 - Page: `app/pages/rates/billing/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -1468,7 +1469,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/rates/payroll`
 
 - Page: `app/pages/rates/payroll/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/ModernDateField.vue`
@@ -1510,7 +1511,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/rates/site`
 
 - Page: `app/pages/rates/site/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useRealtimeRefresh.ts`
   - `components/RateMoneyFields.vue`
@@ -1542,7 +1543,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/reset-password`
 
 - Page: `app/pages/reset-password.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `shared/utils/requestError.ts`
@@ -1563,7 +1564,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/settings`
 
 - Page: `app/pages/settings/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `components/modals/editprofile.vue`
@@ -1603,7 +1604,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/signupscreen`
 
 - Page: `app/pages/signupscreen/index.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `shared/utils/requestError.ts`
@@ -1629,7 +1630,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/userprofile/viewprofile`
 
 - Page: `app/pages/userprofile/viewprofile.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `components/modals/editprofile.vue`
@@ -1655,7 +1656,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 ### `/verify-email`
 
 - Page: `app/pages/verify-email.vue`
-- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`
+- Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/composables/useAppTheme.ts`
   - `shared/utils/requestError.ts`

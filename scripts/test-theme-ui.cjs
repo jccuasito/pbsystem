@@ -7,7 +7,7 @@ const sfc = require('@vue/compiler-sfc'), esbuild = require('esbuild')
 const root = path.resolve(__dirname, '..')
 
 async function fixture() {
-  const styles = ['base', 'theme', 'components', 'auth', 'dashboard', 'payroll-processing'].map(name => fs.readFileSync(path.join(root, 'assets/css', name + '.css'), 'utf8'))
+  const styles = ['base', 'theme', 'components', 'auth', 'dashboard', 'payroll-processing', 'interactions'].map(name => fs.readFileSync(path.join(root, 'assets/css', name + '.css'), 'utf8'))
   const result = await esbuild.build({
     stdin: { resolveDir: root, loader: 'ts', contents: `
       import {createApp,h,ref,watchEffect} from 'vue';

@@ -8,7 +8,8 @@ export default defineNuxtConfig({
     '~~/assets/css/components.css',
     '~~/assets/css/auth.css',
     '~~/assets/css/dashboard.css',
-    '~~/assets/css/payroll-processing.css'
+    '~~/assets/css/payroll-processing.css',
+    '~~/assets/css/interactions.css'
   ],
   runtimeConfig: {
     jwtSecret: process.env.JWT_SECRET,

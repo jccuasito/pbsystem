@@ -20,10 +20,14 @@
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
-.app-button:hover { transform: translateY(-2px); box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 36%, transparent); }
-.app-button:active { transform: translateY(0); }
 .app-button--outline { color: var(--ink); border-color: var(--line); background: transparent; box-shadow: none; }
-.app-button--outline:hover { border-color: var(--accent); color: var(--accent); box-shadow: none; }
 .app-button--light { color: var(--navy); background:#fff; box-shadow: none; }
-.app-button--light:hover { background:var(--theme-soft,#eef5ff); box-shadow: 0 10px 22px rgba(4, 23, 62, 0.2); }
 .app-button--large { min-height: 50px; padding: 14px 22px; font-size: 0.96rem; }
+
+@media (hover: hover) and (pointer: fine) {
+  .app-button:not(:disabled):not([aria-disabled='true']):not([aria-busy='true']):hover { transform: translateY(-2px); box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 36%, transparent); }
+  .app-button--outline:not(:disabled):not([aria-disabled='true']):not([aria-busy='true']):hover { border-color: var(--accent); color: var(--accent); box-shadow: none; }
+  .app-button--light:not(:disabled):not([aria-disabled='true']):not([aria-busy='true']):hover { background:var(--theme-soft,#eef5ff); box-shadow: 0 10px 22px rgba(4, 23, 62, 0.2); }
+}
+
+.app-button:not(:disabled):not([aria-disabled='true']):not([aria-busy='true']):active { transform: translateY(0); }
