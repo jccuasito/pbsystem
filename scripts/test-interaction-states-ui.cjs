@@ -2,10 +2,12 @@
 // INTERACTIONS_BROWSER_TEST=1 NODE_PATH=<Playwright modules> node scripts/test-interaction-states-ui.cjs
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto')
 const {build}=require('esbuild'),sfc=require('@vue/compiler-sfc'),root=path.resolve(__dirname,'..'),output=path.join(root,'.data/interaction-states-tests')
-async function fixture(){
+async function fixture(accounts=false){
  const styles=['base','theme','components','auth','dashboard','payroll-processing','interactions'].map(name=>fs.readFileSync(path.join(root,'assets/css',name+'.css'),'utf8'))
  const dashboard=fs.readFileSync(path.join(root,'app/pages/dashboard/index.vue'),'utf8'),start=dashboard.indexOf('<button type="button" class="dash-icon-btn"'),themeButton=dashboard.slice(start,dashboard.indexOf('</button>',start)+9)
- const source=`<script setup>
+ const source=accounts?`<script setup>
+ import Accounts from './app/pages/deductions-loans/employees/index.vue';
+ </script><template><div class="page dash-page"><Accounts class="dash-workspace-page"/></div></template>`:`<script setup>
  import{ref,watchEffect}from'vue';import{provideAppTheme}from'./app/composables/useAppTheme';
  import Settings from './app/pages/settings/index.vue';import Bell from './app/components/NotificationBell.vue';import DateField from './components/ModernDateField.vue';import ImportReport from './app/components/DtrImportResultModal.vue';
  const {isDark}=provideAppTheme(),date=ref('2026-11-20'),report=ref(null),clicks=ref(0);window.interactionQa={isDark,clicks};watchEffect(()=>document.documentElement.dataset.theme=isDark.value?'dark':'light');
@@ -16,6 +18,9 @@ async function fixture(){
  </main><ImportReport :result="report" file-name="sample.xlsx" @close="report=null" @done="report=null"/></div></template>
  <style>.interaction-samples{display:flex;flex-wrap:wrap;align-items:start;gap:14px;padding:24px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}.interaction-samples h2{width:100%;margin:0}.interaction-samples .auth-submit{margin:0}.interaction-samples details{width:100%}</style>`
  function compile(code,filename,resolveDir){
+  if(filename.replaceAll('\\','/').endsWith('/deductions-loans/employees/index.vue')){
+   code=code.replace('<script setup lang="ts">','<script setup lang="ts">\nimport {ref,reactive,computed,watch,onMounted} from "vue";')
+  }
   const {descriptor,errors}=sfc.parse(code,{filename});assert.deepEqual(errors,[])
   const id='data-v-'+crypto.createHash('sha1').update(filename).digest('hex').slice(0,8)
   const script=descriptor.script||descriptor.scriptSetup?sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'Component'}):{content:sfc.compileTemplate({source:descriptor.template.content,filename,id}).code.replace('export function render','function render')+';const Component={render}'}
@@ -132,5 +137,80 @@ test('shared interactions cover actual controls, keyboard, disabled/busy states,
   assert.equal(await touch.evaluate(()=>window.interactionQa.clicks.value),2,'Touch handlers fire once per tap')
   assert.equal(await touch.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
   assert.deepEqual(await page.evaluate(()=>window.writes),[]);assert.deepEqual(await touch.evaluate(()=>window.writes),[]);assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
+
+test('employee account filters and nested modal actions stay still and respond once per click',{skip:process.env.INTERACTIONS_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),built=await fixture(true),browser=await chromium.launch({headless:true,executablePath:process.env.INTERACTIONS_BROWSER_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'})
+ fs.mkdirSync(output,{recursive:true})
+ try{
+  for(const dark of [false,true]){
+   const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[]
+   page.on('pageerror',error=>errors.push(error.message))
+   await page.route('https://**/*',route=>route.abort())
+   await page.setContent(`<html data-theme="${dark?'dark':'light'}"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${built.css}</style></head><body><div id="app"></div></body></html>`)
+   await page.evaluate(()=>{
+    window.accountCalls=[];window.accountClicks=[];window.tabTransitions=[]
+    document.addEventListener('click',event=>{const button=event.target.closest('button');if(button)window.accountClicks.push(button.textContent.trim())})
+    document.addEventListener('transitionrun',event=>{if(event.target.matches('button[role="tab"]'))window.tabTransitions.push(event.propertyName)})
+    const employee={EmployeeID:1,EmployeeNumber:'TEST-01',EmployeeName:'SAMPLE EMPLOYEE',AgencyName:'Test Agency',PositionName:'Test Position',ActiveLoanCount:1,ActiveDeductionCount:1,TotalIssued:2000,OutstandingBalance:2000}
+    const records=['Loan','Deduction'].map((EntryType,index)=>({EntryType,RecordID:index+1,AccountReference:'TEST',IssuanceCode:'TEST-'+index,IssuanceDate:'2026-11-01',ItemName:'Sample '+EntryType,Status:'Active',OriginalAmount:1000,OutstandingAmount:1000,RepaymentPeriods:1,RepaymentCutoff:'Second',RepaymentStartDate:'2026-11-01',RepaymentEndDate:'2026-11-30',InstallmentAmount:1000,FinalInstallmentAmount:1000,PlanStatus:'Active',RepaymentSchedule:[],Transactions:[]}))
+    window.$fetch=async(url,options={})=>{
+     window.accountCalls.push({url,method:options.method||'GET'})
+     if(options.method)throw new Error('Unexpected write in account UI QA')
+     if(url==='/api/deductions-loans/employee-records')return options.query?.employeeId?{employee,records}:{items:[employee],pagination:{page:1,pageSize:25,total:1,pages:1},agencies:[],catalogItems:[]}
+     if(url==='/api/deductions-loans/agency-contributions/history')return{items:[]}
+     if(url==='/api/deductions-loans/cash-bonds')return{accounts:[],entries:[],canEdit:false}
+     throw new Error('Unexpected fixture request '+url)
+    }
+   })
+   await page.addScriptTag({content:built.script})
+   await page.locator('.desktop-list').getByRole('button',{name:'View profile',exact:true}).click()
+   const modal=page.getByRole('dialog',{name:'Employee accounts',exact:true});await modal.waitFor()
+   await modal.locator('.record-card').first().waitFor()
+   const initialCalls=await page.evaluate(()=>window.accountCalls.length)
+   async function steadyClick(button){
+    await button.scrollIntoViewIfNeeded();await page.mouse.move(0,0);await page.waitForTimeout(180)
+    const box=await button.boundingBox()
+    await button.hover();await page.waitForTimeout(180)
+    assert.deepEqual(await button.boundingBox(),box,'Hover must not lift account controls')
+    await page.mouse.down();await page.waitForTimeout(90)
+    assert.deepEqual(await button.boundingBox(),box,'Pressed controls must not bounce')
+    const before=await page.evaluate(()=>window.accountClicks.length)
+    await page.mouse.up();await page.waitForTimeout(180)
+    assert.equal(await page.evaluate(()=>window.accountClicks.length),before+1,'One click dispatches one action')
+   }
+   for(const name of ['Archive','Active','All']){
+    const list=modal.getByRole('tablist',{name:'Choose issuance status'})
+    await steadyClick(list.getByRole('tab',{name:new RegExp(name+' ')}))
+    assert.equal(await list.locator('[aria-selected="true"]').count(),1)
+    assert.ok((await list.locator('[aria-selected="true"]').innerText()).includes(name))
+   }
+   for(const name of ['Loan','Deduction','Contributions & Others','All']){
+    const list=modal.locator('.type-tabs')
+    await steadyClick(list.getByRole('tab',{name:new RegExp(name+' ')}))
+    assert.equal(await list.locator('[aria-selected="true"]').count(),1)
+   }
+   assert.deepEqual(await page.evaluate(()=>window.tabTransitions.filter(property=>property!=='filter')),[],'Selected colors and shadows do not animate across multiple tabs')
+   assert.equal(await page.evaluate(()=>window.accountCalls.filter(call=>call.url==='/api/deductions-loans/employee-records').length),2,'Filters do not reload the profile repeatedly')
+   const card=modal.locator('.record-card').first(),planButton=card.getByRole('button',{name:'View repayment plan',exact:true})
+   await planButton.scrollIntoViewIfNeeded();await page.mouse.move(0,0);await page.waitForTimeout(200)
+   const cardBox=await card.boundingBox()
+   await planButton.hover();await page.waitForTimeout(200)
+   assert.deepEqual(await card.boundingBox(),cardBox,'A nested action must not lift its parent card')
+   await steadyClick(planButton)
+   const plan=page.locator('.plan-modal');await plan.waitFor();await steadyClick(plan.getByRole('button',{name:'Close',exact:true}).last());await plan.waitFor({state:'hidden'})
+   await steadyClick(modal.getByRole('button',{name:'+ Add issuance',exact:true}))
+   const issuance=page.locator('.issuance-modal');await issuance.waitFor();await steadyClick(issuance.getByRole('button',{name:'Cancel',exact:true}));await issuance.waitFor({state:'hidden'})
+   await steadyClick(modal.locator('.clear-history'))
+   await page.mouse.move(0,0)
+   await page.screenshot({path:path.join(output,`accounts-${dark?'dark':'light'}.png`)})
+   await page.emulateMedia({reducedMotion:'reduce'})
+   assert.ok(await modal.locator('.scope-filter').first().evaluate(el=>parseFloat(getComputedStyle(el).transitionDuration)<=.00001),'Reduced motion keeps filters still')
+   assert.ok(initialCalls>=3)
+   assert.equal(await page.evaluate(()=>window.accountCalls.some(call=>call.method!=='GET')),false)
+   assert.deepEqual(errors,[])
+   await page.close()
+  }
  }finally{await browser.close()}
 })
