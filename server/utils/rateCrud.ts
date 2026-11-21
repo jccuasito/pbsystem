@@ -1,5 +1,7 @@
-import { createError, getRouterParam, readBody } from 'h3'
+import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
+import { listPage, listSearch, listId, selectListPage } from './listPagination'
+import { pagedPositionRates, pagedRateGroups, rateSnapshots } from './rateDirectory'
 import { requireSession } from './auth'
 import { insertRegionalPosition, changeRegionalPosition } from './regionalRateCrud'
 import { rateMoneyFields } from '../../shared/utils/rateFields'
@@ -9,7 +11,7 @@ type Resource = 'payroll-rate' | 'billing-rate' | 'site-rate'
 const moneyFields = rateMoneyFields.map(({ key }) => key)
 const rateFields = ['AgencyPositionID', 'RegionID', ...moneyFields, 'EffectiveDate', 'Status']
 
-const rateListSql = (table: 'payroll_rate' | 'billing_rate', id: 'PayrollRateID' | 'BillingRateID') => `
+export const rateListSql = (table: 'payroll_rate' | 'billing_rate', id: 'PayrollRateID' | 'BillingRateID') => `
   SELECT r.${id}, r.AgencyPositionID, ap.AgencyID, a.AgencyName, p.PositionName, r.RegionID, rg.RegionCode, rg.RegionName,
     ${moneyFields.map(field => `r.${field}`).join(', ')}, r.EffectiveDate, r.Status, ${table === 'payroll_rate' ? 'r.RegionRateID, r.RegionOverridesJson,' : ''}
     (SELECT COUNT(DISTINCT sr.SiteID) FROM site_rate sr WHERE sr.${id} = r.${id} AND sr.Status = 'Active') AS LinkedSites
@@ -19,6 +21,20 @@ const rateListSql = (table: 'payroll_rate' | 'billing_rate', id: 'PayrollRateID'
   INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
   LEFT JOIN region rg ON rg.RegionID = r.RegionID
   ORDER BY a.AgencyName, p.PositionName, r.EffectiveDate DESC, r.${id} DESC`
+
+export const siteRateListSql = `SELECT sr.SiteRateID, s.ClientID, sr.SiteID, c.ClientName, s.SiteName, sr.PayrollRateID, sr.BillingRateID, sr.Status,
+      pr.AgencyPositionID, ap.AgencyID, a.AgencyName, p.PositionName, s.RegionID, rg.RegionCode, rg.RegionName,
+      pr.RegionID AS PayrollRegionID, br.RegionID AS BillingRegionID,
+      pr.RegularRate AS PayrollRegularRate, br.RegularRate AS BillingRegularRate
+      FROM site_rate sr
+      INNER JOIN site s ON s.SiteID = sr.SiteID
+      INNER JOIN client c ON c.ClientID = s.ClientID
+      INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
+      INNER JOIN billing_rate br ON br.BillingRateID = sr.BillingRateID
+      INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
+      INNER JOIN agency a ON a.AgencyID = ap.AgencyID INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
+      LEFT JOIN region rg ON rg.RegionID = s.RegionID
+      ORDER BY c.ClientName, s.SiteName, a.AgencyName, p.PositionName`
 
 const agencyPositions = async () => {
   const [rows] = await pool.execute<any[]>(`SELECT ap.AgencyPositionID, ap.AgencyID, a.AgencyName, p.PositionName FROM agency_position ap INNER JOIN agency a ON a.AgencyID = ap.AgencyID INNER JOIN \`position\` p ON p.PositionID = ap.PositionID WHERE ap.Status = 'Active' AND a.Status = 'Active' AND p.Status = 'Active' ORDER BY a.AgencyName, p.PositionName`)
@@ -106,6 +122,70 @@ async function insertRate(connection: any, table: 'payroll_rate' | 'billing_rate
 export async function listRateResource(event: any) {
   const session = requireSession(event); void session.sub
   const selected = resource(event)
+  const query = getQuery(event)
+  const request = listPage(query)
+  if(selected !== 'site-rate' && query.view === 'copy-choices'){
+    if(!query.agencyId)return {items:[]}
+    const definition=rateTable(selected)
+    const [items]=await pool.execute<any[]>(`SELECT r.${definition.id},p.PositionName FROM ${definition.table} r INNER JOIN agency_position ap ON ap.AgencyPositionID=r.AgencyPositionID INNER JOIN \`position\` p ON p.PositionID=ap.PositionID WHERE ap.AgencyID=? AND r.RegionID <=> ? AND r.Status='Active'${query.requireDated==='1'?' AND r.EffectiveDate IS NOT NULL':''} ORDER BY p.PositionName,r.${definition.id}`,[listId(query.agencyId,'Agency'),query.regionId?listId(query.regionId,'Region'):null])
+    return {items}
+  }
+  if(selected !== 'site-rate' && query.view === 'record'){
+    const definition=rateTable(selected),sql=rateListSql(definition.table as any,definition.id as any)
+    const index=sql.lastIndexOf(' ORDER BY ')
+    const [rows]=await pool.execute<any[]>(sql.slice(0,index)+` WHERE r.${definition.id}=?`+sql.slice(index),[listId(query.id,'Rate')])
+    if(!rows.length)throw createError({statusCode:404,statusMessage:'Rate not found.'})
+    return {item:(await rateSnapshots(pool,selected,rows))[0]}
+  }
+  if (request && selected !== 'site-rate') {
+    const result = query.view === 'groups'
+      ? await pagedRateGroups(pool,selected,query)
+      : await pagedPositionRates(pool,selected,rateListSql(rateTable(selected).table as any,rateTable(selected).id as any),query)
+    if(query.includeLookups !== '0'){
+      const positions=await agencyPositions(),regionRows=await regions()
+      const [filterAgencies]=await pool.execute<any[]>('SELECT AgencyID,AgencyName,Status FROM agency ORDER BY AgencyName,AgencyID')
+      const [filterPositions]=await pool.execute<any[]>('SELECT DISTINCT a.AgencyName,p.PositionName FROM agency_position ap INNER JOIN agency a ON a.AgencyID=ap.AgencyID INNER JOIN `position` p ON p.PositionID=ap.PositionID ORDER BY a.AgencyName,p.PositionName')
+      const [filterRegions]=await pool.execute<any[]>('SELECT RegionID,RegionCode,RegionName FROM region ORDER BY RegionCode,RegionID')
+      return {...result,agencyPositions:positions,regions:regionRows,filterAgencies,filterPositions,filterRegions,regionalAgencies:filterAgencies.filter(row=>row.Status==='Active')}
+    }
+    return result
+  }
+  if (selected === 'site-rate' && (request || query.view === 'choices')) {
+    if (query.view === 'choices') {
+      // Only load full amounts/versions for the form's selected position/region.
+      if (!query.agencyPositionId || !query.regionId) return {payrollRates:[],billingRates:[],existingLinks:[]}
+      const position = listId(query.agencyPositionId,'Position'), region = listId(query.regionId,'Region')
+      const results = await Promise.all((['payroll-rate','billing-rate'] as const).map(async kind => {
+        const definition = rateTable(kind), sql = rateListSql(definition.table as any,definition.id as any)
+        const [rows] = await pool.execute<any[]>(sql.replace('  ORDER BY ', '  WHERE r.AgencyPositionID=? AND r.RegionID=? AND r.Status=\'Active\' ORDER BY '), [position,region])
+        return (await rateSnapshots(pool,kind,rows)).map(rate => ({...rate,...rate.CurrentRate}))
+      }))
+      const [existingLinks] = query.siteId ? await pool.execute<any[]>(`SELECT sr.SiteRateID,pr.AgencyPositionID FROM site_rate sr INNER JOIN payroll_rate pr ON pr.PayrollRateID=sr.PayrollRateID WHERE sr.SiteID=? AND sr.Status='Active'`,[listId(query.siteId,'Site')]) : [[]]
+      return {payrollRates:results[0],billingRates:results[1],existingLinks}
+    }
+    const params: unknown[]=[]
+    const conditions=listSearch(query.search,['listed.SiteName','listed.ClientName','listed.AgencyName','listed.PositionName','listed.RegionName','listed.RegionCode'],params)
+    for(const [key,field] of [['clientId','ClientID'],['agency','AgencyName'],['status','Status']] as const){if(query[key]){conditions.push(`listed.${field}=?`);params.push(query[key])}}
+    const index=siteRateListSql.lastIndexOf(' ORDER BY ')
+    const order=siteRateListSql.slice(index).replace(/\b(?:c|s|a|p)\./g,'listed.')+', listed.SiteRateID'
+    const result=await selectListPage(pool,siteRateListSql.slice(0,index)+order,query,conditions,params)
+    // Page first, then load effective histories only for referenced rates.
+    for(const [kind,id,target] of [['payroll-rate','PayrollRateID','PayrollRegularRate'],['billing-rate','BillingRateID','BillingRegularRate']] as const){
+      const ids=[...new Set<number>(result.items.map((row:any)=>Number(row[id])))]
+      if(!ids.length)continue
+      const definition=rateTable(kind)
+      const [rows]=await pool.execute<any[]>(`SELECT * FROM ${definition.table} WHERE ${id} IN (${ids.map(()=>'?').join(',')})`,ids)
+      const snapshots=await rateSnapshots(pool,kind,rows),byId=new Map<number,any>(snapshots.map((row:any)=>[Number(row[id]),row.CurrentRate]))
+      for(const row of result.items)row[target]=byId.get(Number(row[id]))?.RegularRate??row[target]
+    }
+    if(query.includeLookups !== '0'){
+      const [siteRows,positions,regionRows]=await Promise.all([sites(),agencyPositions(),regions()])
+      const [clients]=await pool.execute<any[]>('SELECT ClientID,ClientName FROM client ORDER BY ClientName,ClientID')
+      const [agencies]=await pool.execute<any[]>('SELECT AgencyID,AgencyName,Status FROM agency ORDER BY AgencyName,AgencyID')
+      return {...result,sites:siteRows,agencyPositions:positions,regions:regionRows,clients,agencies}
+    }
+    return result
+  }
   if (selected === 'payroll-rate' || selected === 'billing-rate') {
     const definition = rateTable(selected)
     const [[items], positions, regionRows] = await Promise.all([pool.execute<any[]>(rateListSql(definition.table as any, definition.id as any)), agencyPositions(), regions()])
@@ -118,19 +198,7 @@ export async function listRateResource(event: any) {
     }), agencyPositions: positions, regions: regionRows }
   }
   const [[items], siteRows, positions, regionRows, payrollRates, billingRates] = await Promise.all([
-    pool.execute<any[]>(`SELECT sr.SiteRateID, s.ClientID, sr.SiteID, c.ClientName, s.SiteName, sr.PayrollRateID, sr.BillingRateID, sr.Status,
-      pr.AgencyPositionID, ap.AgencyID, a.AgencyName, p.PositionName, s.RegionID, rg.RegionCode, rg.RegionName,
-      pr.RegionID AS PayrollRegionID, br.RegionID AS BillingRegionID,
-      pr.RegularRate AS PayrollRegularRate, br.RegularRate AS BillingRegularRate
-      FROM site_rate sr
-      INNER JOIN site s ON s.SiteID = sr.SiteID
-      INNER JOIN client c ON c.ClientID = s.ClientID
-      INNER JOIN payroll_rate pr ON pr.PayrollRateID = sr.PayrollRateID
-      INNER JOIN billing_rate br ON br.BillingRateID = sr.BillingRateID
-      INNER JOIN agency_position ap ON ap.AgencyPositionID = pr.AgencyPositionID
-      INNER JOIN agency a ON a.AgencyID = ap.AgencyID INNER JOIN \`position\` p ON p.PositionID = ap.PositionID
-      LEFT JOIN region rg ON rg.RegionID = s.RegionID
-      ORDER BY c.ClientName, s.SiteName, a.AgencyName, p.PositionName`),
+    pool.execute<any[]>(siteRateListSql),
     sites(), agencyPositions(), regions(), pool.execute<any[]>(rateListSql('payroll_rate', 'PayrollRateID')).then(([rows]) => rows), pool.execute<any[]>(rateListSql('billing_rate', 'BillingRateID')).then(([rows]) => rows)
   ])
   const [payrollVersions, billingVersions] = await Promise.all([

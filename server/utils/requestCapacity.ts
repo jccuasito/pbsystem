@@ -10,7 +10,8 @@ const limits = {
   heavy: boundedSetting('HEAVY_CONCURRENCY_LIMIT', 2, 1, 8),
 }
 const counts = { active: 0, peak: 0, completed: 0, rejected: 0, slow: 0, heavy: 0 }
-export function requestCapacity() { return { ...counts, limits: { ...limits } } }
+const routes = new Map<string, { completed: number; slow: number; errors: number; totalMs: number; maxMs: number }>()
+export function requestCapacity() { return { ...counts, limits: { ...limits }, routes: Object.fromEntries([...routes].map(([route, value]) => [route, {...value}])) } }
 
 export function admitApiRequest(event: any, path: string) {
   if (event.context.capacityLease) return
@@ -24,7 +25,10 @@ export function admitApiRequest(event: any, path: string) {
   }
   counts.active++; if (heavy) counts.heavy++
   counts.peak = Math.max(counts.peak, counts.active)
-  event.context.capacityLease = { started: Date.now(), heavy }
+  const normalized = `${event.method || event.node.req.method} ${path.replace(/\/\d+(?=\/|$)/g, '/:id')}`
+  // Keep memory bounded even if a caller submits arbitrary invalid API paths.
+  const route = routes.has(normalized) || routes.size < 100 ? normalized : 'other'
+  event.context.capacityLease = { started: Date.now(), heavy, route }
 }
 
 // Called after the handler completes, including errors. A disconnected browser
@@ -36,8 +40,13 @@ export function completeApiRequest(event: any) {
   counts.active--; if (lease.heavy) counts.heavy--
   counts.completed++
   const elapsed = Date.now() - lease.started
+  const record = routes.get(lease.route) || { completed: 0, slow: 0, errors: 0, totalMs: 0, maxMs: 0 }
+  record.completed++; record.totalMs += elapsed; record.maxMs = Math.max(record.maxMs, elapsed)
+  if (lease.failed || (event.node?.res?.statusCode || 200) >= 400) record.errors++
+  routes.set(lease.route, record)
   if (elapsed >= boundedSetting('SLOW_REQUEST_MS', 2000, 100, 120000)) {
     counts.slow++
+    record.slow++
     // No query strings, bodies, cookies, tokens or SQL values in diagnostics.
     console.warn('[slow-request]', event.method, (event.path || '').split('?')[0], `${elapsed}ms`)
   }

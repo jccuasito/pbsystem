@@ -3,11 +3,15 @@ import { requireAdmin } from '../../utils/settingsAccess'
 import { databaseMetrics } from '../../connection/dbconnect'
 import { requestCapacity } from '../../utils/requestCapacity'
 import { databaseReady } from '../../utils/serviceHealth'
+import { performance } from 'node:perf_hooks'
 
 export default defineEventHandler(async event => {
   const session = requireSession(event)
   void session.sub
   await requireAdmin(event)
   const ready = await databaseReady()
-  return { database: ready ? 'ok' : 'unavailable', uptimeSeconds: Math.floor(process.uptime()), memoryMb: Math.round(process.memoryUsage().rss / 1048576), requests: requestCapacity(), pool: databaseMetrics() }
+  const memory = process.memoryUsage(), cpu = process.cpuUsage()
+  return { database: ready ? 'ok' : 'unavailable', uptimeSeconds: Math.floor(process.uptime()), memoryMb: Math.round(memory.rss / 1048576),
+    heapUsedMb: Math.round(memory.heapUsed / 1048576), cpuMs: { user: Math.round(cpu.user / 1000), system: Math.round(cpu.system / 1000) },
+    eventLoop: performance.eventLoopUtilization(), requests: requestCapacity(), pool: databaseMetrics() }
 })

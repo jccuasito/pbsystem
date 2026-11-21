@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { useServerList } from '~~/app/composables/useServerList'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import RegionalRateModal from './RegionalRateModal.vue'
 import RegionalPositionFields from './RegionalPositionFields.vue'
@@ -13,15 +14,32 @@ import ModernDateField from './ModernDateField.vue'
 import { rateFormFields as moneyFields } from '~~/shared/utils/rateFields'
 
 const props = defineProps<{ resource: 'payroll-rate' | 'billing-rate'; title: string }>()
-const items = ref<any[]>([]); const agencyPositions = ref<any[]>([]); const regions = ref<any[]>([])
+const agencyPositions = ref<any[]>([]); const regions = ref<any[]>([])
+const filterAgencies=ref<any[]>([]),filterPositions=ref<any[]>([]),filterRegions=ref<any[]>([])
 const search = ref(''); const agencyFilter = ref(''); const positionFilter = ref(''); const regionFilter = ref(''); const statusFilter = ref('')
-const form = ref<any>({}); const open = ref(false); const busy = ref(false); const loading = ref(true); const error = ref('')
+const form = ref<any>({}); const open = ref(false); const busy = ref(false); const error = ref('')
 const selectedAgencyId = ref<string | number>('')
 const addContext=ref<any>(null),copyRateId=ref(''),copyNotice=ref(''),regionalGroupOpen=ref(false)
-const copyCandidates=computed(()=>props.resource==='payroll-rate'?items.value.filter(item=>item.Status==='Active'&&agencyPositions.value.some(position=>String(position.AgencyID)===String(selectedAgencyId.value)&&Number(position.AgencyPositionID)===Number(item.AgencyPositionID))&&String(item.RegionID??'')===String(form.value.RegionID??'')):[])
+const copyCandidates=ref<any[]>([]),copyLoading=ref(false)
+let copyOwner=0,copyController:AbortController|undefined
+watch([open,selectedAgencyId,()=>form.value.RegionID],async()=>{
+ const owner=++copyOwner;copyController?.abort();copyCandidates.value=[];clearCopy()
+ if(!open.value||props.resource!=='payroll-rate'||!selectedAgencyId.value)return
+ const controller=new AbortController();copyController=controller
+ try{const r:any=await $fetch(`/api/rates/${props.resource}`,{query:{view:'copy-choices',agencyId:selectedAgencyId.value,regionId:form.value.RegionID},signal:controller.signal});if(owner===copyOwner)copyCandidates.value=r.items}
+ catch(cause){if(owner===copyOwner&&!controller.signal.aborted)error.value=requestErrorMessage(cause,'Unable to load copy choices.')}
+})
+onBeforeUnmount(()=>{++copyOwner;copyController?.abort()})
+
 function startAdd(group?:any){reset();if(group){addContext.value=group;selectedAgencyId.value=String(group.AgencyID);form.value.RegionID=group.RegionID??'';const parent=parentFor(group);if(parent){form.value.RegionRateID=parent.RegionRateID;form.value.EffectiveDate=rateDate((parent.CurrentRate||parent).EffectiveDate);fillInherited(form,addOverrides,parent)}}open.value=true}
 function clearCopy(){copyRateId.value='';copyNotice.value=''}
-function copyAmounts(){const source=copyCandidates.value.find(item=>String(item[idKey.value])===copyRateId.value);if(!source)return;const current=source.CurrentRate||source;for(const {key} of moneyFields)form.value[key]=current[key]??0;copyNotice.value='Amounts copied. Review and adjust them for this position before saving.'}
+async function copyAmounts(){
+ if(!copyRateId.value||copyLoading.value)return
+ const owner=copyOwner;copyLoading.value=true
+ try{const r:any=await $fetch(`/api/rates/${props.resource}`,{query:{view:'record',id:copyRateId.value}});if(owner!==copyOwner||!open.value)return;const current=r.item.CurrentRate||r.item;for(const {key} of moneyFields)form.value[key]=current[key]??0;copyNotice.value='Amounts copied. Review and adjust them for this position before saving.'}
+ catch(cause){if(owner===copyOwner)error.value=requestErrorMessage(cause,'Unable to copy amounts.')}
+ finally{copyLoading.value=false}
+}
 
 const editingCurrent = ref<any>(null); const editForm = ref<any>({}); const editBusy = ref(false); const editError = ref('')
 const updating = ref<any>(null); const updateForm = ref<any>({}); const updateBusy = ref(false); const updateError = ref('')
@@ -41,8 +59,8 @@ const modalTitle = computed(() => `Add ${props.title.slice(0, -1)}`)
 const idKey = computed(() => props.resource === 'payroll-rate' ? 'PayrollRateID' : 'BillingRateID')
 const agencyOptions = computed(() => [...new Map(agencyPositions.value.map(item => [String(item.AgencyID), { value: String(item.AgencyID), label: String(item.AgencyName) }])).values()].sort((a, b) => a.label.localeCompare(b.label)))
 const formPositionOptions = computed(() => agencyPositions.value.filter(item => String(item.AgencyID) === String(selectedAgencyId.value)).map(item => ({ value: item.AgencyPositionID, label: String(item.PositionName) })).sort((a, b) => a.label.localeCompare(b.label)))
-const agencies = computed(() => [...new Set([...items.value,...regionalRates.value].map(item => String(item.AgencyName || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
-const positions = computed(() => [...new Set(items.value.filter(item => !agencyFilter.value || item.AgencyName === agencyFilter.value).map(item => String(item.PositionName || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
+const agencies = computed(() => [...new Set((filterAgencies.value.length?filterAgencies.value:agencyPositions.value).map(item => String(item.AgencyName || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
+const positions = computed(() => [...new Set((filterPositions.value.length?filterPositions.value:agencyPositions.value).filter(item => !agencyFilter.value || item.AgencyName === agencyFilter.value).map(item => String(item.PositionName || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
 const regionOrder = ['13', '14', '01', '02', '03', '04', '17', '05', '06', '18', '07', '08', '09', '10', '11', '12', '16', '19']
 const regionRank = new Map(regionOrder.map((code, index) => [code, index]))
 function compareRegions(a: any, b: any) {
@@ -63,7 +81,7 @@ function regionLabel(region: any) {
   return shortNames[String(region.RegionCode)] || name || String(region.RegionCode || '')
 }
 const sortedRegions = computed(() => [...regions.value].sort(compareRegions))
-const rateRegions = computed(() => [...new Map([...items.value,...regionalRates.value].filter(item => item.RegionID != null).map(item => [String(item.RegionID), { id: String(item.RegionID), RegionCode: item.RegionCode, RegionName: item.RegionName, name: regionLabel(item) }])).values()].sort(compareRegions))
+const rateRegions = computed(() => [...new Map((filterRegions.value.length?filterRegions.value:regions.value).filter(item => item.RegionID != null).map(item => [String(item.RegionID), { id: String(item.RegionID), RegionCode: item.RegionCode, RegionName: item.RegionName, name: regionLabel(item) }])).values()].sort(compareRegions))
 const historyEntries = computed(() => {
   const item = viewingHistory.value
   if (!item) return []
@@ -138,16 +156,41 @@ async function saveUpdate() {
   finally { updateBusy.value = false }
 }
 function reset() { addOverrides.value={};addContext.value=null;clearCopy();selectedAgencyId.value = ''; form.value = { AgencyPositionID: '', RegionID: '', EffectiveDate: '', Status: 'Active', ...Object.fromEntries(moneyFields.map(({ key }) => [key, 0])) }; error.value = '' }
-async function load(silent = false) {
- if(!silent)loading.value=true
- try{const [r,regional]:any[]=await Promise.all([$fetch(`/api/rates/${props.resource}`),props.resource==='payroll-rate'?$fetch('/api/rates/regional'):Promise.resolve({items:[],agencies:[]})]);items.value=r.items||[];agencyPositions.value=r.agencyPositions||[];regions.value=r.regions||[];regionalRates.value=regional.items||[];regionalAgencies.value=regional.agencies||[];if(viewingHistory.value)viewingHistory.value=items.value.find(item=>item[idKey.value]===viewingHistory.value[idKey.value])||null}
- catch(e:any){error.value=requestErrorMessage(e, 'Unable to load rates.')}finally{if(!silent)loading.value=false}
-}
-async function save() { busy.value = true; error.value = ''; try { await $fetch(`/api/rates/${props.resource}`, { method: 'POST', body: {...form.value,...regionalPayload(addParent.value,addOverrides.value)} }); open.value = false; await load() } catch (e: any) { error.value = requestErrorMessage(e, 'Unable to save rate.') } finally { busy.value = false } }
+const selectedGroup=ref<any>(null)
+const directoryQuery=()=>({resource:props.resource,search:search.value,agency:agencyFilter.value,position:positionFilter.value,regionId:regionFilter.value,status:statusFilter.value})
+const dialogsOpen=()=>busy.value||open.value||!!editingCurrent.value||!!updating.value||!!viewingHistory.value||!!regionalModal.value
+const groupDirectory=useServerList<any>({
+ query:directoryQuery,key:group=>group.key,
+ fetchPage:(page,{resource,...query},signal)=>$fetch(`/api/rates/${resource}`,{query:{...query,view:'groups',page,pageSize:25,includeLookups:page===1?'1':'0'},signal}),
+ onLoaded:r=>{
+  if(r.agencyPositions){agencyPositions.value=r.agencyPositions;regionalAgencies.value=[...new Map(r.agencyPositions.map((position:any)=>[position.AgencyID,{AgencyID:position.AgencyID,AgencyName:position.AgencyName}])).values()]}
+  if(r.regionalAgencies)regionalAgencies.value=r.regionalAgencies
+  if(r.regions)regions.value=r.regions
+  if(r.filterAgencies)filterAgencies.value=r.filterAgencies;if(r.filterPositions)filterPositions.value=r.filterPositions;if(r.filterRegions)filterRegions.value=r.filterRegions
+  if(selectedGroup.value)selectedGroup.value=groupDirectory.items.value.find(group=>group.key===selectedGroup.value.key)||selectedGroup.value
+  regionalRates.value=[...new Map([...groupDirectory.items.value.map(group=>group.parent),selectedGroup.value?.parent].filter(Boolean).map(parent=>[parent.RegionRateID,parent])).values()]
+ },
+ paused:()=>dialogsOpen()||!!selectedGroup.value,
+})
+const positionDirectory=useServerList<any>({
+ query:()=>({...directoryQuery(),groupAgencyId:selectedGroup.value?.AgencyID,groupRegionId:selectedGroup.value?selectedGroup.value.RegionID??'all':undefined}),
+ key:item=>item[idKey.value],
+ fetchPage:(page,{resource,...query},signal)=>query.groupAgencyId?$fetch(`/api/rates/${resource}`,{query:{...query,page,pageSize:25,includeLookups:'0'},signal}):Promise.resolve({items:[],pagination:{page:1,pages:1,total:0}}),
+ onLoaded:()=>{if(viewingHistory.value)viewingHistory.value=positionDirectory.items.value.find(item=>item[idKey.value]===viewingHistory.value[idKey.value])||viewingHistory.value},
+ paused:dialogsOpen,
+})
+const items=positionDirectory.items
+const loading=computed(()=>groupDirectory.loading.value||positionDirectory.loading.value)
+const remoteDirectory=computed(()=>({groups:groupDirectory.items.value,selected:selectedGroup.value,rows:items.value,groupProgress:groupDirectory.progress.value,positionProgress:positionDirectory.progress.value}))
+watch([groupDirectory.error,positionDirectory.error],([groupError,positionError])=>{error.value=groupError||positionError})
+function selectGroup(group:any){selectedGroup.value=group;regionalGroupOpen.value=!!group}
+watch(()=>props.resource,()=>{selectedGroup.value=null;regionalGroupOpen.value=false})
+async function load(_silent=false){await groupDirectory.refresh();if(selectedGroup.value)await positionDirectory.refresh()}
+
+async function save() { if(copyLoading.value){error.value='Please wait for the copied amounts to load.';return} busy.value = true; error.value = ''; try { await $fetch(`/api/rates/${props.resource}`, { method: 'POST', body: {...form.value,...regionalPayload(addParent.value,addOverrides.value)} }); open.value = false; await load() } catch (e: any) { error.value = requestErrorMessage(e, 'Unable to save rate.') } finally { busy.value = false } }
 async function deactivate(item: any) { if (!confirm('Mark this rate as inactive?')) return; try { await $fetch(`/api/rates/${props.resource}`, { method: 'DELETE', body: { id: item[idKey.value] } }); await load() } catch (e: any) { error.value = requestErrorMessage(e, 'Unable to deactivate rate.') } }
 const currency = (value: any) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value) || 0)
-onMounted(load)
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open.value && !editingCurrent.value && !updating.value && !regionalModal.value })
+useRealtimeRefresh(async()=>{await load(true);if(groupDirectory.error.value||positionDirectory.error.value)throw new Error('Unable to refresh rates')}, {intervalMs:30000,shouldRefresh:()=>!dialogsOpen()&&!loading.value&&!groupDirectory.loadingMore.value&&!positionDirectory.loadingMore.value&&groupDirectory.pagination.value.page<=1&&positionDirectory.pagination.value.page<=1})
 </script>
 <template>
   <main class="rates-page">
@@ -164,12 +207,12 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
     <div class="list-summary">
-      <span>{{ loading ? 'Loading rates…' : resource==='payroll-rate'?items.length+' position rate records / '+regionalRates.length+' configured region rates':'Showing ' + filteredItems.length + ' of ' + items.length + ' rates' }}</span>
+      <span>{{ loading ? 'Loading rates…' : selectedGroup ? positionDirectory.progress.value.total+' matching position rate records' : groupDirectory.progress.value.total+' matching agency / region groups' }}</span>
       <button v-if="search || agencyFilter || positionFilter || regionFilter || statusFilter" type="button" @click="clearFilters">Clear filters</button>
     </div>
     <p v-if="error && !open" class="error" role="alert">{{ error }}</p>
 
-    <RateGroups :resource="resource" :items="filteredItems" :all-items="items" :agency-positions="agencyPositions" :regional-rates="regionalRates" :filters="{search,agencyFilter,positionFilter,regionFilter,statusFilter}" :loading="loading" :paused="open || !!editingCurrent || !!updating || !!viewingHistory || !!regionalModal" @regional="openRegional" @add="startAdd" @edit="openCurrentEdit" @update="openUpdate" @history="viewingHistory=$event" @deactivate="deactivate" @navigate="regionalGroupOpen=$event" />
+    <RateGroups :remote="remoteDirectory" @select="selectGroup" @load-groups="groupDirectory.loadMore" @load-positions="positionDirectory.loadMore" :resource="resource" :items="filteredItems" :all-items="items" :agency-positions="agencyPositions" :regional-rates="regionalRates" :filters="{search,agencyFilter,positionFilter,regionFilter,statusFilter}" :loading="loading" :paused="open || !!editingCurrent || !!updating || !!viewingHistory || !!regionalModal" @regional="openRegional" @add="startAdd" @edit="openCurrentEdit" @update="openUpdate" @history="viewingHistory=$event" @deactivate="deactivate" @navigate="regionalGroupOpen=$event" />
     <Teleport to="body">
       <div v-if="editingCurrent" class="backdrop" @click.self="!editBusy && (editingCurrent = null)">
         <form class="modal rate-form-modal" role="dialog" aria-modal="true" aria-labelledby="rate-edit-title" @submit.prevent="saveCurrentEdit">
@@ -266,7 +309,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open
             </section>
             <section class="rate-modal-section">
               <div class="rate-section-heading"><div><span>RATE AMOUNTS</span><h3>Starting amounts</h3></div><small>PHP amounts for this rate</small></div>
-              <div v-if="resource==='payroll-rate'&&!addParent&&copyCandidates.length" class="copy-rate"><label class="rate-control"><span>Copy amounts from another position <em>(optional)</em></span><select v-model="copyRateId"><option value="">Enter amounts manually</option><option v-for="source in copyCandidates" :key="source[idKey]" :value="String(source[idKey])">{{source.PositionName}} &middot; {{currency(source.CurrentRate?.RegularRate??source.RegularRate)}}</option></select></label><button type="button" :disabled="!copyRateId" @click="copyAmounts">Use amounts</button><p v-if="copyNotice" role="status">{{copyNotice}}</p></div>
+              <div v-if="resource==='payroll-rate'&&!addParent&&copyCandidates.length" class="copy-rate"><label class="rate-control"><span>Copy amounts from another position <em>(optional)</em></span><select v-model="copyRateId"><option value="">Enter amounts manually</option><option v-for="source in copyCandidates" :key="source[idKey]" :value="String(source[idKey])">{{source.PositionName}}</option></select></label><button type="button" :disabled="!copyRateId || copyLoading" @click="copyAmounts">Use amounts</button><p v-if="copyNotice" role="status">{{copyNotice}}</p></div>
               <RegionalPositionFields v-if="addParent" v-model="form" v-model:overrides="addOverrides" :regional="inherited(addParent,form.EffectiveDate)"/><RateMoneyFields v-else v-model="form" />
             </section>
             <p v-if="error" class="error rate-modal-error" role="alert">{{ error }}</p>
@@ -275,7 +318,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value && !open
         </form>
       </div>
     </Teleport>
-    <RegionalRateModal v-if="regionalModal" :mode="regionalModal.mode" :record="regionalModal.record" :scope="regionalModal.scope" :positions="items" :agencies="regionalAgencies" :regions="sortedRegions" @close="regionalModal=null" @saved="regionalModal=null;load()"/>
+    <RegionalRateModal server-choices v-if="regionalModal" :mode="regionalModal.mode" :record="regionalModal.record" :scope="regionalModal.scope" :positions="items" :agencies="regionalAgencies" :regions="sortedRegions" @close="regionalModal=null" @saved="regionalModal=null;load()"/>
   </main></template>
 <style scoped>
 .rates-page{padding:32px;max-width:1200px;margin:auto;color:var(--theme-ink,#172033);font-family:Inter,system-ui,sans-serif}.rates-page header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}.rates-page header p{margin:0;color:var(--theme-accent,#5271a5);font-size:.75rem;font-weight:800;letter-spacing:.08em}.rates-page h1{margin:3px 0 0;font-size:1.7rem}.primary{border:0;border-radius:8px;background:#2563eb;color:#fff;padding:10px 15px;font-weight:700;cursor:pointer}.table-wrap{overflow:auto;border:1px solid var(--theme-line,#dfe5ef);border-radius:10px}table{width:100%;border-collapse:collapse;background:var(--theme-surface,#fff)}th,td{padding:13px 14px;text-align:left;border-bottom:1px solid var(--theme-line,#edf1f6);font-size:.88rem;white-space:nowrap}th{background:var(--theme-soft,#f8fafc);color:var(--theme-muted,#526174);font-size:.75rem;text-transform:uppercase}td button,footer button{border:1px solid var(--theme-line,#cfd8e6);background:var(--theme-surface,#fff);border-radius:6px;padding:6px 9px;margin-right:6px;cursor:pointer}.status{padding:3px 8px;border-radius:999px;font-size:.74rem;font-weight:700}.status--active{background:#dcfce7;color:#166534}.status--inactive{background:#fee2e2;color:#991b1b}.error{color:#b42318}.backdrop{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.58);display:grid;place-items:center;padding:16px}.modal{box-sizing:border-box;font-family:Inter,system-ui,sans-serif;color:var(--theme-ink,#172033);position:relative;width:min(100%,820px);max-height:90vh;overflow:auto;background:var(--theme-surface,#fff);border-radius:12px;padding:26px;display:grid;gap:12px}.modal h2{margin:0}.modal label{display:grid;gap:5px;font-size:.8rem;font-weight:700;color:var(--theme-muted,#475569)}.modal input,.modal select{min-height:40px;border:1px solid var(--theme-line,#cfd8e6);border-radius:7px;padding:8px;font:inherit}.money-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:1.5rem;cursor:pointer}.modal footer{display:flex;justify-content:flex-end;margin-top:6px}@media(max-width:600px){.rates-page{padding:20px}.money-grid{grid-template-columns:1fr}}

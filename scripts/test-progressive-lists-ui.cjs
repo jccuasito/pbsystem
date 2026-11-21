@@ -35,7 +35,11 @@ async function mount(page,built,props,responses,dark=false,manual=false){
    let value=window.fixtureResponses[url];if(!value)throw Error('Unexpected fixture request '+url)
    value=structuredClone(value)
    const collection=value.requests||value
+   if(value.groups&&query.view==='groups')collection.items=value.groups
+   if(value.groups&&query.groupAgencyId)collection.items=collection.items.filter(row=>String(row.AgencyID)===String(query.groupAgencyId)&&String(row.RegionID??'all')===String(query.groupRegionId))
    if(query.search==='narrow')collection.items=collection.items.slice(0,3)
+   else if(query.search && query.page)collection.items=collection.items.filter(row=>String(query.search).toLowerCase().split(/\s+/).every(word=>Object.values(row).filter(value=>typeof value==='string'||typeof value==='number').join(' ').toLowerCase().includes(word)))
+   if(query.page&&!collection.pagination)collection.pagination={pageSize:25}
    if(collection.pagination&&query.page){const total=collection.items.length,size=collection.pagination.pageSize||25;collection.items=collection.items.slice((query.page-1)*size,query.page*size);collection.pagination={page:query.page,pageSize:size,pages:Math.max(1,Math.ceil(total/size)),total}}
    if(window.failNext){window.failNext=false;throw Error('Simulated read failure')}
    if(window.delayNext){window.delayNext=false;return new Promise(resolve=>window.pendingList.push(()=>resolve(value)))}
@@ -77,11 +81,11 @@ test('growing directories and grouped rates reveal batches while retaining compl
    if(spec.search){
     await page.locator(spec.search).fill(spec.term)
     await page.waitForFunction(selector=>document.querySelectorAll(selector).length===1,spec.rows)
-    assert.ok((await page.locator(spec.rows).first().innerText()).includes(spec.term),'Search includes records not yet revealed')
+    await page.waitForFunction(({selector,term})=>document.querySelector(selector)?.innerText.includes(term),{selector:spec.rows,term:spec.term})
     await page.locator(spec.search).fill('');await page.waitForFunction(selector=>document.querySelectorAll(selector).length===25,spec.rows).catch(async error=>{console.log('Failed initial count',await page.locator(spec.rows).count(),await page.locator('.list-progress').allTextContents());await page.screenshot({path:path.join(out,'failed-'+path.basename(path.dirname(spec.file))+'.png')});throw error})
    }
    const beforePrint=await page.locator(spec.rows).count()
-   await page.emulateMedia({media:'print'});await page.waitForFunction(selector=>document.querySelectorAll(selector).length===60,spec.rows)
+   await page.emulateMedia({media:'print'});const remote=['components/OrganizationCrud.vue','components/SiteRateCrud.vue','app/pages/attendance/daily-time-records/index.vue'].includes(spec.file);await page.waitForFunction(({selector,count})=>document.querySelectorAll(selector).length===count,{selector:spec.rows,count:remote?beforePrint:60})
    await page.emulateMedia({media:'screen'});await page.waitForFunction(({selector,count})=>document.querySelectorAll(selector).length===count,{selector:spec.rows,count:beforePrint})
    assert.deepEqual(errors,[],spec.file)
    await page.screenshot({path:path.join(out,path.basename(path.dirname(spec.file))+'-'+path.basename(spec.file,'.vue')+'.png')})
@@ -163,10 +167,52 @@ test('mobile directories share the same batches and keep a manual fallback in li
    assert.equal(await page.locator('.desktop-table tbody tr').count(),50,'Desktop and mobile use the same batch state')
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
    await page.locator('.filters input').fill('Client 060')
-   await page.waitForFunction(()=>document.querySelectorAll('.mobile-list .record-card').length===1)
+   await page.waitForFunction(()=>document.querySelectorAll('.mobile-list .record-card').length===1 && document.querySelector('.mobile-list .record-card')?.innerText.includes('Client 060'))
    await page.screenshot({path:path.join(out,manual?'clients-320-dark-fallback.png':'clients-390-light-auto.png')})
    assert.deepEqual(errors,[])
    await page.close()
   }
  }finally{await browser.close()}
+})
+
+
+test('migrated directories use real page requests and grouped rates load positions only after opening a group',async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:process.env.LISTS_BROWSER_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'})
+ const sites=many(id=>({SiteID:id,SiteName:'Site '+name(id),ClientName:'Client '+name(id),AgencyName:'Agency A',AgencyNames:'Agency A',AgencyIDs:[1],AgencyAccounts:[],Status:'Active'}))
+ const groups=many(id=>({key:JSON.stringify([String(id),'13']),AgencyID:id,AgencyName:'Agency '+name(id),RegionID:13,RegionCode:'13',RegionName:'NCR',PositionCount:60,RateCount:60,ActiveCount:60,MinRate:100,MaxRate:100,items:[]}))
+ const positions=many(id=>({BillingRateID:id,AgencyPositionID:id,AgencyID:1,AgencyName:'Agency 001',RegionID:13,RegionCode:'13',RegionName:'NCR',PositionName:'Position '+name(id),Status:'Active',RegularRate:100,CurrentRate:{RegularRate:100},Versions:[]}))
+ const specs=[
+  {file:'components/OrganizationCrud.vue',props:{resource:'site',title:'Sites',fields:[],columns:[{key:'SiteName',label:'Site'}]},responses:{'/api/organization/site':{items:sites,agencies:[{AgencyID:1,AgencyName:'Agency A'}]}},rows:'.desktop-table tbody tr',search:'.filters input',term:'Site 060'},
+  {file:'components/SiteRateCrud.vue',responses:{'/api/rates/site-rate':{items:sites.map(site=>({...site,SiteRateID:site.SiteID,PositionName:'Guard',PayrollRegularRate:100,BillingRegularRate:120})),clients:[{ClientID:1,ClientName:'Client 001'}],agencies:[{AgencyID:1,AgencyName:'Agency A'}]}},rows:'.desktop-table tbody tr',search:'.filters input',term:'Site 060'},
+  {file:'app/pages/attendance/daily-time-records/index.vue',responses:{'/api/attendance/dtr':{items:sites.map(site=>({...site,BatchID:site.SiteID,AgencyID:1,PeriodStart:'2026-11-01',PeriodEnd:'2026-11-15',Status:'Draft',PeopleCount:1})),agencies:[],clients:[],sites:[]}},rows:'.dtr-list-table tbody tr',search:'.filters input',term:'Site 060'},
+  {file:'components/RateCrud.vue',props:{resource:'billing-rate',title:'Billing Rates'},responses:{'/api/rates/billing-rate':{groups,items:positions,agencyPositions:[],regions:[]}},rows:'.position-table tbody tr',search:'.filters input',term:'Position 060',grouped:true},
+ ]
+ try{for(const spec of specs){
+  console.log('Server batch checks '+spec.file)
+  const page=await browser.newPage({viewport:{width:1440,height:800}}),errors=await mount(page,await fixture(spec.file),spec.props||{},spec.responses,false,true)
+  if(spec.grouped){
+   await page.waitForFunction(()=>document.querySelectorAll('.region-row').length===25)
+   assert.equal(await page.evaluate(()=>window.fixtureReads.filter(call=>call.query.groupAgencyId).length),0,'No position rows fetched while overview is open')
+   await page.getByRole('button',{name:'View Agency 001 NCR position rates',exact:true}).click()
+  }
+  await page.waitForFunction(selector=>document.querySelectorAll(selector).length===25,spec.rows)
+  await page.evaluate(()=>window.failNext=true)
+  await page.getByRole('button',{name:'Load more',exact:true}).click()
+  await page.getByRole('button',{name:'Retry loading',exact:true}).waitFor()
+  assert.equal(await page.locator(spec.rows).count(),25)
+  const calls=await page.evaluate(()=>window.fixtureReads.length);await page.waitForTimeout(150);assert.equal(await page.evaluate(()=>window.fixtureReads.length),calls)
+  await page.getByRole('button',{name:'Retry loading',exact:true}).click()
+  await page.waitForFunction(selector=>document.querySelectorAll(selector).length===50,spec.rows)
+  await page.evaluate(()=>window.delayNext=true)
+  await page.getByRole('button',{name:'Load more',exact:true}).click()
+  await page.waitForFunction(()=>window.pendingList.length===1)
+  await page.locator(spec.search).fill(spec.term)
+  await page.waitForFunction(()=>window.fixtureReads.some(call=>call.query.page===3&&call.signal?.aborted))
+  await page.evaluate(()=>window.pendingList.shift()())
+  await page.waitForFunction(({selector,term})=>document.querySelectorAll(selector).length===1&&document.querySelector(selector).innerText.includes(term),{selector:spec.rows,term:spec.term})
+  assert.equal(await page.evaluate(()=>window.fixtureReads.filter(call=>call.query.search===window.document.querySelector('.filters input').value&&call.query.page===1).length)>=1,true)
+  assert.deepEqual(errors,[])
+  await page.screenshot({path:path.join(out,'server-batches-'+path.basename(path.dirname(spec.file))+'-'+path.basename(spec.file,'.vue')+'.png')})
+  await page.close()
+ }}finally{await browser.close()}
 })

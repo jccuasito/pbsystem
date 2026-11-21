@@ -12,7 +12,7 @@ function databaseFailure(error: any) {
 
 export function managePool(driver: Pool, acquireTimeoutMs: number) {
   const acquire = driver.getConnection.bind(driver)
-  const counts = { active: 0, acquiring: 0, timeouts: 0, failures: 0 }
+  const counts = { active: 0, acquiring: 0, timeouts: 0, failures: 0, queries: 0, slowQueries: 0, totalQueryMs: 0, maxQueryMs: 0 }
   driver.getConnection = () => new Promise<PoolConnection>((resolve, reject) => {
     let expired = false
     counts.acquiring++
@@ -31,8 +31,14 @@ export function managePool(driver: Pool, acquireTimeoutMs: number) {
       connection.destroy = () => { if (finish()) destroy() }
       const execute = connection.execute.bind(connection)
       connection.execute = (async (sql: any, values?: any) => {
+        const started = Date.now()
         try { return await execute(sql, values) }
         catch (error) { counts.failures++; throw databaseFailure(error) }
+        finally {
+          const elapsed = Date.now() - started
+          counts.queries++; counts.totalQueryMs += elapsed; counts.maxQueryMs = Math.max(counts.maxQueryMs, elapsed)
+          if (elapsed >= 1000) counts.slowQueries++
+        }
       }) as typeof connection.execute
       for (const operation of ['beginTransaction', 'commit', 'rollback'] as const) {
         const call = connection[operation].bind(connection)

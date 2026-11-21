@@ -2,6 +2,7 @@ import { createError, getQuery, getRouterParam, readBody, setHeader } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { imageData } from './inputValidation'
+import { listPage, listSearch, listId, selectListPage } from './listPagination'
 
 type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-policy' | 'site' | 'site-account' | 'site-policy' | 'site-shift' | 'shift-code' | 'region'
 
@@ -198,10 +199,43 @@ export async function listOrganizationResource(event: any) {
   void session.sub
   const resourceName = resource(event)
   const config = configs[resourceName]
-  const [items] = await pool.execute<any[]>(config.listSql)
+  const query = getQuery(event)
+  const paged = listPage(query)
+  let result: any
+  if (paged) {
+    const params: unknown[] = []
+    // Search every displayed text field, including ownership outside the site row.
+    const fields: Record<string, string[]> = {
+      agency: ['AgencyName','AgencyAddress','AgencyEmail','AgencyContact'], client: ['ClientName','ClientAddress'],
+      site: ['SiteName','SiteAddress','ClientName','RegionCode','RegionName'],
+      position: ['PositionName','Description'], region: ['RegionCode','RegionName'],
+      'site-account': ['SiteAccountName'], 'agency-position': ['AgencyName','PositionName'],
+      'client-policy': ['ClientName'], 'site-policy': ['SiteName','ClientName'],
+      'site-shift': ['SiteName','ShiftCode','ShiftName'], 'shift-code': ['ShiftCode','ShiftName','AgencyName','ShiftType'],
+    }
+    const expressions = fields[resourceName].map(field => `listed.${field}`)
+    if (resourceName === 'site') expressions.push(`(SELECT GROUP_CONCAT(CONCAT_WS(' ', a.AgencyName, account.SiteAccountName) SEPARATOR ' ') FROM site_agency sa INNER JOIN agency a ON a.AgencyID=sa.AgencyID LEFT JOIN site_account account ON account.SiteAccountID=sa.SiteAccountID WHERE sa.SiteID=listed.SiteID AND sa.Status='Active')`)
+    const conditions = listSearch(query.search, expressions, params)
+    if (query.status) {
+      if (!['Active','Inactive'].includes(String(query.status))) throw createError({statusCode:400,statusMessage:'Invalid status filter.'})
+      conditions.push('listed.Status = ?'); params.push(query.status)
+    }
+    if (query.agencyId && resourceName === 'site') {
+      conditions.push("EXISTS (SELECT 1 FROM site_agency sa WHERE sa.SiteID=listed.SiteID AND sa.AgencyID=? AND sa.Status='Active')")
+      params.push(listId(query.agencyId, 'Agency'))
+    }
+    // Alias-qualified configured order columns must be requalified outside the derived SELECT.
+    const index = config.listSql.lastIndexOf(' ORDER BY ')
+    const order = config.listSql.slice(index).replace(/\b(?:s|c|a|r|ap|p|cp|sp|ss|sc|sa)\./g, 'listed.')
+    result = await selectListPage(pool, config.listSql.slice(0,index) + order + `, listed.${config.id}`, query, conditions, params)
+  } else {
+    const [items] = await pool.execute<any[]>(config.listSql)
+    result = {items}
+  }
+  const items = result.items
   if (resourceName === 'site') {
     const [links] = await pool.execute<any[]>(`SELECT sa.SiteID, sa.AgencyID, a.AgencyName, sa.SiteAccountID, account.SiteAccountName FROM site_agency sa
-      INNER JOIN agency a ON a.AgencyID = sa.AgencyID LEFT JOIN site_account account ON account.SiteAccountID=sa.SiteAccountID WHERE sa.Status = 'Active' ORDER BY a.AgencyName`)
+      INNER JOIN agency a ON a.AgencyID = sa.AgencyID LEFT JOIN site_account account ON account.SiteAccountID=sa.SiteAccountID WHERE sa.Status = 'Active'${paged ? ` AND sa.SiteID IN (${items.length ? items.map(() => '?').join(',') : 'NULL'})` : ''} ORDER BY a.AgencyName`, paged ? items.map((item: any) => item.SiteID) : [])
     const bySite = new Map<number, { ids: number[]; names: string[]; accounts: any[] }>()
     for (const link of links) {
       const record = bySite.get(Number(link.SiteID)) || { ids: [], names: [], accounts: [] }
@@ -217,7 +251,7 @@ export async function listOrganizationResource(event: any) {
       item.AgencyAccounts = agencies?.accounts || []
     }
   }
-  return { items, canEdit: session.userType !== 'Viewer' && event.context?.moduleCanEdit !== false, ...(config.lookups ? await config.lookups() : {}) }
+  return { ...result, canEdit: session.userType !== 'Viewer' && event.context?.moduleCanEdit !== false, ...((!paged || query.includeLookups !== '0') && config.lookups ? await config.lookups() : {}) }
 }
 
 export async function createOrganizationResource(event: any) {

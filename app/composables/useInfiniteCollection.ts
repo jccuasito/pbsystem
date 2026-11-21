@@ -57,6 +57,11 @@ export function useInfiniteCollection<T, R extends Result<T>>(options: {
     }
   }
   function stop() { active = false; ++owner; controller?.abort(); controller = undefined; loading.value = false; loadingMore.value = false }
+  function invalidate() {
+    ++owner; controller?.abort(); controller = undefined
+    items.value = []; pagination.value = { page: 0, pages: 1, total: 0 }
+    loading.value = false; loadingMore.value = false; error.value = ''; moreError.value = ''
+  }
   onDeactivated(stop)
   onBeforeUnmount(stop)
   onActivated(() => {
@@ -64,5 +69,5 @@ export function useInfiniteCollection<T, R extends Result<T>>(options: {
     if (appliedQuery && !items.value.length && !loading.value && !error.value) void load()
   })
   return { items, loading, loadingMore, error, moreError, pagination, progress, hasMore,
-    refresh: () => load(), reset: () => load(false, true), loadMore: () => load(true) }
+    refresh: () => load(), reset: () => load(false, true), loadMore: () => load(true), invalidate }
 }

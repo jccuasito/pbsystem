@@ -1,4 +1,5 @@
 import { createError, getQuery, getRouterParam, readBody } from 'h3'
+import { listPage, pagination, listSearch } from './listPagination'
 import type { PoolConnection } from 'mysql2/promise'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
@@ -171,7 +172,18 @@ export async function listDtrs(event: any) {
   if (query.siteId) { filters.push('d.SiteID = ?'); values.push(positiveId(query.siteId, 'Site')) }
   if (query.periodStart) { filters.push('d.PeriodStart = ?'); values.push(date(query.periodStart, 'Period start')) }
   if (query.periodEnd) { filters.push('d.PeriodEnd = ?'); values.push(date(query.periodEnd, 'Period end')) }
-  if (query.search?.trim()) { filters.push('(CAST(d.BatchID AS CHAR) LIKE ? OR c.ClientName LIKE ? OR s.SiteName LIKE ?)'); values.push(...Array(3).fill(`%${query.search.trim()}%`)) }
+  filters.push(...listSearch(query.search, ['CAST(d.BatchID AS CHAR)', 'c.ClientName', 's.SiteName', 'a.AgencyName'], values))
+  const request = listPage(query)
+  let meta: ReturnType<typeof pagination> | undefined
+  if (request) {
+    const from = `FROM attendance_dtr d INNER JOIN agency a ON a.AgencyID=d.AgencyID INNER JOIN client c ON c.ClientID=d.ClientID INNER JOIN site s ON s.SiteID=d.SiteID${filters.length ? ' WHERE '+filters.join(' AND ') : ''}`
+    const [[count]] = await pool.execute<any[]>(`SELECT COUNT(*) AS Total ${from}`, values)
+    meta = pagination(Number(count.Total), request)
+    const [page] = await pool.execute<any[]>(`SELECT d.BatchID ${from} ORDER BY d.PeriodStart DESC,d.BatchID DESC LIMIT ? OFFSET ?`, [...values,meta.pageSize,(meta.page-1)*meta.pageSize])
+    // Restrict attendance aggregates to this batch, rather than grouping all history first.
+    filters.splice(0,filters.length,`d.BatchID IN (${page.length ? page.map(() => '?').join(',') : 'NULL'})`)
+    values.splice(0,values.length,...page.map(row => row.BatchID))
+  }
   const sql = `SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName, d.SiteID, s.SiteName, d.PeriodStart, d.PeriodEnd, d.Status, d.CreatedAt,
     MAX(CASE WHEN a.LogoData IS NULL THEN 0 ELSE 1 END) AS AgencyHasLogo,
     MAX(CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END) AS SiteHasLogo,
@@ -180,8 +192,8 @@ export async function listDtrs(event: any) {
     FROM attendance_dtr d INNER JOIN agency a ON a.AgencyID = d.AgencyID INNER JOIN client c ON c.ClientID = d.ClientID INNER JOIN site s ON s.SiteID = d.SiteID
     LEFT JOIN attendance at ON at.BatchID = d.BatchID ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
     GROUP BY d.BatchID ORDER BY d.PeriodStart DESC, d.BatchID DESC`
-  const [[items], lookupData] = await Promise.all([pool.execute<any[]>(sql, values), lookups()])
-  return { items, ...lookupData }
+  const [[items], lookupData] = await Promise.all([pool.execute<any[]>(sql, values), (!request || query.includeLookups !== '0') ? lookups() : Promise.resolve({})])
+  return { items, ...lookupData, ...(meta ? {pagination:meta} : {}) }
 }
 
 export async function createDtr(event: any) {

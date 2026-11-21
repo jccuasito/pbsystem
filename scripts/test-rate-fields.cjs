@@ -15,6 +15,11 @@ function evaluate(source, dependencies = {}, globals = {}) {
 const progressiveLists = evaluate(fs.readFileSync('app/composables/useProgressiveList.ts', 'utf8'), {
   vue: { ...vue, onMounted() {}, onBeforeUnmount() {} },
 })
+const fixtureVue={...vue,onMounted(){},onBeforeUnmount(){},onActivated(){},onDeactivated(){}}
+const infinite=evaluate(fs.readFileSync('app/composables/useInfiniteCollection.ts','utf8'),{
+ vue:fixtureVue,'~~/shared/utils/requestError':{requestErrorMessage:error=>error.message},
+},{AbortController})
+const serverLists=evaluate(fs.readFileSync('app/composables/useServerList.ts','utf8'),{vue:fixtureVue,'./useInfiniteCollection':infinite},{setTimeout,clearTimeout})
 const fields = evaluate(fs.readFileSync('shared/utils/rateFields.ts', 'utf8'))
 const rateVersions = evaluate(fs.readFileSync('server/utils/rateVersions.ts', 'utf8'), { '../../shared/utils/rateFields': fields })
 const regionalRates = evaluate(fs.readFileSync('shared/utils/regionalRates.ts', 'utf8'), { './rateFields': fields })
@@ -46,13 +51,14 @@ function component(filename, exposed, props = {}) {
   for (const style of descriptor.styles) assert.deepEqual(sfc.compileStyle({ source: style.content, filename, id: 'rate-test', scoped: true }).errors, [])
   const calls = []
   const state = evaluate(descriptor.scriptSetup.content+'\nmodule.exports={'+exposed+'};', {
-    vue: { ...vue, onMounted() {} },
+    vue: fixtureVue,
     '../shared/utils/rateFields': fields,
     '~~/shared/utils/rateFields': fields,
     '~~/shared/utils/regionalRates': regionalRates,
     '~/composables/useRealtimeRefresh': { useRealtimeRefresh() {} },
     '~~/app/composables/useProgressiveList': progressiveLists,
-  }, { defineProps: () => props, $fetch: async (url, options) => { calls.push({ url, options }); return { items: [], payrollRates: [], billingRates: [] } } })
+    '~~/app/composables/useServerList': serverLists,
+  }, { defineProps: () => props, $fetch: async (url, options) => { calls.push({ url, options }); return { items: [], payrollRates: [], billingRates: [], pagination:{page:1,pages:1,total:0} } } })
   return { state, calls }
 }
 
@@ -147,7 +153,7 @@ test('current edit changes only the effective rate row, leaving future versions 
       '../connection/dbconnect': { getConnection: async () => connection },
       './auth': { requireSession: () => ({ sub: 1 }) },
       './rateVersions': { dateOnly: value => String(value || '').slice(0, 10), todayInPhilippines: () => '2026-10-09' },
-      h3: { createError: options => Object.assign(new Error(options.statusMessage), options), getRouterParam: event => event.resource, readBody: async event => event.body },
+      h3: { createError: options => Object.assign(new Error(options.statusMessage), options), getRouterParam: event => event.resource, getQuery: event => event.query || {}, readBody: async event => event.body },
     })
     const result = await api.updateRateResource({ resource: 'payroll-rate', body: { id: 7, mode: 'current', RegularRate: 115 } })
     assert.equal(result.effectiveDate, current ? '2026-09-25' : '2026-01-01')
@@ -213,13 +219,13 @@ test('site inline creation sends complete payroll/billing amounts and linked pre
 })
 
 test('site picker shows site names and warns before a duplicate active link is saved', async () => {
-  const { state, calls } = component('components/SiteRateCrud.vue', 'reset,form,save,sites,siteOptions,agencyPositions,items,existingSiteLinks,duplicateSiteLink,error')
+  const { state, calls } = component('components/SiteRateCrud.vue', 'reset,form,save,sites,siteOptions,agencyPositions,existingLinks,existingSiteLinks,duplicateSiteLink,error')
   state.sites.value = [{ SiteID: 1, AgencyID: 1, RegionID: 10, SiteName: 'Samsung S.E.P.C.O', ClientName: 'Samsung' }]
   state.agencyPositions.value = [
     { AgencyID: 1, AgencyPositionID: 11, AgencyName: 'DJA', PositionName: 'Security Guard' },
     { AgencyID: 1, AgencyPositionID: 12, AgencyName: 'DJA', PositionName: 'Supervisor' },
   ]
-  state.items.value = [{ SiteRateID: 91, SiteID: 1, AgencyPositionID: 11, Status: 'Active' }]
+  state.existingLinks.value = [{ SiteRateID: 91, SiteID: 1, AgencyPositionID: 11, Status: 'Active' }]
   state.form.value = { SiteID: 1, AgencyID: 1, AgencyPositionID: 11, Status: 'Active' }
   assert.equal(state.siteOptions.value[0].label, 'Samsung S.E.P.C.O')
   assert.equal(state.existingSiteLinks.value.length, 1)
@@ -260,7 +266,8 @@ test('MySQL rate create/list/update and inline site linking preserve extra amoun
       '../connection/dbconnect': { ...wrapped, getConnection: async () => wrapped },
       './auth': { requireSession: () => ({ sub: 1 }) },
       './rateVersions': rateVersions,
-      h3: { createError: options => Object.assign(new Error(options.statusMessage), options), getRouterParam: event => event.resource, readBody: async event => event.body },
+      './listPagination': evaluate(fs.readFileSync('server/utils/listPagination.ts','utf8'),{h3:{createError:details=>Object.assign(new Error(details.statusMessage),details)}}),
+      h3: { createError: options => Object.assign(new Error(options.statusMessage), options), getRouterParam: event => event.resource, getQuery: event => event.query || {}, readBody: async event => event.body },
     })
     for (const resource of ['payroll-rate', 'billing-rate']) {
       const idKey = resource === 'payroll-rate' ? 'PayrollRateID' : 'BillingRateID'

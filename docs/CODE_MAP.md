@@ -45,8 +45,10 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/DtrImportResultModal.vue`
   - `app/components/ListProgress.vue`
   - `app/components/PayrollAdjustmentsPanel.vue`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/alertmessage/messages.ts`
   - `components/alertmessage/SystemAlert.vue`
   - `shared/utils/attendanceFieldControls.ts`
@@ -92,6 +94,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeStatusCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/rateVersions.ts`
@@ -179,6 +182,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -300,6 +304,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `app/pages/attendance/daily-time-records/index.vue`
   - `app/pages/attendance/dtr-reliever/index.vue`
   - `app/pages/attendance/holiday-manager/index.vue`
@@ -504,7 +509,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/[param]` → `server/api/rates/[resource].put.ts`
-  - `GET /api/rates/regional` → `server/api/rates/regional.get.ts`
+  - `GET /api/rates/payroll-rate` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/regional` → `server/api/rates/regional.post.ts`
   - `PUT /api/rates/regional` → `server/api/rates/regional.put.ts`
   - `DELETE /api/rates/site-rate` → `server/api/rates/[resource].delete.ts`
@@ -556,6 +561,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/holidayCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/payrollDeductionOverrideCrud.ts`
@@ -571,6 +577,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/positionAssignmentCrud.ts`
   - `server/utils/privateProfileImages.mjs`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateDirectory.ts`
   - `server/utils/rateVersionCrud.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`
@@ -854,6 +861,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/philippineAddress.ts`
   - `server/utils/privateProfileImages.mjs`
@@ -1085,8 +1093,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
-  - `app/composables/useProgressiveList.ts`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
@@ -1102,6 +1111,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1114,8 +1124,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
-  - `app/composables/useProgressiveList.ts`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
@@ -1131,6 +1142,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1168,8 +1180,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
-  - `app/composables/useProgressiveList.ts`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
@@ -1185,6 +1198,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1197,8 +1211,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
-  - `app/composables/useProgressiveList.ts`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
@@ -1214,6 +1229,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1226,8 +1242,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
-  - `app/composables/useProgressiveList.ts`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/ModernDateField.vue`
   - `components/OrganizationCrud.vue`
   - `components/SearchableSelect.vue`
@@ -1243,6 +1260,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1489,8 +1507,10 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/ModernDateField.vue`
   - `components/RateCrud.vue`
   - `components/RateGroups.vue`
@@ -1506,7 +1526,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/[param]` → `server/api/rates/[resource].put.ts`
-  - `GET /api/rates/regional` → `server/api/rates/regional.get.ts`
+  - `GET /api/rates/payroll-rate` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/regional` → `server/api/rates/regional.post.ts`
   - `PUT /api/rates/regional` → `server/api/rates/regional.put.ts`
   - `POST /api/rates/versions` → `server/api/rates/versions.post.ts`
@@ -1516,7 +1536,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateDirectory.ts`
   - `server/utils/rateVersionCrud.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/regionalRateCrud.ts`
@@ -1533,8 +1555,10 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useProgressiveList.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/ModernDateField.vue`
   - `components/RateCrud.vue`
   - `components/RateGroups.vue`
@@ -1550,7 +1574,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `GET /api/rates/[param]` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/[param]` → `server/api/rates/[resource].post.ts`
   - `PUT /api/rates/[param]` → `server/api/rates/[resource].put.ts`
-  - `GET /api/rates/regional` → `server/api/rates/regional.get.ts`
+  - `GET /api/rates/payroll-rate` → `server/api/rates/[resource].get.ts`
   - `POST /api/rates/regional` → `server/api/rates/regional.post.ts`
   - `PUT /api/rates/regional` → `server/api/rates/regional.put.ts`
   - `POST /api/rates/versions` → `server/api/rates/versions.post.ts`
@@ -1560,7 +1584,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateDirectory.ts`
   - `server/utils/rateVersionCrud.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/regionalRateCrud.ts`
@@ -1577,8 +1603,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
   - `app/components/ListProgress.vue`
-  - `app/composables/useProgressiveList.ts`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `components/RateMoneyFields.vue`
   - `components/SearchableSelect.vue`
   - `components/SiteRateCrud.vue`
@@ -1595,7 +1622,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/auth.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/rateCrud.ts`
+  - `server/utils/rateDirectory.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/regionalRateCrud.ts`
   - `server/utils/requestCapacity.ts`

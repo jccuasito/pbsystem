@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
-import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import RateMoneyFields from './RateMoneyFields.vue'
 import ModernDateField from './ModernDateField.vue'
 import { rateFormFields } from '~~/shared/utils/rateFields'
 import { rateDate, regionalAtDate } from '~~/shared/utils/regionalRates'
-const props=defineProps<{mode:'create'|'current'|'version'|'history';record?:any;scope?:any;positions:any[];agencies:any[];regions:any[]}>()
+const props=defineProps<{mode:'create'|'current'|'version'|'history';record?:any;scope?:any;positions:any[];agencies:any[];regions:any[];serverChoices?:boolean}>()
 const emit=defineEmits<{close:[];saved:[]}>()
 const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
 const current=props.record?regionalAtDate(props.record,props.record.Versions,today):null
@@ -14,16 +14,39 @@ const initial=props.mode==='version'?(props.record?.Versions?.at(-1)||props.reco
 const form=ref<any>({AgencyID:String(props.scope?.AgencyID??''),RegionID:String(props.scope?.RegionID??''),EffectiveDate:props.mode==='version'?'':rateDate(initial?.EffectiveDate)||today,Reason:initial?.Reason||'',...Object.fromEntries(rateFormFields.map(({key})=>[key,initial?.[key]??0]))})
 const sourceId=ref(''),busy=ref(false),error=ref(''),review=ref(false),dialog=ref<HTMLElement|null>(null)
 const title=computed(()=>({create:'Set up region rate',current:'Edit region rate',version:'Update region rate',history:'Region rate history'})[props.mode])
-const candidates=computed(()=>props.positions.filter(row=>row.Status==='Active'&&String(row.AgencyID)===String(form.value.AgencyID)&&String(row.RegionID??'')===String(form.value.RegionID??'')&&row.EffectiveDate))
-const source=computed(()=>candidates.value.find(row=>String(row.PayrollRateID)===sourceId.value))
+const remoteCandidates=ref<any[]>([]),selectedSource=ref<any>(null),sourceLoading=ref(false)
+let sourceOwner=0,sourceController:AbortController|undefined
+watch([()=>form.value.AgencyID,()=>form.value.RegionID],async()=>{
+ const owner=++sourceOwner;sourceController?.abort();sourceId.value='';selectedSource.value=null;remoteCandidates.value=[];sourceLoading.value=false
+ if(!props.serverChoices||props.mode!=='create'||!form.value.AgencyID)return
+ const controller=new AbortController();sourceController=controller;sourceLoading.value=true
+ try{const response:any=await $fetch('/api/rates/payroll-rate',{query:{view:'copy-choices',agencyId:form.value.AgencyID,regionId:form.value.RegionID,requireDated:'1'},signal:controller.signal});if(owner===sourceOwner)remoteCandidates.value=response.items}
+ catch(cause){if(owner===sourceOwner&&!controller.signal.aborted)error.value=requestErrorMessage(cause,'Unable to load starting rates.')}
+ finally{if(owner===sourceOwner)sourceLoading.value=false}
+},{immediate:true})
+onBeforeUnmount(()=>{++sourceOwner;sourceController?.abort()})
+const candidates=computed(()=>props.serverChoices?remoteCandidates.value:props.positions.filter(row=>row.Status==='Active'&&String(row.AgencyID)===String(form.value.AgencyID)&&String(row.RegionID??'')===String(form.value.RegionID??'')&&row.EffectiveDate))
+const source=computed(()=>props.serverChoices?(String(selectedSource.value?.PayrollRateID)===sourceId.value?selectedSource.value:null):candidates.value.find(row=>String(row.PayrollRateID)===sourceId.value))
+
 const money=(value:any)=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(value)||0)
 const formatDate=(value:any)=>{const d=rateDate(value);return d?new Intl.DateTimeFormat('en-PH',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(d+'T00:00:00Z')):'No date'}
 const scopeLabel=computed(()=>props.record?props.record.AgencyName+' / '+(props.record.RegionName||'All regions'):(props.agencies.find(a=>String(a.AgencyID)===String(form.value.AgencyID))?.AgencyName||'Select an agency')+' / '+(props.regions.find(r=>String(r.RegionID)===String(form.value.RegionID))?.RegionName||'All regions'))
 const history=computed(()=>{const record=props.record;if(!record)return [];const currentDate=rateDate(current?.EffectiveDate);return [{...record,original:true},...(record.Versions||[])].reverse().map(row=>({...row,state:rateDate(row.EffectiveDate)>today?'Scheduled':rateDate(row.EffectiveDate)===currentDate?'Current':'Previous'}))})
 const minimum=computed(()=>{if(props.mode!=='version')return undefined;const d=new Date(rateDate(initial.EffectiveDate)+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10)})
-function selectSource(){if(!source.value)return;form.value={...form.value,EffectiveDate:rateDate(source.value.EffectiveDate),...Object.fromEntries(rateFormFields.map(({key})=>[key,source.value[key]??0]))}}
+async function selectSource(){
+ if(props.serverChoices){
+  const owner=++sourceOwner;sourceController?.abort();selectedSource.value=null;sourceLoading.value=false
+  if(!sourceId.value)return
+  const controller=new AbortController();sourceController=controller;sourceLoading.value=true
+  try{const response:any=await $fetch('/api/rates/payroll-rate',{query:{view:'record',id:sourceId.value},signal:controller.signal});if(owner!==sourceOwner)return;selectedSource.value=response.item}
+  catch(cause){if(owner===sourceOwner&&!controller.signal.aborted){sourceId.value='';error.value=requestErrorMessage(cause,'Unable to load starting amounts.')}}
+  finally{if(owner===sourceOwner)sourceLoading.value=false}
+ }
+ if(!source.value)return
+ form.value={...form.value,EffectiveDate:rateDate(source.value.EffectiveDate),...Object.fromEntries(rateFormFields.map(({key})=>[key,source.value[key]??0]))}
+}
 function close(){if(!busy.value)emit('close')}
-async function save(){if(busy.value)return;busy.value=true;error.value='';try{await $fetch('/api/rates/regional',{method:props.mode==='create'?'POST':'PUT',body:{...form.value,id:props.record?.RegionRateID,mode:props.mode,Revision:props.record?.Revision,SourcePayrollRateID:sourceId.value||undefined}});emit('saved')}catch(e:any){error.value=requestErrorMessage(e, 'Unable to save region rate.');review.value=false}finally{busy.value=false}}
+async function save(){if(busy.value||sourceLoading.value)return;busy.value=true;error.value='';try{await $fetch('/api/rates/regional',{method:props.mode==='create'?'POST':'PUT',body:{...form.value,id:props.record?.RegionRateID,mode:props.mode,Revision:props.record?.Revision,SourcePayrollRateID:sourceId.value||undefined}});emit('saved')}catch(e:any){error.value=requestErrorMessage(e, 'Unable to save region rate.');review.value=false}finally{busy.value=false}}
 let previous:HTMLElement|null=null,overflow=''
 function keyboard(event:KeyboardEvent){if(event.key==='Escape'){event.preventDefault();close()}if(event.key!=='Tab')return;const nodes=dialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]');if(!nodes?.length)return;const first=nodes[0]!,last=nodes[nodes.length-1]!;if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}}
 onMounted(async()=>{previous=document.activeElement as HTMLElement;overflow=document.body.style.overflow;document.body.style.overflow='hidden';document.addEventListener('keydown',keyboard);await nextTick();dialog.value?.focus()})
@@ -43,14 +66,14 @@ onBeforeUnmount(()=>{document.body.style.overflow=overflow;document.removeEventL
    <template v-else>
     <section class="panel"><div class="section-heading"><div><p>ASSIGNMENT</p><h3>Agency and region</h3></div></div><div v-if="mode==='create'" class="two-columns"><label>Agency<select v-model="form.AgencyID" required :disabled="!!scope" @change="sourceId=''"><option value="">Choose agency</option><option v-for="agency in agencies" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{agency.AgencyName}}</option></select></label><label>Region<select v-model="form.RegionID" :disabled="!!scope" @change="sourceId=''"><option value="">All regions</option><option v-for="region in regions" :key="region.RegionID" :value="String(region.RegionID)">{{region.RegionName}}</option></select></label></div><strong v-else>{{scopeLabel}}</strong><p class="note">Positions follow the regional amounts on their effective dates. Each position can keep custom amounts for selected fields.</p></section>
     <section class="panel"><div class="section-heading"><div><p>WHEN &amp; WHY</p><h3>{{mode==='create'?'Starting rate and reference':'Effective date and reference'}}</h3></div></div>
-     <label v-if="mode==='create'&&candidates.length" class="source-field">Starting rate<select v-model="sourceId" @change="selectSource"><option value="">Enter regional amounts</option><option v-for="position in candidates" :key="position.PayrollRateID" :value="String(position.PayrollRateID)">{{position.PositionName}} &mdash; {{money(position.CurrentRate?.RegularRate??position.RegularRate)}}</option></select><small>Using a position keeps its original rate and all dated updates.</small></label>
+     <p v-if="sourceLoading" class="intro" role="status">Loading starting rates...</p><label v-if="mode==='create'&&candidates.length" class="source-field">Starting rate<select v-model="sourceId" @change="selectSource"><option value="">Enter regional amounts</option><option v-for="position in candidates" :key="position.PayrollRateID" :value="String(position.PayrollRateID)">{{position.PositionName}}{{serverChoices?'':' ? '+money(position.CurrentRate?.RegularRate??position.RegularRate)}}</option></select><small>Using a position keeps its original rate and all dated updates.</small></label>
      <div class="two-columns"><div v-if="mode==='current'||source" class="date-summary"><span>Effective date</span><strong>{{formatDate(form.EffectiveDate)}}</strong><small v-if="source">Original starting date. Full history will be included.</small><small v-else>Use Dated update to start a new rate on another date.</small></div><ModernDateField v-else v-model="form.EffectiveDate" label="Effective date" :min="minimum" required/><label>Wage order / reference <input v-model="form.Reason" maxlength="500" placeholder="Reference for this regional rate"></label></div>
     </section>
     <section class="panel"><div class="section-heading"><div><p>RATE AMOUNTS</p><h3>{{mode==='version'?'Updated amounts':'Regional amounts'}}</h3></div><small>PHP amounts</small></div><p v-if="source" class="note">Starting amounts from {{source.PositionName}}. Its later dated updates are also copied.</p><fieldset :disabled="!!source"><RateMoneyFields v-model="form"/></fieldset><p v-if="source" class="intro">To enter different starting amounts, choose Enter regional amounts above.</p></section>
    </template>
    <p v-if="error" class="error" role="alert">{{error}}</p>
   </div>
-  <footer><button type="button" :disabled="busy" @click="review?review=false:close()">{{mode==='history'?'Close':review?'Back':'Cancel'}}</button><button v-if="mode!=='history'" class="primary" :disabled="busy">{{busy?'Saving...':review?'Save region rate':'Review region rate'}}</button></footer>
+  <footer><button type="button" :disabled="busy" @click="review?review=false:close()">{{mode==='history'?'Close':review?'Back':'Cancel'}}</button><button v-if="mode!=='history'" class="primary" :disabled="busy || sourceLoading">{{busy?'Saving...':review?'Save region rate':'Review region rate'}}</button></footer>
  </form></div></Teleport>
 </template>
 <style scoped>

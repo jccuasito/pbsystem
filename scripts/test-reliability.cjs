@@ -97,3 +97,26 @@ test('background refresh pauses hidden/offline tabs, backs off errors and clears
   assert.ok([...timers.values()][0].delay >= 20000)
   unmounted[0](); assert.equal(timers.size, 0); assert.equal(listeners.size, 0)
 })
+
+
+test('diagnostics count completed queries, normalize record IDs and bound route memory',async()=>{
+ const connection={execute:async()=>[[{ok:1}]],release(){},destroy(){},beginTransaction:async()=>{},commit:async()=>{},rollback:async()=>{}}
+ const managed=managePool({getConnection:async()=>connection},100)
+ await managed.pool.execute('SELECT 1')
+ assert.equal(managed.metrics().queries,1);assert.equal(managed.metrics().active,0)
+ assert.ok(managed.metrics().totalQueryMs>=0);assert.ok(managed.metrics().maxQueryMs>=0)
+ for(let id=1;id<=150;id++){
+  const event={context:{},method:'GET',node:{req:{method:'GET'},res:{statusCode:200}}}
+  capacity.admitApiRequest(event,'/api/attendance/dtr/'+id+'/summary');capacity.completeApiRequest(event)
+ }
+ const snapshot=capacity.requestCapacity(),key='GET /api/attendance/dtr/:id/summary'
+ assert.equal(snapshot.routes[key].completed,150)
+ snapshot.routes[key].completed=0
+ assert.equal(capacity.requestCapacity().routes[key].completed,150,'Returned metrics cannot mutate internal counters')
+ for(let index=0;index<130;index++){
+  const event={context:{},method:'GET',node:{req:{method:'GET'},res:{statusCode:404}}}
+  capacity.admitApiRequest(event,'/api/unknown-'+String.fromCharCode(65+index));capacity.completeApiRequest(event)
+ }
+ assert.ok(Object.keys(capacity.requestCapacity().routes).length<=101)
+ assert.equal(capacity.requestCapacity().active,0)
+})

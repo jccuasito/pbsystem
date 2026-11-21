@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import { useServerList } from '~~/app/composables/useServerList'
 import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import RateMoneyFields from './RateMoneyFields.vue'
 import SearchableSelect from './SearchableSelect.vue'
 import { emptyRateAmounts, rateFormFields as rateMoneyFields } from '~~/shared/utils/rateFields'
 
 // Shared state for the responsive list and compact link-rate form.
-const items = ref<any[]>([])
+const existingLinks = ref<any[]>([])
+const clientChoices=ref<any[]>([]),agencyChoices=ref<any[]>([])
+const choicesLoading=ref(false)
 const sites = ref<any[]>([])
 const agencyPositions = ref<any[]>([])
 const payrollRates = ref<any[]>([])
@@ -19,7 +21,7 @@ const form = ref<any>({ SiteID: '', AgencyID: '', AgencyPositionID: '', PayrollR
 const editing = ref<any>(null)
 const open = ref(false)
 const busy = ref(false)
-const loading = ref(true)
+
 const error = ref('')
 const inlinePayroll = ref(false)
 const inlineBilling = ref(false)
@@ -32,9 +34,7 @@ const statusFilter = ref('')
 
 const selectedSite = computed(() => sites.value.find(site => String(site.SiteID) === String(form.value.SiteID) && String(site.AgencyID) === String(form.value.AgencyID)) || null)
 const selectedPosition = computed(() => agencyPositions.value.find(position => String(position.AgencyPositionID) === String(form.value.AgencyPositionID)) || null)
-const existingSiteLinks = computed(() => items.value.filter(item => item.Status === 'Active'
-  && String(item.SiteID) === String(form.value.SiteID)
-  && String(item.SiteRateID) !== String(editing.value?.SiteRateID ?? '')))
+const existingSiteLinks = computed(() => existingLinks.value.filter(item => String(item.SiteRateID) !== String(editing.value?.SiteRateID ?? '')))
 const duplicateSiteLink = computed(() => form.value.Status === 'Active' && existingSiteLinks.value.some(item =>
   String(item.AgencyPositionID) === String(form.value.AgencyPositionID)))
 const matchesSiteRegion = (rate: any) => Number(rate.RegionID) === Number(selectedSite.value?.RegionID)
@@ -56,22 +56,28 @@ const agencyOptions = computed(() => {
 const positionOptions = computed(() => agencyPositions.value
   .filter(position => String(position.AgencyID) === String(form.value.AgencyID))
   .map(position => ({ value: String(position.AgencyPositionID), label: position.PositionName })))
-const clients = computed(() => {
-  const unique = new Map<string, string>()
-  items.value.forEach(item => unique.set(String(item.ClientID), item.ClientName))
-  return [...unique].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+const clients=computed(()=>clientChoices.value.map(client=>({value:String(client.ClientID),label:client.ClientName})))
+const agencies=computed(()=>agencyChoices.value.map(agency=>agency.AgencyName))
+const directory=useServerList<any>({
+ query:()=>({search:search.value,clientId:clientFilter.value,agency:agencyFilter.value,status:statusFilter.value}),
+ key:item=>item.SiteRateID,
+ fetchPage:(page,query,signal)=>$fetch('/api/rates/site-rate',{query:{...query,page,pageSize:25,includeLookups:page===1?'1':'0'},signal}),
+ onLoaded:response=>{if(response.sites)sites.value=response.sites;if(response.agencyPositions)agencyPositions.value=response.agencyPositions;if(response.clients)clientChoices.value=response.clients;if(response.agencies)agencyChoices.value=response.agencies},
+ paused:()=>busy.value||open.value,
 })
-const agencies = computed(() => [...new Set(items.value.map(item => item.AgencyName).filter(Boolean))].sort((a, b) => a.localeCompare(b)))
-const filteredItems = computed(() => {
-  const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  return items.value.filter(item => {
-    const searchable = [item.SiteName, item.ClientName, item.AgencyName, item.PositionName, item.RegionName, item.RegionCode].join(' ').toLocaleLowerCase()
-    return words.every(word => searchable.includes(word))
-      && (!clientFilter.value || String(item.ClientID) === clientFilter.value)
-      && (!agencyFilter.value || item.AgencyName === agencyFilter.value)
-      && (!statusFilter.value || item.Status === statusFilter.value)
-  })
+const {items,loading,progress:listProgress,loadMore:loadMoreItems}=directory
+const filteredItems=items,displayedItems=items
+watch(directory.error,value=>{error.value=value})
+let choicesOwner=0,choicesController:AbortController|undefined
+watch([open,()=>form.value.SiteID,()=>form.value.AgencyPositionID,()=>selectedSite.value?.RegionID],async()=>{
+ const owner=++choicesOwner;choicesController?.abort();payrollRates.value=[];billingRates.value=[];existingLinks.value=[];choicesLoading.value=false
+ if(!open.value||!form.value.AgencyPositionID||!selectedSite.value?.RegionID)return
+ const controller=new AbortController();choicesController=controller;choicesLoading.value=true
+ try{const response:any=await $fetch('/api/rates/site-rate',{query:{view:'choices',siteId:form.value.SiteID,agencyPositionId:form.value.AgencyPositionID,regionId:selectedSite.value.RegionID},signal:controller.signal});if(owner!==choicesOwner)return;payrollRates.value=response.payrollRates;billingRates.value=response.billingRates;existingLinks.value=response.existingLinks}
+ catch(cause){if(owner===choicesOwner&&!controller.signal.aborted)error.value=requestErrorMessage(cause,'Unable to load rate choices.')}
+ finally{if(owner===choicesOwner)choicesLoading.value=false}
 })
+onBeforeUnmount(()=>{++choicesOwner;choicesController?.abort()})
 
 function formatMoney(value: unknown) {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2 }).format(Number(value || 0))
@@ -91,24 +97,15 @@ function clearRateSelection() { form.value.PayrollRateID = ''; form.value.Billin
 function onAgencyChange() { form.value.SiteID = ''; form.value.AgencyPositionID = ''; clearRateSelection() }
 function clearFilters() { search.value = ''; clientFilter.value = ''; agencyFilter.value = ''; statusFilter.value = '' }
 
-async function load(silent = false) {
-  if (!silent) loading.value = true
-  try {
-    const response: any = await $fetch('/api/rates/site-rate')
-    items.value = response.items || []
-    sites.value = response.sites || []
-    agencyPositions.value = response.agencyPositions || []
-    payrollRates.value = response.payrollRates || []
-    billingRates.value = response.billingRates || []
-  } catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to load site rates.') }
-  finally { if (!silent) loading.value = false }
-}
+async function load(_silent = false) {await directory.refresh()}
+
 async function save() {
   error.value = ''
   if (!selectedSite.value || !selectedPosition.value || String(selectedPosition.value.AgencyID) !== String(form.value.AgencyID)) {
     error.value = 'Select a site, agency, and position under that agency.'
     return
   }
+  if (choicesLoading.value) {error.value='Please wait for the selected rates to load.';return}
   if (duplicateSiteLink.value) {
     error.value = 'This site already has an active payroll and billing rate link for the selected agency position.'
     return
@@ -135,10 +132,9 @@ async function deactivate(item: any) {
   catch (cause: any) { error.value = requestErrorMessage(cause, 'Unable to deactivate site rate.') }
 }
 
-onMounted(load)
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
+useRealtimeRefresh(directory.poll, {intervalMs:30000,shouldRefresh:()=>!busy.value&&!open.value&&!loading.value&&!directory.loadingMore.value&&directory.pagination.value.page<=1})
 
-const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredItems, { resetKey: () => [search.value,clientFilter.value,agencyFilter.value,statusFilter.value] })
+
 </script>
 
 <template>
@@ -155,7 +151,7 @@ const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMore
       <label><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in agencies" :key="agency" :value="agency">{{ agency }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
-    <div class="list-summary"><span>{{ loading ? 'Loading site rates…' : `${filteredItems.length} matching site rates / ${items.length} total` }}</span><button v-if="search || clientFilter || agencyFilter || statusFilter" type="button" @click="clearFilters">Clear filters</button></div>
+    <div class="list-summary"><span>{{ loading ? 'Loading site rates…' : `${listProgress.shown} of ${listProgress.total} matching site rates` }}</span><button v-if="search || clientFilter || agencyFilter || statusFilter" type="button" @click="clearFilters">Clear filters</button></div>
 
     <div class="desktop-table">
       <table>
@@ -188,7 +184,7 @@ const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMore
 
 
     <Teleport to="body"><div v-if="open" class="backdrop" @click.self="!busy && (open = false)"><form class="modal site-rate-modal" role="dialog" aria-modal="true" aria-labelledby="site-rate-modal-title" @submit.prevent="save">
-      <button class="close" type="button" aria-label="Close site rate form" :disabled="busy" @click="open = false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+      <button class="close" type="button" aria-label="Close site rate form" :disabled="busy || choicesLoading" @click="open = false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
       <header class="modal-heading"><p class="eyebrow">SITE RATE</p><h2 id="site-rate-modal-title">{{ editing ? 'Edit site rate' : 'Link site rate' }}</h2><span>Choose an agency, then select one of its assigned sites and positions.</span></header>
       <section class="site-rate-section">
         <div class="section-heading"><div><span>ASSIGNMENT</span><h3>Agency, site, and position</h3></div><small>Sites and positions are limited to the agency you choose.</small></div>
@@ -230,7 +226,7 @@ const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMore
       </section>
       <section class="site-rate-section status-section"><div class="section-heading"><div><span>AVAILABILITY</span><h3>Link status</h3></div></div><label class="status-control"><span>Status</span><select v-model="form.Status"><option>Active</option><option>Inactive</option></select></label></section>
       <p v-if="error" class="error modal-error">{{ error }}</p>
-      <footer class="modal-footer"><button type="button" :disabled="busy" @click="open = false">Cancel</button><button class="primary" :disabled="busy || duplicateSiteLink || !selectedSite || !selectedPosition || String(selectedPosition.AgencyID) !== String(form.AgencyID)">{{ busy ? 'Saving…' : editing ? 'Save changes' : 'Save link' }}</button></footer>
+      <footer class="modal-footer"><button type="button" :disabled="busy || choicesLoading" @click="open = false">Cancel</button><button class="primary" :disabled="busy || duplicateSiteLink || !selectedSite || !selectedPosition || String(selectedPosition.AgencyID) !== String(form.AgencyID)">{{ busy ? 'Saving…' : editing ? 'Save changes' : 'Save link' }}</button></footer>
     </form></div></Teleport>
   </main>
 </template>

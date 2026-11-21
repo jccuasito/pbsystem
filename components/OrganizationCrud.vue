@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import { useServerList } from '~~/app/composables/useServerList'
 import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRealtimeRefresh } from '~/composables/useRealtimeRefresh'
 import ModernDateField from './ModernDateField.vue'
 import SearchableSelect from './SearchableSelect.vue'
@@ -13,14 +13,14 @@ type Column = { key: string; label: string }
 
 const props = defineProps<{ resource: string; title: string; fields: Field[]; columns: Column[]; description?: string; searchPlaceholder?: string }>()
 const canEdit = ref(false)
-const items = ref<any[]>([])
+
 const lookups = ref<Record<string, any[]>>({})
 const modalOpen = ref(false)
 const editing = ref<any>(null)
 const form = ref<Record<string, any>>({})
 const busy = ref(false)
 const error = ref('')
-const loading = ref(true)
+
 const logoPreview = ref('')
 const search = ref('')
 const statusFilter = ref('')
@@ -42,14 +42,17 @@ const formGroups = computed(() => props.resource === 'site' ? [
   { key: 'settings', eyebrow: 'BRANDING & AVAILABILITY', title: 'Logo and status', fields: props.fields.filter(field => ['LogoData', 'Status'].includes(field.key)) },
 ] : [{ key: 'general', eyebrow: '', title: '', fields: props.fields.filter(field => props.resource !== 'site-account' || editing.value || field.key !== 'Status') }])
 const displayItems = computed(() => props.resource !== 'site' ? items.value : items.value.map(item => ({...item,SiteAccountName:item.AgencyAccounts?.[0]?.SiteAccountName || ''})))
-const filteredItems = computed(() => {
-  const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  return displayItems.value.filter(item => {
-    const searchable = props.columns.map(column => item[column.key]).filter(value => typeof value !== 'object').join(' ').toLocaleLowerCase()
-    return words.every(word => searchable.includes(word)) && (!statusFilter.value || item.Status === statusFilter.value)
-      && (!agencyFilter.value || (Array.isArray(item.AgencyIDs) && item.AgencyIDs.some((id: number) => String(id) === agencyFilter.value)))
-  })
+const filteredItems = displayItems
+const directory = useServerList<any>({
+  query: () => ({resource:props.resource,search:search.value,status:statusFilter.value,agencyId:agencyFilter.value}),
+  key: item => item[idKey.value],
+  fetchPage: (page, {resource,...query}, signal) => $fetch(`/api/organization/${resource}`, {query:{...query,page,pageSize:25,includeLookups:page===1?'1':'0'},signal}),
+  onLoaded: response => {canEdit.value=response.canEdit!==false;const {items,pagination,...metadata}=response;lookups.value={...lookups.value,...metadata}},
+  paused: () => busy.value || modalOpen.value,
 })
+const {items,loading,progress:listProgress,loadMore:loadMoreItems}=directory
+const displayedItems=displayItems
+watch(directory.error, value => {error.value=value})
 
 function resetForm(item: any = null) {
   editing.value = item
@@ -116,19 +119,7 @@ function removeLogo() {
   logoPreview.value = ''
 }
 
-async function load(silent = false) {
-  if (!silent) loading.value = true
-  try {
-    const response: any = await $fetch(`/api/organization/${props.resource}`)
-    items.value = response.items || []
-    canEdit.value = response.canEdit !== false
-    lookups.value = response
-  } catch (cause: any) {
-    error.value = requestErrorMessage(cause, 'Unable to load records.')
-  } finally {
-    if (!silent) loading.value = false
-  }
-}
+async function load(_silent = false) { await directory.refresh() }
 
 function add() { resetForm(); modalOpen.value = true }
 function edit(item: any) { resetForm(props.resource === 'site' ? items.value.find(site => site.SiteID === item.SiteID) : item); modalOpen.value = true }
@@ -191,10 +182,9 @@ function display(item: any, column: Column) {
   return value
 }
 
-onMounted(load)
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !busy.value })
+useRealtimeRefresh(directory.poll, {intervalMs:30000, shouldRefresh: () => !busy.value && !modalOpen.value && !loading.value && !directory.loadingMore.value && directory.pagination.value.page<=1})
 
-const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(filteredItems, { resetKey: () => [props.resource,search.value,statusFilter.value,agencyFilter.value] })
+
 </script>
 
 <template>
@@ -210,7 +200,7 @@ const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMore
       <label v-if="resource === 'site'"><span>Agency</span><select v-model="agencyFilter"><option value="">All agencies</option><option v-for="agency in lookups.agencies || []" :key="agency.AgencyID" :value="String(agency.AgencyID)">{{ agency.AgencyName }}</option></select></label>
       <label><span>Status</span><select v-model="statusFilter"><option value="">All statuses</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select></label>
     </section>
-    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `${filteredItems.length} matching ${title.toLowerCase()} / ${displayItems.length} total` }}</span><button v-if="search || statusFilter || agencyFilter" type="button" @click="clearFilters">Clear filters</button></div>
+    <div class="list-summary"><span>{{ loading ? `Loading ${title.toLowerCase()}…` : `${listProgress.shown} of ${listProgress.total} matching ${title.toLowerCase()}` }}</span><button v-if="search || statusFilter || agencyFilter" type="button" @click="clearFilters">Clear filters</button></div>
 
     <div class="desktop-table">
       <table><thead><tr><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th class="actions-heading">Actions</th></tr></thead>

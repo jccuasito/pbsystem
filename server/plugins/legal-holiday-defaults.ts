@@ -3,6 +3,8 @@ import { seedLegalHolidayDefaults } from '../utils/legalHolidayDefaults'
 import { legalHolidayYears } from '../../shared/utils/philippineLegalHolidays'
 
 export default defineNitroPlugin(async (nitroApp) => {
+  // Controlled read-only local load runs disable startup writes explicitly.
+  if (process.env.LEGAL_HOLIDAY_AUTO_SEED === 'false') return
   let checkedYear: number | null = null
   let running = false
   const check = async () => {

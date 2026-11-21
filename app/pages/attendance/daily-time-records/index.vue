@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useProgressiveList } from '~~/app/composables/useProgressiveList'
+import { useServerList } from '~~/app/composables/useServerList'
 import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
@@ -18,13 +18,24 @@ const computeConfirmation=ref<{item:Dtr,target:'payroll'|'billing'}|null>(null)
 const computeDialog=ref<HTMLElement|null>(null)
 function logoKey(resource:'agency'|'site',id:number){return resource+'-'+id}
 function logoInitials(name:string){return name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase()||'—'}
-const now=new Date(), selectedYear=ref(String(now.getFullYear())), selectedCutoff=ref(''), search=ref(''), agencyId=ref(''), clientId=ref(''), siteId=ref(''), items=ref<Dtr[]>([]), agencies=ref<Agency[]>([]), clients=ref<Client[]>([]), sites=ref<Site[]>([]), loading=ref(false), saving=ref(false), computingKey=ref(''), detailsLoadingId=ref<number|null>(null), error=ref(''), formOpen=ref(false), editing=ref<Dtr|null>(null), workspace=ref<Dtr|null>(null), detailsData=ref<any>(null), summaryOpen=ref(false), compactOpen=ref(false), summary=ref<any>(null)
+const now=new Date(), selectedYear=ref(String(now.getFullYear())), selectedCutoff=ref(''), search=ref(''), agencyId=ref(''), clientId=ref(''), siteId=ref(''), agencies=ref<Agency[]>([]), clients=ref<Client[]>([]), sites=ref<Site[]>([]), saving=ref(false), computingKey=ref(''), detailsLoadingId=ref<number|null>(null), error=ref(''), formOpen=ref(false), editing=ref<Dtr|null>(null), workspace=ref<Dtr|null>(null), detailsData=ref<any>(null), summaryOpen=ref(false), compactOpen=ref(false), summary=ref<any>(null)
 const form=reactive({AgencyID:'',ClientID:'',SiteID:'',PeriodStart:'',PeriodEnd:''})
 function cutoffOptions(year:number){return Array.from({length:12},(_,m)=>{const name=new Date(year,m).toLocaleString('en-PH',{month:'long'}), last=new Date(year,m+1,0).getDate(),p=`${year}-${String(m+1).padStart(2,'0')}`;return[{value:`${p}-01:${p}-15`,label:`${name} 1–15, ${year}`},{value:`${p}-16:${p}-${last}`,label:`${name} 16–${last}, ${year}`}]}).flat()}
 const yearOptions=computed(()=>Array.from({length:5},(_,i)=>String(now.getFullYear()-2+i))), cutoffs=computed(()=>cutoffOptions(Number(selectedYear.value))), cutoffLabel=computed(()=>cutoffs.value.find(c=>c.value===selectedCutoff.value)?.label||'Choose a cutoff'), period=computed(()=>selectedCutoff.value.split(':'))
 const availableClients=computed(()=>clients.value.filter(c=>!agencyId.value||String(c.AgencyID)===agencyId.value)), availableSites=computed(()=>sites.value.filter(s=>(!clientId.value||String(s.ClientID)===clientId.value)&&(!agencyId.value||String(s.AgencyID)===agencyId.value))), formClients=computed(()=>clients.value.filter(c=>String(c.AgencyID)===form.AgencyID)), formSites=computed(()=>sites.value.filter(s=>String(s.ClientID)===form.ClientID&&String(s.AgencyID)===form.AgencyID))
 function currentCutoff(){const y=now.getFullYear(),m=now.getMonth()+1,start=now.getDate()<=15?1:16,end=start===1?15:new Date(y,m,0).getDate(),p=`${y}-${String(m).padStart(2,'0')}`;return `${p}-${String(start).padStart(2,'0')}:${p}-${end}`}
-async function load(){loading.value=true;error.value='';try{const query:Record<string,string>={};if(search.value)query.search=search.value;if(agencyId.value)query.agencyId=agencyId.value;if(clientId.value)query.clientId=clientId.value;if(siteId.value)query.siteId=siteId.value;if(period.value[0])query.periodStart=period.value[0];if(period.value[1])query.periodEnd=period.value[1];const r=await $fetch<any>('/api/attendance/dtr',{query});items.value=r.items||[];agencies.value=r.agencies||[];clients.value=r.clients||[];sites.value=r.sites||[]}catch(e:any){error.value=requestErrorMessage(e, 'Unable to load Daily Time Records.')}finally{loading.value=false}}
+const directory=useServerList<Dtr>({
+ query:()=>({search:search.value,agencyId:agencyId.value,clientId:clientId.value,siteId:siteId.value,periodStart:period.value[0],periodEnd:period.value[1]}),
+ key:item=>item.BatchID,
+ fetchPage:(page,query,signal)=>$fetch('/api/attendance/dtr',{query:{...query,page,pageSize:25,includeLookups:page===1?'1':'0'},signal}),
+ onLoaded:r=>{if(r.agencies)agencies.value=r.agencies;if(r.clients)clients.value=r.clients;if(r.sites)sites.value=r.sites},
+ paused:()=>saving.value||!!workspace.value||formOpen.value||!!btrWorkspace.value||!!detailsData.value||!!computeConfirmation.value||!!adjustmentDtr.value||summaryOpen.value,
+})
+const {items,loading,progress:listProgress,loadMore:loadMoreItems}=directory
+const displayedItems=items
+watch(directory.error,value=>{error.value=value})
+async function load(){await directory.refresh()}
+
 function openCreate(){editing.value=null;Object.assign(form,{AgencyID:agencyId.value,ClientID:clientId.value,SiteID:siteId.value,PeriodStart:period.value[0]||'',PeriodEnd:period.value[1]||''});error.value='';formOpen.value=true}function openEdit(i:Dtr){workspace.value=i}
 async function save(){saving.value=true;error.value='';try{const body={AgencyID:Number(form.AgencyID),ClientID:Number(form.ClientID),SiteID:Number(form.SiteID),PeriodStart:form.PeriodStart,PeriodEnd:form.PeriodEnd};if(editing.value)await $fetch(`/api/attendance/dtr/${editing.value.BatchID}`,{method:'PUT',body});else await $fetch('/api/attendance/dtr',{method:'POST',body});formOpen.value=false;await load()}catch(e:any){error.value=requestErrorMessage(e, 'Unable to save DTR.')}finally{saving.value=false}}
 async function remove(i:Dtr){if(!confirm(`Delete DTR-${i.BatchID}? This cannot be undone.`))return;try{await $fetch(`/api/attendance/dtr/${i.BatchID}`,{method:'DELETE'});await load()}catch(e:any){error.value=requestErrorMessage(e, 'Unable to delete DTR.')}}
@@ -66,7 +77,7 @@ async function viewDetails(i:Dtr){
   finally{detailsLoadingId.value=null}
 }
 function formatDate(v:string){return new Date(v).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}function canEdit(i:Dtr){return !['Approved','Locked'].includes(i.Status)&&!i.Status.startsWith('Computed')}
-watch(selectedYear,()=>{selectedCutoff.value=selectedYear.value===String(now.getFullYear())?currentCutoff():cutoffs.value[0]?.value||''});watch(agencyId,()=>{clientId.value='';siteId.value=''});watch(clientId,()=>siteId.value='');selectedCutoff.value=currentCutoff();onMounted(load);useRealtimeRefresh(load)
+watch(selectedYear,()=>{selectedCutoff.value=selectedYear.value===String(now.getFullYear())?currentCutoff():cutoffs.value[0]?.value||''});watch(agencyId,()=>{clientId.value='';siteId.value=''});watch(clientId,()=>siteId.value='');selectedCutoff.value=currentCutoff();useRealtimeRefresh(directory.poll,{intervalMs:30000,shouldRefresh:()=>!loading.value&&!directory.loadingMore.value&&directory.pagination.value.page<=1&&!workspace.value&&!formOpen.value&&!saving.value&&!btrWorkspace.value&&!detailsData.value&&!computeConfirmation.value&&!adjustmentDtr.value&&!summaryOpen.value})
 function formatPeriod(start:string,end:string){
   const first=new Date(start),last=new Date(end)
   return first.getFullYear()===last.getFullYear()&&first.getMonth()===last.getMonth()
@@ -119,9 +130,9 @@ function blurActions(event:FocusEvent){
   if(!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node|null))closeActions(event)
 }
 
-const { visibleItems: displayedItems, progress: listProgress, loadMore: loadMoreItems } = useProgressiveList(items, { resetKey: () => [search.value,agencyId.value,clientId.value,selectedYear.value,selectedCutoff.value] })
+
 </script>
-<template><section class="dtr-page"><div class="dtr-heading"><div><p class="eyebrow">ATTENDANCE</p><h1>Daily Time Records</h1><p>Review and prepare employee attendance per payroll cutoff.</p></div><button class="primary" @click="openCreate">+ Create DTR</button></div><form class="filters" @submit.prevent="load"><input aria-label="Search DTRs" v-model.trim="search" type="search" placeholder="Search client, site, or DTR ID"><select aria-label="Agency" v-model="agencyId"><option value="">All agencies</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select><select aria-label="Client" v-model="clientId"><option value="">All clients</option><option v-for="c in availableClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select><select aria-label="Year" class="year-filter" v-model="selectedYear"><option v-for="y in yearOptions" :key="y">{{y}}</option></select><select aria-label="Cutoff" class="cutoff-filter" v-model="selectedCutoff"><option v-for="c in cutoffs" :key="c.value" :value="c.value">{{c.label}}</option></select><button class="primary">Search</button></form><p class="period">Selected cutoff: <strong>{{cutoffLabel}}</strong></p><p v-if="error" class="error">{{error}}</p>
+<template><section class="dtr-page"><div class="dtr-heading"><div><p class="eyebrow">ATTENDANCE</p><h1>Daily Time Records</h1><p>Review and prepare employee attendance per payroll cutoff.</p></div><button class="primary" @click="openCreate">+ Create DTR</button></div><form class="filters" @submit.prevent="directory.reset"><input aria-label="Search DTRs" v-model.trim="search" type="search" placeholder="Search client, site, or DTR ID"><select aria-label="Agency" v-model="agencyId"><option value="">All agencies</option><option v-for="a in agencies" :key="a.AgencyID" :value="String(a.AgencyID)">{{a.AgencyName}}</option></select><select aria-label="Client" v-model="clientId"><option value="">All clients</option><option v-for="c in availableClients" :key="`${c.AgencyID}-${c.ClientID}`" :value="String(c.ClientID)">{{c.ClientName}}</option></select><select aria-label="Year" class="year-filter" v-model="selectedYear"><option v-for="y in yearOptions" :key="y">{{y}}</option></select><select aria-label="Cutoff" class="cutoff-filter" v-model="selectedCutoff"><option v-for="c in cutoffs" :key="c.value" :value="c.value">{{c.label}}</option></select><button class="primary">Search</button></form><p class="period">Selected cutoff: <strong>{{cutoffLabel}}</strong></p><p v-if="error" class="error">{{error}}</p>
 <div class="dtr-list-panel" :aria-busy="loading">
   <table class="dtr-list-table">
     <colgroup><col class="identity-col"><col class="site-col"><col class="period-col"><col class="status-col"><col class="action-col"></colgroup>
