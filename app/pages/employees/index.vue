@@ -447,9 +447,18 @@ const agencyPositionOptions = computed(() => agencyPositions.value.map((item) =>
   search: `${item.AgencyName} ${item.PositionName}`
 })))
 
+let employeeCursorQuery = ''
+const employeeCursors = new Map<number, string>()
+async function fetchEmployeePage(page: number, query: Record<string, unknown>, signal: AbortSignal) {
+  const key=JSON.stringify(query)
+  if(page===1){employeeCursorQuery=key;employeeCursors.clear()}
+  const response=await $fetch<any>('/api/employees',{query:{...query,page,pageSize:25,includeLookups:page===1?'1':'0',after:employeeCursors.get(page)},signal,retry:0,timeout:15000})
+  if(!signal.aborted&&key===employeeCursorQuery&&response.pagination?.nextCursor)employeeCursors.set(page+1,response.pagination.nextCursor)
+  return response
+}
 const employeeDirectory = useServerList<any>({
   query: () => ({ ...filters.value, search: search.value }),
-  fetchPage: (page, query, signal) => $fetch('/api/employees', { query: { ...query, page, pageSize: 25, includeLookups: page === 1 ? '1' : '0' }, signal, retry: 0, timeout: 15000 }),
+  fetchPage: fetchEmployeePage,
   key: item => Number(item.EmployeeID),
   paused: () => busy.value || modalOpen.value || transferOpen.value || deleteOpen.value || !!resigning.value || !!positionEmployeeId.value || !!employmentEmployeeId.value,
   onLoaded: response => {

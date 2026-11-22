@@ -32,9 +32,27 @@ const directorySql=(prefix=finalizedPayslipCte,publications=true)=>prefix + `, e
   FROM eligible GROUP BY SiteAccountID,SiteAccountName,AgencyID,AgencyName,PeriodStart,PeriodEnd
 )`
 const finalized=directorySql()
-// These joins are one-to-one. Only the publication-validation plan needs the
-// DISTINCT materialization fence; lightweight headers can merge normally.
-const summaryDirectory=directorySql(finalizedPayslipCte.replace('SELECT DISTINCT py.EmployeeID','SELECT py.EmployeeID'),false)
+// Count, filter and choose directory groups from DTR headers. An indexed EXISTS
+// proves that a group has finalized payroll without aggregating every employee
+// in every site. Financial amounts and exact publication-source validation are
+// still loaded below for the selected page only.
+const summaryDirectory=`WITH eligible AS (
+  SELECT d.BatchID,d.AgencyID,d.SiteID,a.AgencyName,s.SiteName,c.ClientName,
+    COALESCE(coverage.SiteAccountID,0) AS SiteAccountID,
+    COALESCE(account.SiteAccountName,'Unassigned Site Account') AS SiteAccountName,
+    DATE_FORMAT(d.PeriodStart,'%Y-%m-%d') AS PeriodStart,DATE_FORMAT(d.PeriodEnd,'%Y-%m-%d') AS PeriodEnd
+  FROM attendance_dtr d
+  LEFT JOIN agency a ON a.AgencyID=d.AgencyID LEFT JOIN site s ON s.SiteID=d.SiteID
+  LEFT JOIN client c ON c.ClientID=d.ClientID
+  LEFT JOIN site_agency coverage ON coverage.SiteID=d.SiteID AND coverage.AgencyID=d.AgencyID
+  LEFT JOIN site_account account ON account.SiteAccountID=coverage.SiteAccountID
+  WHERE EXISTS (SELECT 1 FROM payroll_processing_posting pp
+    JOIN payroll py ON py.PayrollID=pp.PayrollID AND py.Status IN ('Approved','Released')
+    WHERE pp.BatchID=d.BatchID AND pp.Status='Active')
+), sites AS (SELECT * FROM eligible), accounts AS (
+  SELECT SiteAccountID,SiteAccountName,AgencyID,AgencyName,PeriodStart,PeriodEnd
+  FROM eligible GROUP BY SiteAccountID,SiteAccountName,AgencyID,AgencyName,PeriodStart,PeriodEnd
+)`
 const postingStatus=(posted:number,total:number)=>posted===total?'Posted':posted>0?'Partially posted':'Not Posted'
 const id=(value:unknown)=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):0
 const validPeriod=(start:string,end:string)=>/^\d{4}-\d{2}-\d{2}$/.test(start)&&/^\d{4}-\d{2}-\d{2}$/.test(end)&&start<=end
@@ -161,15 +179,19 @@ export async function listSitePayslips(event:any){
         return '(SiteAccountID=? AND AgencyID=? AND PeriodStart=? AND PeriodEnd=?)'
       }).join(' OR '):'BatchID IN ('+headers.map(row=>{pageParams.push(row.BatchID);batchParams.push(row.BatchID);return '?'}).join(',')+')'
       const batchWhere=byAccount?headers.map(()=>"(COALESCE(sa.SiteAccountID,0)=? AND d.AgencyID=? AND d.PeriodStart=? AND d.PeriodEnd=?)").join(' OR '):'d.BatchID IN ('+headers.map(()=>'?').join(',')+')'
-      const [employees]=await pool.execute<any[]>(`SELECT DISTINCT pp.EmployeeID FROM payroll_processing_posting pp
+      const selectedEmployees=`SELECT DISTINCT pp.EmployeeID FROM payroll_processing_posting pp
         JOIN payroll py ON py.PayrollID=pp.PayrollID AND py.Status IN ('Approved','Released')
         JOIN attendance_dtr d ON d.BatchID=pp.BatchID LEFT JOIN site_agency sa ON sa.SiteID=d.SiteID AND sa.AgencyID=d.AgencyID
-        WHERE pp.Status='Active' AND (${batchWhere})`,batchParams)
-      if(employees.length){
-        const prefix=finalizedPayslipCte.replace("WHERE py.Status IN ('Approved','Released')", "WHERE py.Status IN ('Approved','Released') AND py.EmployeeID IN ("+employees.map(()=>'?').join(',')+")")
-        const [details]=await pool.execute<any[]>(directorySql(prefix)+` SELECT * FROM ${table} WHERE ${pageWhere} ORDER BY PeriodEnd DESC,PeriodStart DESC,${order}`,[...employees.map(row=>row.EmployeeID),...pageParams])
-        items=details
-      }else items=[]
+        WHERE pp.Status='Active' AND (${batchWhere})`
+      // Keep the employee set in SQL: 25 large sites can contain 50,000 IDs.
+      // Expanding those into an IN parameter list stalls query optimization.
+      // Joining the distinct set still includes other-site and legacy sources
+      // for each selected employee, so publication validity remains exact.
+      const prefix=finalizedPayslipCte
+        .replace('WITH finalized AS (',`WITH selected_employees AS (${selectedEmployees}), finalized AS (`)
+        .replace('FROM payroll py','FROM selected_employees selected JOIN payroll py ON py.EmployeeID=selected.EmployeeID')
+      const [details]=await pool.execute<any[]>(directorySql(prefix)+` SELECT * FROM ${table} WHERE ${pageWhere} ORDER BY PeriodEnd DESC,PeriodStart DESC,${order}`,[...batchParams,...pageParams])
+      items=details
     }
     return{items:items.map(row=>({...row,Scope:byAccount?accountScope(row):{batchId:Number(row.BatchID)},PublicationStatus:postingStatus(Number(row.PostedPayrollCount),Number(row.PayrollCount))})),agencies,cutoffs,pagination:{page,pageSize,total,pages}}
   })

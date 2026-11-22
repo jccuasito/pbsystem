@@ -30,6 +30,24 @@ test('database acquisition timeout releases a late connection and leaves no acti
   assert.equal(managed.metrics().timeouts, 1)
 })
 
+test('coalesced payroll previews own one heavy slot and compete safely with financial writes', async () => {
+  const event = () => ({ context: {}, node: { res: { setHeader() {} } } })
+  let finish, calls = 0
+  const readers = Array.from({ length: 100 }, () => capacity.coalesceRead('payroll-budget-test', () => capacity.withHeavyRead(event(), () => {
+    calls++; return new Promise(resolve => { finish = resolve })
+  })))
+  await flush(); assert.equal(calls, 1); assert.equal(capacity.requestCapacity().heavy, 1)
+  const writer = { method: 'POST', path: '/api/payroll/processing/1', context: {}, node: { req: { method: 'POST' }, res: { setHeader() {} } } }
+  capacity.admitApiRequest(writer, '/api/payroll/processing/1')
+  try {
+    await assert.rejects(capacity.withHeavyRead(event(), async () => 'too much'), error => error.statusCode === 503)
+    finish('shared'); assert.ok((await Promise.all(readers)).every(value => value === 'shared'))
+  } finally { capacity.completeApiRequest(writer) }
+  assert.equal(capacity.requestCapacity().heavy, 0)
+  await assert.rejects(capacity.withHeavyRead(event(), async () => { throw Error('query failed') }))
+  assert.equal(capacity.requestCapacity().heavy, 0)
+})
+
 test('pool uses bound values, releases successful/failed queries and never retries a mutation', async () => {
   let calls = 0, releases = 0, fail
   const connection = () => ({

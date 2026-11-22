@@ -1,5 +1,5 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto'),bcrypt=require('bcrypt'),{transformSync}=require('esbuild'),sfc=require('@vue/compiler-sfc')
-function evaluate(file,dependencies={},globals={}){const module={exports:{}};vm.runInNewContext(transformSync(fs.readFileSync(file,'utf8'),{loader:'ts',format:'cjs'}).code,{module,Buffer,process,defineEventHandler:fn=>fn,require:name=>{if(Object.hasOwn(dependencies,name))return dependencies[name];throw new Error('Unexpected import '+name)},...globals});return module.exports}
+function evaluate(file,dependencies={},globals={}){dependencies={'./requestCapacity':{coalesceRead:(_,read)=>read()},...dependencies};const module={exports:{}};vm.runInNewContext(transformSync(fs.readFileSync(file,'utf8'),{loader:'ts',format:'cjs'}).code,{module,Buffer,process,defineEventHandler:fn=>fn,require:name=>{if(Object.hasOwn(dependencies,name))return dependencies[name];throw new Error('Unexpected import '+name)},...globals});return module.exports}
 const h3={createError:d=>Object.assign(new Error(d.statusMessage),d),getQuery:e=>e.query||{},readBody:async e=>e.body,getCookie:(e,key)=>e.cookies?.[key],setCookie:(e,key,value)=>{e.cookies??={};e.cookies[key]=value},getRequestHeader:(e,key)=>e.headers?.[key],getRequestURL:e=>new URL(e.url||'http://localhost:3000'),setHeader:(e,key,value)=>{e.responseHeaders??={};e.responseHeaders[key]=value}}
 const staffAuth={requireSession:e=>{if(!e.actor)throw h3.createError({statusCode:401});return e.actor},hashPassword:value=>bcrypt.hash(value,12),passwordMatches:(value,hash)=>bcrypt.compare(value,hash),normalizeEmail:value=>value.trim().toLowerCase(),assertPassword:value=>{if(value.length<12||!/[a-z]/i.test(value)||!/[0-9]/.test(value))throw h3.createError({statusCode:400})}}
 
@@ -79,8 +79,9 @@ test('site roster, combined payslips and bulk posting share employee publication
   assert.equal((await db.query('SELECT COUNT(*) AS total FROM payslip_publication'))[0][0].total,0,'Invalid bulk request writes nothing')
   trace.length=0
   const posted=await submit([1],{includeCombined:true});assert.equal(posted.changed,1)
-  assert.ok(trace.slice(0,4).every(sql=>sql.endsWith('FOR UPDATE')),'All reads before employee/payroll locks are current locking reads')
-  assert.match(trace[3],/FROM payroll WHERE EmployeeID/)
+  let lockingReads=trace.filter(sql=>/^SELECT\b/.test(sql))
+  assert.ok(lockingReads.slice(0,4).every(sql=>sql.endsWith('FOR UPDATE')),'All reads before employee/payroll locks are current locking reads')
+  assert.match(lockingReads[3],/FROM payroll WHERE EmployeeID/)
   assert.equal((await slips.listPayslips({...staff,query:{postingStatus:'partial'}})).items.length,1)
 
   assert.equal((await submit([1],{includeCombined:true})).unchanged,1,'Duplicate bulk post is idempotent')
@@ -95,6 +96,7 @@ test('site roster, combined payslips and bulk posting share employee publication
   await submit([1],{includeCombined:true})
   await db.query("INSERT INTO payroll VALUES(6,1,'Approved','2026-10-01','2026-10-15',100,0,100,NULL)")
   assert.equal((await list({postingStatus:'posted'})).items.length,0,'An added source invalidates the old posted snapshot on every affected site')
+  assert.equal((await list({})).items.find(row=>row.BatchID===1).PublicationStatus,'Not Posted','Paged header path still validates sources outside its site')
   assert.equal((await slips.listPayslips({...staff,query:{postingStatus:'posted'}})).items.length,0,'Employee list also invalidates old combined snapshots')
   await assert.rejects(()=>submit([1],{includeCombined:true}),e=>e.statusCode===409,'Stale review cannot post changed payroll')
   const fresh=await roster()
@@ -137,8 +139,9 @@ test('site roster, combined payslips and bulk posting share employee publication
   await assert.rejects(()=>accountPost(account,[3]),e=>e.statusCode===400,'Another agency employee cannot be posted with this account')
   trace.length=0
   let action=await accountPost(account,[1]);assert.equal(action.changed,2,'Multiple sites inside the account need no outside-scope acknowledgement')
-  assert.ok(trace.slice(0,5).every(sql=>sql.endsWith('FOR UPDATE')),'Account DTR/coverage/mapping/employee/payroll locks precede consistent reads')
-  assert.match(trace[4],/FROM payroll WHERE EmployeeID/)
+  lockingReads=trace.filter(sql=>/^SELECT\b/.test(sql))
+  assert.ok(lockingReads.slice(0,5).every(sql=>sql.endsWith('FOR UPDATE')),'Account DTR/coverage/mapping/employee/payroll locks precede consistent reads')
+  assert.match(lockingReads[4],/FROM payroll WHERE EmployeeID/)
   assert.equal((await accountPost(account,[1])).unchanged,2,'Account retries do not create duplicate snapshots/events')
   await accountPost(account,[2]);assert.equal((await list({groupBy:'account',postingStatus:'posted'})).items.length,1)
   const individual=await slips.readEmployeePayslips(1)

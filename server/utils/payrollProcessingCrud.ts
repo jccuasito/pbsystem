@@ -7,7 +7,8 @@ import { cashBondPreviewData, cashBondDue, postCashBondCollection, voidCashBondC
 import { recordDtrWorkflowEvent } from './dtrWorkflowAudit'
 import { postEmployeeAccountTransaction } from './employeeAccountTransactionCrud'
 import { listId, listPage, listSearch, pagination } from './listPagination'
-import { coalesceRead } from './requestCapacity'
+import { coalesceRead, withHeavyRead } from './requestCapacity'
+import { payrollSnapshotJson } from './payrollSnapshotBudget'
 
 const hours = [...payrollHourComponents, ...payrollTimeDeductions].map(([column]) => column)
 const pesos = (cents: number) => cents / 100
@@ -447,14 +448,14 @@ export async function listPayrollProcessing(event: any) {
   const session = requireSession(event)
   const query = getQuery(event)
   if (listPage(query)) {
-    const result = await coalesceRead('payroll-page:' + JSON.stringify(query), () => listPayrollProcessingPage(query))
+    const result = await coalesceRead('payroll-page:' + JSON.stringify(query), () => listPayrollProcessingPage(query,event))
     return { ...result, permissions: { canReview: ['Admin', 'Supervisor'].includes(String(session.userType)) } }
   }
   const result = await payrollProcessingData(String(query.periodStart || ''), String(query.periodEnd || ''))
   return { ...result, permissions: { canReview: ['Admin', 'Supervisor'].includes(String(session.userType)) } }
 }
 
-async function listPayrollProcessingPage(query: Record<string, any>) {
+async function listPayrollProcessingPage(query: Record<string, any>,event: any) {
   const request = listPage(query)!
   const [cutoffs] = await pool.execute<any[]>(`SELECT DISTINCT DATE_FORMAT(d.PeriodStart,'%Y-%m-%d') AS start,
     DATE_FORMAT(d.PeriodEnd,'%Y-%m-%d') AS end FROM attendance_dtr d
@@ -477,6 +478,7 @@ async function listPayrollProcessingPage(query: Record<string, any>) {
     ORDER BY d.BatchID DESC`, [start, end])
   const conditions = ['d.PeriodStart=?', 'd.PeriodEnd=?', "(d.Status IN ('Computed to Payroll','Computed to Both') OR r.ReviewStatus IN ('Approved','Rejected','Cancelled'))"]
   const params: any[] = [start, end]
+  if(query.batchId){conditions.push('d.BatchID=?');params.push(listId(query.batchId,'DTR'))}
   for (const [key, column] of [['agencyId', 'd.AgencyID'], ['clientId', 'd.ClientID']] as const) {
     if (query[key]) { conditions.push(`${column}=?`); params.push(listId(query[key], key)) }
   }
@@ -505,10 +507,42 @@ async function listPayrollProcessingPage(query: Record<string, any>) {
   for (const row of matching) counts[row.ReviewStatus] = (counts[row.ReviewStatus] || 0) + 1
   counts.current = matching.length - (counts.Rejected || 0) - (counts.Cancelled || 0)
   const filtered = matching.filter(row => status === 'current' ? !['Rejected','Cancelled'].includes(row.ReviewStatus) : row.ReviewStatus === status)
-  const meta = pagination(filtered.length, request)
+  // A site page is not a fixed amount of work: 25 sites may contain 50,000
+  // employees. Bound the preview by roster volume before loading attendance.
+  const idsToCount = filtered.map(row => Number(row.BatchID))
+  const [[largest]] = idsToCount.length ? await pool.execute<any[]>(`SELECT COUNT(*) AS People
+    FROM attendance_dtr_employee WHERE BatchID IN (${idsToCount.map(() => '?').join(',')})
+    GROUP BY BatchID ORDER BY People DESC LIMIT 1`, idsToCount) : [[{ People: 0 }]]
+  const largestRoster = Number(largest?.People || 0)
+  if (largestRoster > 2000) throw createError({ statusCode: 422, statusMessage: 'This site payroll exceeds the interactive review capacity. Contact your administrator before processing this group.' })
+  const bounded = { ...request, pageSize: Math.min(request.pageSize, Math.max(1, Math.floor(2000 / Math.max(1, largestRoster)))) }
+  const meta = pagination(filtered.length, bounded)
   const ids = filtered.slice((meta.page - 1) * meta.pageSize, meta.page * meta.pageSize).map(row => Number(row.BatchID))
-  const result = ids.length ? await payrollProcessingData(start, end, pool, ids) : { sites: [] }
-  return { cutoffs, selectedCutoff: start ? { start, end } : null, items: result.sites,
+  let sites: any[] | undefined
+  if(query.includeEmployees==='0'&&ids.length&&ids.every(id=>filtered.find(row=>Number(row.BatchID)===id)?.ReviewStatus==='Approved')){
+    // Frozen finalized totals are authoritative. A directory needs neither
+    // 30,000 attendance rows nor 2,000 employee breakdowns for one closed site.
+    const [headers]=await pool.execute<any[]>(`SELECT d.BatchID,d.AgencyID,a.AgencyName,d.ClientID,c.ClientName,d.SiteID,s.SiteName,
+      DATE_FORMAT(d.PeriodStart,'%Y-%m-%d') AS PeriodStart,DATE_FORMAT(d.PeriodEnd,'%Y-%m-%d') AS PeriodEnd,
+      coverage.SiteAccountID,account.SiteAccountName,'Approved' AS ReviewStatus,1 AS IsFinalized,
+      JSON_OBJECT('peopleCount',JSON_EXTRACT(r.SnapshotJson,'$.peopleCount'),'gross',JSON_EXTRACT(r.SnapshotJson,'$.gross'),
+        'deductions',JSON_EXTRACT(r.SnapshotJson,'$.deductions'),'netPreview',JSON_EXTRACT(r.SnapshotJson,'$.netPreview'),
+        'warningCount',JSON_EXTRACT(r.SnapshotJson,'$.warningCount')) AS SummaryJson
+      FROM attendance_dtr d JOIN agency a ON a.AgencyID=d.AgencyID JOIN client c ON c.ClientID=d.ClientID JOIN site s ON s.SiteID=d.SiteID
+      JOIN payroll_processing_review r ON r.BatchID=d.BatchID AND r.ReviewStatus='Approved'
+      LEFT JOIN site_agency coverage ON coverage.SiteID=d.SiteID AND coverage.AgencyID=d.AgencyID
+      LEFT JOIN site_account account ON account.SiteAccountID=coverage.SiteAccountID
+      WHERE d.BatchID IN (${ids.map(()=>'?').join(',')}) AND JSON_VALID(r.SnapshotJson)
+        AND EXISTS(SELECT 1 FROM payroll_processing_posting pp WHERE pp.BatchID=d.BatchID AND pp.Status='Active')
+      ORDER BY d.BatchID DESC`,ids)
+    if(headers.length===ids.length&&headers.every(row=>{const value=parseSnapshot(row.SummaryJson);return ['peopleCount','gross','deductions','netPreview'].every(key=>value?.[key]!=null&&Number.isFinite(Number(value[key])))}))sites=headers.map(({SummaryJson,...row}:any)=>({...row,...parseSnapshot(SummaryJson),detailsLoaded:false}))
+  }
+  if(!sites){
+    const result = ids.length ? await withHeavyRead(event,()=>payrollProcessingData(start, end, pool, ids)) : { sites: [] }
+    sites=query.includeEmployees==='0'?result.sites.map(({employees,...site}:any)=>{void employees;return{...site,detailsLoaded:false}}):result.sites
+  }
+  const items=sites
+  return { cutoffs, selectedCutoff: start ? { start, end } : null, items,
     pagination: meta, counts, ...(query.includeLookups === '0' ? {} : { directory }) }
 }
 
@@ -620,6 +654,8 @@ async function reviewPayrollProcessingAttempt(event: any) {
     if (review?.ReviewStatus === 'Rejected') {
       throw createError({ statusCode: 409, statusMessage: 'Recompute the corrected DTR before reviewing it again.' })
     }
+    const [[rosterSize]] = await connection.execute<any[]>('SELECT COUNT(*) AS People FROM attendance_dtr_employee WHERE BatchID=?', [batchId])
+    if (Number(rosterSize.People) > 2000) throw createError({ statusCode: 422, statusMessage: 'This site payroll exceeds the interactive review capacity. Contact your administrator before processing this group.' })
     // Serialize shared employees before the first consistent read. Two site
     // finalizations must not preview the same installment balance concurrently.
     await connection.execute(`SELECT e.EmployeeID FROM employee e
@@ -639,6 +675,7 @@ async function reviewPayrollProcessingAttempt(event: any) {
         WHERE de.BatchID = ? AND py.PayrollType = 'Regular' AND py.Status <> 'Cancelled' AND py.StartDate = ? AND py.EndDate = ? LIMIT 1`,
       [batchId, batch.PeriodStart, batch.PeriodEnd])
       if (priorPayroll) throw createError({ statusCode: 409, statusMessage: 'A payroll record already exists for this DTR deployment and cutoff.' })
+      const snapshotJson = await payrollSnapshotJson(connection, snapshot)
       for (const person of snapshot.employees) {
         if (!Number(person.DeploymentID)) throw createError({ statusCode: 409, statusMessage: 'An employee has no deployment for payroll.' })
         const [insert] = await connection.execute<any>(`INSERT INTO payroll
@@ -704,7 +741,7 @@ async function reviewPayrollProcessingAttempt(event: any) {
         ON DUPLICATE KEY UPDATE ReviewStatus = 'Approved', SnapshotJson = VALUES(SnapshotJson),
           ApprovedBy = VALUES(ApprovedBy), ApprovedAt = VALUES(ApprovedAt),
           RejectedBy = NULL, RejectedAt = NULL, RejectionReason = NULL`,
-      [batchId, JSON.stringify(snapshot), session.sub])
+      [batchId, snapshotJson, session.sub])
       await recordDtrWorkflowEvent(connection, { batchId, action: 'Approve Payroll',
         previousStatus: batch.Status, nextStatus: batch.Status, actorUserId: session.sub, snapshot })
       await connection.commit()
@@ -716,13 +753,14 @@ async function reviewPayrollProcessingAttempt(event: any) {
     [batchId, batch.PeriodStart, batch.PeriodEnd])
     if (posted) throw createError({ statusCode: 409, statusMessage: 'A payroll record already exists for this cutoff. It must be reversed through payroll history.' })
     const savedSnapshot = review?.ReviewStatus === 'Approved' ? parseSnapshot(review.SnapshotJson) || snapshot : snapshot
+    const savedSnapshotJson = await payrollSnapshotJson(connection, savedSnapshot)
     await connection.execute(`INSERT INTO payroll_processing_review
       (BatchID, ReviewStatus, SnapshotJson, ApprovedBy, ApprovedAt, RejectedBy, RejectedAt, RejectionReason)
       VALUES (?, 'Rejected', ?, NULL, NULL, ?, NOW(), ?)
       ON DUPLICATE KEY UPDATE ReviewStatus = 'Rejected', SnapshotJson = VALUES(SnapshotJson),
         RejectedBy = VALUES(RejectedBy), RejectedAt = VALUES(RejectedAt),
         RejectionReason = VALUES(RejectionReason)`,
-    [batchId, JSON.stringify(savedSnapshot), session.sub, reason])
+    [batchId, savedSnapshotJson, session.sub, reason])
     await connection.execute("UPDATE attendance_dtr SET Status = 'Draft' WHERE BatchID = ?", [batchId])
     await recordDtrWorkflowEvent(connection, { batchId, action: 'Reject Payroll',
       previousStatus: batch.Status, nextStatus: 'Draft', actorUserId: session.sub, reason,

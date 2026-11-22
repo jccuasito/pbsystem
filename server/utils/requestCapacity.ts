@@ -54,6 +54,18 @@ export function completeApiRequest(event: any) {
 }
 
 const pending = new Map<string, Promise<unknown>>()
+/** Invoked inside a coalesced read: one actual calculation owns one heavy slot,
+ * while identical authenticated callers can await it without duplicating work. */
+export async function withHeavyRead<T>(event: any, read: () => Promise<T>): Promise<T> {
+  if (counts.heavy >= limits.heavy) {
+    counts.rejected++
+    setHeader(event, 'Retry-After', '3')
+    setHeader(event, 'Cache-Control', 'private, no-store')
+    throw createError({ statusCode: 503, statusMessage: 'Other imports or payroll updates are running. Please try again shortly.' })
+  }
+  counts.heavy++
+  try { return await read() } finally { counts.heavy-- }
+}
 /** Share simultaneous dashboard reads only; never cache sessions or settled data. */
 export function coalesceRead<T>(key: string, read: () => Promise<T>): Promise<T> {
   const existing = pending.get(key)

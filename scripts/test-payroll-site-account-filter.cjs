@@ -11,7 +11,7 @@ async function buildFixture(){
   build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
   build.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const useHead = value => { document.title = value.title }',loader:'js'}))
   build.onLoad({filter:/\.vue$/},args=>{
-   if(args.path.endsWith('PayrollProcessingDetailModal.vue'))return{contents:"import {h} from 'vue';export default {props:['modelValue','options'],setup:()=>()=>h('select',{},[h('option','Select ID type')])}",loader:'js'}
+   if(args.path.endsWith('PayrollProcessingDetailModal.vue'))return{contents:"import {h} from 'vue';export default {props:['site'],emits:['close'],setup:(props,{emit})=>()=>h('section',{role:'dialog','aria-label':'Payroll detail'},[h('p','DTR '+props.site.BatchID),h('button',{onClick:()=>emit('close')},'Close payroll detail')])}",loader:'js'}
    const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[])
    const id='data-v-'+Buffer.from(path.relative(root,args.path)).toString('hex').slice(-18)
    const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'})
@@ -36,23 +36,29 @@ test('payroll directory batches server results and searches unloaded employees',
   await page.evaluate(()=>{
    window.requests=[];window.IntersectionObserver=class {observe(){}disconnect(){}}
    const cutoffs=[{start:'2026-10-01',end:'2026-10-15'},{start:'2026-09-16',end:'2026-09-30'}]
-   const sites=Array.from({length:72},(_,i)=>({BatchID:i+1,AgencyID:i%2+1,AgencyName:'Agency '+(i%2+1),ClientID:i%3+1,ClientName:'Client '+(i%3+1),SiteName:'Site '+(i+1),SiteAccountID:i+1,SiteAccountName:'Account '+String(i+1).padStart(3,'0'),ReviewStatus:i%4===0?'Approved':'Pending',employees:[{EmployeeName:'Worker '+(i+1)}],peopleCount:1,gross:1000+i,deductions:10,netPreview:990+i}))
+   const sites=Array.from({length:72},(_,i)=>({BatchID:i+1,AgencyID:i%2+1,AgencyName:'Agency '+(i%2+1),ClientID:i%3+1,ClientName:'Client '+(i%3+1),SiteName:'Site '+(i+1),SiteAccountID:i+1,SiteAccountName:'Account '+String(i+1).padStart(3,'0'),PeriodStart:'2026-09-16',PeriodEnd:'2026-09-30',ReviewStatus:i%4===0?'Approved':'Pending',employees:[{EmployeeName:'Worker '+(i+1)}],peopleCount:1,gross:1000+i,deductions:10,netPreview:990+i}))
    window.$fetch=async(url,options)=>{
     window.requests.push({url,query:options.query});const q=options.query||{}
     await new Promise(r=>setTimeout(r,25))
     const directory=q.periodStart==='2026-10-01'?[{...sites[0],SiteAccountID:99,SiteAccountName:'Updated Account'}]:sites
-    const matching=directory.filter(s=>(!q.search||('site '+s.BatchID+' '+s.employees[0].EmployeeName).toLowerCase().includes(q.search.toLowerCase()))&&(!q.agencyId||String(s.AgencyID)===q.agencyId)&&(!q.clientId||String(s.ClientID)===q.clientId)&&(!q.siteAccountId||String(s.SiteAccountID)===q.siteAccountId))
+    const matching=directory.filter(s=>(!q.batchId||Number(q.batchId)===s.BatchID)&&(!q.search||('site '+s.BatchID+' '+s.employees[0].EmployeeName).toLowerCase().includes(q.search.toLowerCase()))&&(!q.agencyId||String(s.AgencyID)===q.agencyId)&&(!q.clientId||String(s.ClientID)===q.clientId)&&(!q.siteAccountId||String(s.SiteAccountID)===q.siteAccountId))
     const counts={current:matching.length,Pending:matching.filter(s=>s.ReviewStatus==='Pending').length,Approved:matching.filter(s=>s.ReviewStatus==='Approved').length}
     const selected=matching.filter(s=>!q.status||q.status==='current'||s.ReviewStatus===q.status),pages=Math.max(1,Math.ceil(selected.length/25)),page=Math.min(q.page,pages)
-    return{items:selected.slice((page-1)*25,page*25),pagination:{page,pages,pageSize:25,total:selected.length},cutoffs,selectedCutoff:cutoffs[q.periodStart==='2026-10-01'?0:1],counts,...(q.includeLookups==='0'?{}:{directory}),permissions:{canReview:false}}
+    const pageItems=selected.slice((page-1)*25,page*25);return{items:q.includeEmployees==='0'?pageItems.map(({employees,...site})=>site):pageItems,pagination:{page,pages,pageSize:25,total:selected.length},cutoffs,selectedCutoff:cutoffs[q.periodStart==='2026-10-01'?0:1],counts,...(q.includeLookups==='0'?{}:{directory}),permissions:{canReview:false}}
    }
   })
   await page.addScriptTag({content:fixture.script})
   await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===25)
   assert.equal(await page.evaluate(()=>window.requests.length),1)
+  assert.equal(await page.evaluate(()=>window.requests[0].query.includeEmployees),'0')
+  await page.getByRole('button',{name:'View details',exact:true}).first().click()
+  await page.getByRole('dialog',{name:'Payroll detail'}).waitFor()
+  assert.equal(await page.evaluate(()=>window.requests.at(-1).query.batchId),1)
+  assert.notEqual(await page.evaluate(()=>window.requests.at(-1).query.includeEmployees),'0')
+  await page.getByRole('button',{name:'Close payroll detail',exact:true}).click()
   await page.getByRole('button',{name:'Load more',exact:true}).click()
   await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===50)
-  assert.equal(await page.evaluate(()=>window.requests[1].query.page),2)
+  assert.equal(await page.evaluate(()=>window.requests.at(-1).query.page),2)
   const search=page.getByRole('searchbox')
   await search.fill('Worker 72')
   await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===1&&document.querySelector('.processing-table tbody').textContent.includes('Site 72'))

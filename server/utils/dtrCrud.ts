@@ -1,5 +1,6 @@
 import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import { listPage, pagination, listSearch } from './listPagination'
+import { coalesceRead } from './requestCapacity'
 import type { PoolConnection } from 'mysql2/promise'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
@@ -165,6 +166,7 @@ async function lookups() {
 export async function listDtrs(event: any) {
   const session = requireSession(event); void session.sub
   const query = getQuery(event) as Record<string, string | undefined>
+  return coalesceRead('dtr-directory:'+JSON.stringify(query),async()=>{
   const filters: string[] = []
   const values: any[] = []
   if (query.agencyId) { filters.push('d.AgencyID = ?'); values.push(positiveId(query.agencyId, 'Agency')) }
@@ -184,7 +186,16 @@ export async function listDtrs(event: any) {
     filters.splice(0,filters.length,`d.BatchID IN (${page.length ? page.map(() => '?').join(',') : 'NULL'})`)
     values.splice(0,values.length,...page.map(row => row.BatchID))
   }
-  const sql = `SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName, d.SiteID, s.SiteName, d.PeriodStart, d.PeriodEnd, d.Status, d.CreatedAt,
+  const sql = request ? `SELECT d.BatchID,d.AgencyID,a.AgencyName,d.ClientID,c.ClientName,d.SiteID,s.SiteName,d.PeriodStart,d.PeriodEnd,d.Status,d.CreatedAt,
+    CASE WHEN a.LogoData IS NULL THEN 0 ELSE 1 END AS AgencyHasLogo,
+    CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END AS SiteHasLogo,
+    (SELECT COUNT(*) FROM attendance_dtr_employee roster WHERE roster.BatchID=d.BatchID) AS PeopleCount,
+    COALESCE(totals.RegularHours,0) AS RegularHours,COALESCE(totals.OTHours,0) AS OTHours,COALESCE(totals.NightDiffHours,0) AS NightDiffHours
+    FROM attendance_dtr d JOIN agency a ON a.AgencyID=d.AgencyID JOIN client c ON c.ClientID=d.ClientID JOIN site s ON s.SiteID=d.SiteID
+    LEFT JOIN (SELECT BatchID,SUM(RegularHours) AS RegularHours,SUM(OTHours) AS OTHours,SUM(NightDiffHours) AS NightDiffHours
+      FROM attendance WHERE BatchID IN (${values.length?values.map(()=>'?').join(','):'NULL'}) GROUP BY BatchID) totals ON totals.BatchID=d.BatchID
+    WHERE ${filters.join(' AND ')} ORDER BY d.PeriodStart DESC,d.BatchID DESC`
+    : `SELECT d.BatchID, d.AgencyID, a.AgencyName, d.ClientID, c.ClientName, d.SiteID, s.SiteName, d.PeriodStart, d.PeriodEnd, d.Status, d.CreatedAt,
     MAX(CASE WHEN a.LogoData IS NULL THEN 0 ELSE 1 END) AS AgencyHasLogo,
     MAX(CASE WHEN s.LogoData IS NULL THEN 0 ELSE 1 END) AS SiteHasLogo,
     (SELECT COUNT(*) FROM attendance_dtr_employee roster WHERE roster.BatchID = d.BatchID) AS PeopleCount,
@@ -192,8 +203,9 @@ export async function listDtrs(event: any) {
     FROM attendance_dtr d INNER JOIN agency a ON a.AgencyID = d.AgencyID INNER JOIN client c ON c.ClientID = d.ClientID INNER JOIN site s ON s.SiteID = d.SiteID
     LEFT JOIN attendance at ON at.BatchID = d.BatchID ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
     GROUP BY d.BatchID ORDER BY d.PeriodStart DESC, d.BatchID DESC`
-  const [[items], lookupData] = await Promise.all([pool.execute<any[]>(sql, values), (!request || query.includeLookups !== '0') ? lookups() : Promise.resolve({})])
+  const [[items], lookupData] = await Promise.all([pool.execute<any[]>(sql, request?[...values,...values]:values), (!request || query.includeLookups !== '0') ? lookups() : Promise.resolve({})])
   return { items, ...lookupData, ...(meta ? {pagination:meta} : {}) }
+  })
 }
 
 export async function createDtr(event: any) {

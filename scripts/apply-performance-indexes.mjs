@@ -4,6 +4,8 @@ import { createDatabaseBackup } from '../server/utils/databaseBackup.mjs'
 // Fixed identifiers only. --apply is deliberate; a bare invocation previews work.
 const indexes = [
   ['employee', 'ix_employee_status_hired', ['Status', 'DateHired']],
+  ['employee', 'ix_employee_directory_cover', ['LastName', 'FirstName', 'EmployeeNumber', 'EmployeeID', 'AgencyPositionID']],
+  ['employee', 'ix_employee_account_directory', ['Status', 'LastName', 'FirstName', 'MiddleName', 'EmployeeID']],
   ['attendance', 'ix_attendance_date_status_employee', ['AttendanceDate', 'AttendanceStatus', 'EmployeeID']],
   ['billing', 'ix_billing_date', ['BillingDate']],
   ['payroll', 'ix_payroll_status_date', ['Status', 'PayrollDate']],

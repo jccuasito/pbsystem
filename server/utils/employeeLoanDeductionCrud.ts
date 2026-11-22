@@ -2,6 +2,7 @@ import { createError, getQuery, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { coalesceRead } from './requestCapacity'
+import { employeeAfter, employeeCursor } from './employeeCursor'
 import { generatedIssuanceCode } from '../../shared/utils/issuanceCode'
 
 type EntryType = 'Loan' | 'Deduction'
@@ -367,7 +368,14 @@ export async function listEmployeeLoanDeductions(event: any) {
   }
   const whereSql = where.join(' AND ')
   const offset = (page - 1) * pageSize
-  const [items] = await pool.execute<any[]>(
+  if(offset>10000&&!query.after)throw createError({statusCode:400,statusMessage:'Use the list continuation cursor to load records beyond the first 10,000.'})
+  const cursorParams: any[] = [], after=employeeAfter(query.after,'account',cursorParams)
+  const [selected] = await pool.execute<any[]>(`SELECT e.EmployeeID,e.LastName,e.FirstName,e.MiddleName FROM employee e
+    ${agencyId?'LEFT JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID':''}
+    WHERE ${whereSql}${after?' AND '+after:''} ORDER BY e.LastName,e.FirstName,e.MiddleName,e.EmployeeID LIMIT ? OFFSET ?`, [...params,...cursorParams,pageSize,after?0:offset])
+  const employeeIds=selected.map(row=>Number(row.EmployeeID))
+  const pageMarks=employeeIds.map(()=>'?').join(',')
+  const [items] = employeeIds.length ? await pool.execute<any[]>(
     `SELECT e.EmployeeID, e.EmployeeNumber,
             CONCAT_WS(' ', e.FirstName, e.MiddleName, e.LastName) AS EmployeeName,
             a.AgencyID, a.AgencyName, p.PositionName,
@@ -387,27 +395,27 @@ export async function listEmployeeLoanDeductions(event: any) {
                 SUM(CASE WHEN Status = 'Active' THEN 1 ELSE 0 END) AS ActiveCount,
                 SUM(CASE WHEN Status <> 'Cancelled' THEN COALESCE(LoanAmount, 0) ELSE 0 END) AS TotalIssued,
                 SUM(CASE WHEN Status = 'Active' THEN COALESCE(RemainingBalance, 0) ELSE 0 END) AS Outstanding
-           FROM employee_loan GROUP BY EmployeeID
+           FROM employee_loan WHERE EmployeeID IN (${pageMarks}) GROUP BY EmployeeID
        ) loans ON loans.EmployeeID = e.EmployeeID
        LEFT JOIN (
          SELECT EmployeeID,
                 SUM(CASE WHEN Status = 'Active' THEN 1 ELSE 0 END) AS ActiveCount,
                 SUM(CASE WHEN Status <> 'Inactive' THEN COALESCE(Amount, 0) ELSE 0 END) AS TotalIssued,
                 SUM(CASE WHEN Status = 'Active' THEN COALESCE(RemainingBalance, 0) ELSE 0 END) AS Outstanding
-           FROM employee_deduction GROUP BY EmployeeID
+           FROM employee_deduction WHERE EmployeeID IN (${pageMarks}) GROUP BY EmployeeID
        ) deductions ON deductions.EmployeeID = e.EmployeeID
-      WHERE ${whereSql}
+      WHERE e.EmployeeID IN (${pageMarks})
       ORDER BY e.LastName, e.FirstName, e.MiddleName, e.EmployeeID
-      LIMIT ? OFFSET ?`,
-    [...params, pageSize, offset],
-  )
-  const [countRows] = await pool.execute<any[]>(
+      `,
+    [...employeeIds,...employeeIds,...employeeIds],
+  ) : [[]]
+  const [countRows] = await coalesceRead('employee-account-count:'+JSON.stringify([whereSql,...params]),()=>pool.execute<any[]>(
     `SELECT COUNT(*) AS total
        FROM employee e
-       LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID
+       ${agencyId?'LEFT JOIN agency_position ap ON ap.AgencyPositionID = e.AgencyPositionID':''}
       WHERE ${whereSql}`,
     params,
-  )
+  ))
   const [agencies] = await pool.execute<any[]>(
     "SELECT AgencyID, AgencyName FROM agency WHERE Status = 'Active' ORDER BY AgencyName",
   )
@@ -415,7 +423,8 @@ export async function listEmployeeLoanDeductions(event: any) {
     items,
     agencies,
     catalogItems: lookups,
-    pagination: { page, pageSize, total: Number(countRows[0]?.total || 0), pages: Math.max(1, Math.ceil(Number(countRows[0]?.total || 0) / pageSize)) },
+    pagination: { page, pageSize, total: Number(countRows[0]?.total || 0), pages: Math.max(1, Math.ceil(Number(countRows[0]?.total || 0) / pageSize)),
+      nextCursor: page*pageSize<Number(countRows[0]?.total||0)?employeeCursor(selected.at(-1),'account'):null },
   }
   })
 }

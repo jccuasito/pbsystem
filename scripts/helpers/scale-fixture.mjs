@@ -52,7 +52,8 @@ export function expectedPay(employeeId, periodIndex) {
   deductions += (employeeId % 3 === 0 && employeeId % 30 !== 0 ? 50000 : 0) + (employeeId % 4 === 0 ? 12500 : 0) + (employeeId % 5 === 0 ? 5000 : 0) + 7500
   return { gross: gross + 10000, allowance: 10000, deductions, net: gross + 10000 - deductions }
 }
-export async function createFixture() {
+export async function createFixture(options = {}) {
+  if (options.profile && options.profile !== 'million') throw Error('Unknown fixture profile')
   const config = localConfig(), source = process.env.DB_NAME
   const database = 'pbsystem_scale_' + new Date().toISOString().replace(/\D/g, '').slice(0, 14) + '_' + randomBytes(2).toString('hex')
   const folder = path.join(root, database)
@@ -83,11 +84,16 @@ export async function createFixture() {
     }
     for (const trigger of triggers) await db.query(`CREATE TRIGGER ${identifier(trigger.Trigger)} ${trigger.Timing} ${trigger.Event} ON ${identifier(trigger.Table)} FOR EACH ROW ${trigger.Statement}`)
     await db.query('CREATE TABLE scale_test_manifest (Marker varchar(80) PRIMARY KEY, CreatedAt timestamp DEFAULT current_timestamp())')
-    await db.execute('INSERT INTO scale_test_manifest(Marker) VALUES (?)', ['SYNTHETIC_ONLY_6000_500_150_V1'])
-    await seedFixture(db)
-    const manifest = { database, sourceSchema: source, createdAt: new Date().toISOString(), employees: 6000, sites: 500, clients: 150, agencies: 10, attendance: 180000, periods, syntheticOnly: true }
+    const marker = options.profile === 'million' ? 'SYNTHETIC_ONLY_MILLION_4_500_150_V1' : 'SYNTHETIC_ONLY_6000_500_150_V1'
+    await db.execute('INSERT INTO scale_test_manifest(Marker) VALUES (?)', [marker])
+    const details = options.profile === 'million'
+      ? await (await import('./million-fixture.mjs')).seedMillionFixture(db, { folder })
+      : (await seedFixture(db), { employees: 6000, sites: 500, clients: 150, agencies: 10, attendance: 180000, periods })
+    const manifest = { database, sourceSchema: source, createdAt: new Date().toISOString(), ...details, syntheticOnly: true }
     await writeFile(path.join(folder, 'manifest.json'), JSON.stringify(manifest, null, 2))
-    console.log(JSON.stringify(manifest))
+    const { portalSeed, ...publicManifest } = manifest
+    void portalSeed
+    console.log(JSON.stringify(publicManifest))
     return manifest
   } finally { await db.end() }
 }

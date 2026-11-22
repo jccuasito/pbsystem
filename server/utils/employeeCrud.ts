@@ -9,6 +9,7 @@ import { listGovernmentIds, saveGovernmentId } from './governmentIdCrud'
 import { imageData } from './inputValidation'
 import { listPage, listSearch, pagination } from './listPagination'
 import { coalesceRead } from './requestCapacity'
+import { employeeAfter, employeeCursor } from './employeeCursor'
 import { privateProfileDirectory, privateProfilePath } from './privateProfileImages.mjs'
 import { alertMessages, DEPLOYMENT_ALREADY_EXISTS, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../components/alertmessage/messages'
 
@@ -811,24 +812,53 @@ export async function listEmployees(event: any) {
 
   const request = listPage(query)
   if (request) {
+    if ((request.page-1)*request.pageSize>10000 && !query.after) throw createError({statusCode:400,statusMessage:'Use the list continuation cursor to load records beyond the first 10,000.'})
     if (query.status) {
       if (!['Active','Inactive','Resigned','Terminated','AWOL'].includes(query.status)) throw createError({statusCode:400,statusMessage:'Choose a valid employee status.'})
       filters.push('e.Status=?'); values.push(query.status)
     }
-    filters.push(...listSearch(query.search, ["CONCAT('EMP-',LPAD(e.EmployeeID,GREATEST(4,CHAR_LENGTH(e.EmployeeID)),'0'))", 'e.EmployeeNumber',
-      "CONCAT_WS(' ',e.FirstName,e.MiddleName,e.LastName,e.Nickname)", 'a.AgencyName', 'p.PositionName', 's.SiteName'], values))
-    return coalesceRead('employee-page:'+JSON.stringify([query.page,query.pageSize,query.includeLookups,...filters,...values]), async () => {
-      const sql=employeeListSql(filters), base=sql.slice(0,sql.lastIndexOf('\nORDER BY '))
-      const [[count]]=await pool.execute<any[]>(`SELECT COUNT(*) AS Total FROM (${base}) listed`,values)
+    const code = /^EMP-([0-9]{4,10})$/i.exec(String(query.search || '').trim())
+    const exactId = code && Number(code[1]) > 0 && `EMP-${String(Number(code[1])).padStart(4, '0')}` === code[0].toUpperCase()
+    const searchFilters = exactId ? [] : listSearch(query.search, ["CONCAT('EMP-',LPAD(e.EmployeeID,GREATEST(4,CHAR_LENGTH(e.EmployeeID)),'0'))", 'e.EmployeeNumber',
+      "CONCAT_WS(' ',e.FirstName,e.MiddleName,e.LastName,e.Nickname)", 'a.AgencyName', 'p.PositionName', 's.SiteName'], values)
+    if (exactId) { filters.push('e.EmployeeID=?'); values.push(Number(code![1])) }
+    filters.push(...searchFilters)
+    return coalesceRead('employee-page:'+JSON.stringify([query.page,query.pageSize,query.includeLookups,query.after,...filters,...values]), async () => {
+      // Select only page identities before loading wide profile/bank/address
+      // columns. Sorting full profiles for a million rows spills huge temp data.
+      // Deployment/site joins are required only when free-text search uses them.
+      const from = `FROM employee e INNER JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
+        INNER JOIN agency a ON a.AgencyID=ap.AgencyID ${positionJoin}
+        ${searchFilters.length ? latestDeploymentJoin() + ' LEFT JOIN site s ON s.SiteID=ld.SiteID' : ''}
+        ${filters.length ? 'WHERE ' + filters.join(' AND ') : ''}`
+      const [[count]]=await coalesceRead('employee-count:'+JSON.stringify([from,...values]),()=>pool.execute<any[]>(`SELECT COUNT(*) AS Total ${from}`,values))
       const meta=pagination(Number(count.Total),request)
+      const cursorParams: any[] = []
+      const after = employeeAfter(query.after, 'employee', cursorParams)
+      // For an unfiltered directory start with the ordered employee index, not
+      // the four-row agency table followed by a million-row temporary sort.
+      const ordered = !query.agencyId && !query.positionId && !searchFilters.length ? 'STRAIGHT_JOIN ' : ''
+      // Parent existence is enforced by the installed foreign keys. Keep the
+      // unfiltered page seek on employee only: a tiny agency join can otherwise
+      // become a block join and destroy the ordered-index LIMIT optimization.
+      const pageFrom=ordered?`FROM employee e WHERE e.AgencyPositionID IS NOT NULL${filters.length?' AND '+filters.join(' AND '):''}`:from
+      const [selected]=meta.total ? await pool.execute<any[]>(`SELECT ${ordered}e.EmployeeID,e.LastName,e.FirstName,e.EmployeeNumber ${pageFrom}
+        ${after ? (ordered||filters.length ? 'AND ' : 'WHERE ') + after : ''}
+        ORDER BY e.LastName,e.FirstName,e.EmployeeNumber,e.EmployeeID LIMIT ? OFFSET ?`,[...values,...cursorParams,meta.pageSize,after?0:(meta.page-1)*meta.pageSize]) : [[]]
+      const ids=selected.map(row=>Number(row.EmployeeID))
       const [[items],lookupData]=await Promise.all([
-        pool.execute<any[]>(sql+' LIMIT ? OFFSET ?',[...values,meta.pageSize,(meta.page-1)*meta.pageSize]),
+        ids.length ? pool.execute<any[]>(employeeListSql([`e.EmployeeID IN (${ids.map(()=>'?').join(',')})`]),ids) : Promise.resolve([[]]),
         query.includeLookups==='0'?Promise.resolve({}):Promise.all([activeAgencies(),activePositions(),activeAgencyPositions()])
           .then(([agencies,positions,agencyPositions])=>({agencies,positions,agencyPositions}))
       ])
-      return{items,...lookupData,pagination:meta}
+      return{items,...lookupData,pagination:{...meta,nextCursor:meta.page<meta.pages?employeeCursor(selected.at(-1),'employee'):null}}
     })
   }
+  const [[fullCount]] = await coalesceRead('employee-full-budget:'+JSON.stringify([filters,values]),()=>pool.execute<any[]>(`SELECT COUNT(*) AS Total
+    FROM employee e INNER JOIN agency_position ap ON ap.AgencyPositionID=e.AgencyPositionID
+    INNER JOIN agency a ON a.AgencyID=ap.AgencyID ${positionJoin}
+    ${filters.length?'WHERE '+filters.join(' AND '):''}`,values))
+  if(Number(fullCount.Total)>10000)throw createError({statusCode:413,statusMessage:'This employee directory is too large to load at once. Use the paginated employee list.'})
   const [items, lookups] = await Promise.all([pool.execute<any[]>(employeeListSql(filters), values), lookupBundles()])
   return { items: items[0], ...lookups }
 }

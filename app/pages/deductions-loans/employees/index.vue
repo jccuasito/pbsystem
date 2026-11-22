@@ -87,6 +87,7 @@ const agencies = ref<Array<{ AgencyID: number; AgencyName: string }>>([])
 const catalogItems = ref<CatalogItem[]>([])
 const page = ref(0)
 const pagination = reactive({ page: 0, pageSize: 25, total: 0, pages: 1 })
+let nextEmployeeCursor = ''
 const loadingMore = ref(false)
 const loadMoreError = ref('')
 const loadMoreSentinel = ref<HTMLButtonElement | null>(null)
@@ -320,13 +321,15 @@ async function load({ append = false, reset = false } = {}) {
   const lastPage = append ? firstPage : Math.max(1, page.value)
   let refreshed: EmployeeRow[] = []
   let response: any
+  let cursor = append ? nextEmployeeCursor : ''
   try {
     for (let requestedPage = firstPage; requestedPage <= lastPage; requestedPage++) {
       response = await $fetch<any>('/api/deductions-loans/employee-records', {
-        query: { search: filters.search || undefined, agencyId: filters.agencyId || undefined, page: requestedPage, pageSize: pagination.pageSize },
+        query: { search: filters.search || undefined, agencyId: filters.agencyId || undefined, page: requestedPage, pageSize: pagination.pageSize, after: cursor || undefined },
         signal: controller.signal,
       })
       if (requestId !== listRequestId) return
+      cursor = response.pagination.nextCursor || ''
       refreshed.push(...(response.items || []))
       if (requestedPage >= response.pagination.pages) break
     }
@@ -336,6 +339,7 @@ async function load({ append = false, reset = false } = {}) {
     catalogItems.value = response.catalogItems || []
     Object.assign(pagination, response.pagination)
     page.value = pagination.page
+    nextEmployeeCursor = cursor
   } catch (cause: any) {
     if (requestId !== listRequestId || controller.signal.aborted) return
     if (append) loadMoreError.value = requestErrorMessage(cause, 'Unable to load more employees. Please try again.')
