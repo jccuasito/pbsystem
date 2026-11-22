@@ -2,8 +2,9 @@
 import { useServerList } from '~~/app/composables/useServerList'
 import ListProgress from '~~/app/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
+import {useRealtimeRefresh} from '~~/app/composables/useRealtimeRefresh'
 
-import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import PayrollProcessingDetailModal from '~/components/PayrollProcessingDetailModal.vue'
 import SearchableSelect from '~~/components/SearchableSelect.vue'
 
@@ -27,6 +28,37 @@ const detailLoading = ref(false)
 let detailRequest = 0
 const directory = ref<any[]>([])
 const serverCounts = ref<Record<string, number>>({})
+const queueEnabled=ref<boolean|null>(null),jobs=ref<any[]>([]),queueError=ref('')
+const visibleJobs=ref(8)
+const pendingJobs=computed(()=>jobs.value.filter(job=>['Queued','Running'].includes(job.status)))
+const selectedQueued=computed(()=>pendingJobs.value.some(job=>job.batchId===selectedId.value))
+let requestKey='',jobsActive=false,jobsLoading=false
+async function pollJobs(){
+  if(!jobsActive||jobsLoading)return
+  jobsLoading=true
+  try{
+    const result:any=await $fetch('/api/payroll/jobs',{retry:0,timeout:10000})
+    if(!jobsActive)return
+    queueEnabled.value=result.enabled;queueError.value=''
+    const completed=result.items.filter((job:any)=>jobs.value.some(old=>old.id===job.id&&['Queued','Running'].includes(old.status))&&!['Queued','Running'].includes(job.status))
+    jobs.value=result.items
+    if(completed.length){
+      if(completed.some((job:any)=>job.batchId===selectedId.value))closeDetail()
+      const failed=completed.find((job:any)=>job.status!=='Succeeded')
+      if(failed)error.value=`DTR-${failed.batchId}: ${failed.message||'Review this payroll before submitting again.'}`
+      if(completed.some((job:any)=>job.status==='Succeeded'))success.value='Queued payroll finalized. Payroll records and eligible deductions were posted.'
+      await serverList.refresh()
+    }
+  }catch(cause){if(jobsActive){queueError.value=requestErrorMessage(cause,'Unable to check payroll jobs. Accepted jobs continue on the server.');throw cause}}
+  finally{jobsLoading=false}
+}
+function startJobs(){jobsActive=true}
+function stopJobs(){jobsActive=false}
+onMounted(startJobs)
+onActivated(startJobs)
+onDeactivated(stopJobs)
+onBeforeUnmount(stopJobs)
+useRealtimeRefresh(pollJobs,{intervalMs:3000,immediate:true,shouldRefresh:()=>queueEnabled.value!==false})
 
 const money = (value: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value || 0)
 const day = (value: string) => value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : ''
@@ -87,6 +119,9 @@ async function fetchDetail(site:any){
 }
 function closeDetail(){detailRequest++;selectedId.value=null;selectedDetail.value=null;detailLoading.value=false}
 async function openDetail(site:any){
+ const random=crypto.getRandomValues(new Uint8Array(16));random[6]=(random[6]!&15)|64;random[8]=(random[8]!&63)|128
+ const hex=Array.from(random,n=>n.toString(16).padStart(2,'0')).join('')
+ requestKey=[hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-')
  const current=++detailRequest;selectedId.value=Number(site.BatchID);selectedDetail.value=null;detailLoading.value=true;actionError.value='';success.value='';error.value=''
  try{const detail=await fetchDetail(site);if(current===detailRequest)selectedDetail.value=detail}
  catch(cause){if(current===detailRequest){error.value=requestErrorMessage(cause,'Unable to load payroll details.');closeDetail()}}
@@ -98,7 +133,14 @@ async function review(action: 'finalize' | 'reject' | 'cancel', reason = '') {
   if (!selectedId.value || busy.value) return
   busy.value = true; actionError.value = ''; success.value = ''
   try {
-    await $fetch(`/api/payroll/processing/${selectedId.value}`, { method: 'POST', body: { action, reason } })
+    if(action==='finalize'&&queueEnabled.value===null)throw new Error('Unable to confirm queue availability. Refresh the page before submitting.')
+    if(action==='finalize'&&queueEnabled.value){
+      const result:any=await $fetch('/api/payroll/jobs',{method:'POST',body:{batchId:selectedId.value,requestKey,expectedHash:selectedDetail.value?.reviewHash},retry:0,timeout:15000})
+      jobs.value=[result.job,...jobs.value.filter(job=>job.id!==result.job.id)]
+      closeDetail();success.value='Payroll queued. You can continue working; its status appears below.'
+      return
+    }
+    await $fetch(`/api/payroll/processing/${selectedId.value}`, { method: 'POST', body: { action, reason },retry:0 })
     closeDetail()
     await load()
     success.value = action === 'finalize' ? 'Payroll finalized. Employee payroll records, eligible deductions, and approved adjustments were posted.' : action === 'cancel' ? 'Finalization cancelled. Payroll and deduction receipts were voided, balances restored, and the DTR returned to Draft.' : 'Returned to Draft. Correct the DTR and compute it again before finalizing.'
@@ -156,6 +198,13 @@ onActivated(() => { if (serverList.items.value.length) void serverList.refresh()
       <label>Cutoff<select v-model="cutoff"><option value="">Latest cutoff</option><option v-for="item in data.cutoffs" :key="item.start+item.end" :value="`${item.start}:${item.end}`">{{ range(item) }}</option></select></label>
     </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="success" class="success" role="status">{{ success }}</p>
+    <section v-if="queueEnabled||queueError" class="queue-panel" aria-label="Your payroll jobs">
+      <header><strong>Payroll jobs <span v-if="pendingJobs.length">· {{ pendingJobs.length }} pending</span></strong><small>Jobs continue when you close this page.</small></header>
+      <p v-if="queueError" role="alert">{{ queueError }}</p>
+      <p v-else-if="!jobs.length">No recent payroll jobs.</p>
+      <ul v-else><li v-for="job in jobs.slice(0,visibleJobs)" :key="job.id"><strong>DTR-{{ String(job.batchId).padStart(4,'0') }}</strong><span class="queue-state" :class="job.status.toLowerCase()">{{ job.status==='Succeeded'?'Finalized':job.status==='NeedsReview'?'Needs review':job.status }}</span><small>{{ job.message||(job.status==='Queued'?'Waiting for an available worker.':'') }}</small></li></ul>
+      <button v-if="jobs.length>visibleJobs" class="secondary" type="button" @click="visibleJobs+=8">Show more jobs</button>
+    </section>
     <p v-if="detailLoading" class="workflow-note" role="status">Loading payroll details...</p>
     <div class="list-top"><p>Showing {{ visible.length }} site DTRs<span v-if="data.selectedCutoff"> · {{ range(data.selectedCutoff) }}</span></p><div class="status-tabs" aria-label="Review status filters"><button v-for="item in [{key:'current',label:'Current'}, {key:'Pending',label:'To review'}, {key:'Approved',label:'Finalized'}, {key:'Rejected',label:'Returned'}, {key:'Cancelled',label:'Cancelled'}]" :key="item.key" type="button" :class="{active:statusFilter===item.key}" @click="statusFilter=item.key">{{ item.label }} <span>{{ counts[item.key]||0 }}</span></button></div></div>
     <p v-if="visible.length" class="workflow-note">Totals below cover the {{ visible.length }} loaded site DTRs. Scroll to load more.</p><div v-if="visible.length" class="summary-strip"><div><span>Employees</span><strong>{{ totals.people }}</strong></div><div><span>Gross</span><strong>{{ money(totals.gross) }}</strong></div><div><span>Deductions</span><strong>{{ money(totals.deductions) }}</strong></div><div><span>Net for review</span><strong>{{ money(totals.net) }}</strong></div></div>
@@ -165,6 +214,14 @@ onActivated(() => { if (serverList.items.value.length) void serverList.refresh()
     </tbody></table></div>
     <ListProgress v-bind="listProgress" unit="payrolls" :paused="loading || busy || detailLoading || !!selectedSite" @load-more="loadMoreItems" />
 
-    <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview" :busy="busy" :error="actionError" @close="closeDetail" @approve="review('finalize')" @reject="reason=>review('reject', reason)" @cancel="reason=>review('cancel', reason)" @deduction="changeDeduction" @pause-plan="pausePlan" @cash-bond="changeCashBond" />
+    <PayrollProcessingDetailModal v-if="selectedSite" :site="selectedSite" :can-review="!!data.permissions?.canReview&&!selectedQueued" :busy="busy" :error="actionError" @close="closeDetail" @approve="review('finalize')" @reject="reason=>review('reject', reason)" @cancel="reason=>review('cancel', reason)" @deduction="changeDeduction" @pause-plan="pausePlan" @cash-bond="changeCashBond" />
   </section>
 </template>
+
+<style scoped>
+.queue-panel{margin:1rem 0;padding:1rem;border:1px solid var(--line,#d7e2f5);border-radius:14px;background:var(--surface,#fff)}
+.queue-panel header{display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap}.queue-panel small{color:var(--muted,#64748b)}
+.queue-panel ul{list-style:none;padding:0;margin:.75rem 0 0}.queue-panel li{display:flex;align-items:center;gap:.75rem;padding:.65rem 0;flex-wrap:wrap;border-top:1px solid var(--line,#d7e2f5)}
+.queue-state{padding:.2rem .6rem;border-radius:20px;background:#e8efff;color:#234da0;font-size:.85rem;font-weight:600}.queue-state.succeeded{background:#dcfce7;color:#166534}.queue-state.failed,.queue-state.needsreview{background:#fff1d6;color:#92400e}
+@media(max-width:600px){.queue-panel li small{flex-basis:100%}}
+</style>

@@ -205,3 +205,36 @@ The resumed financial run's reader samples each submitted 100 staff plus 100 por
 The aggregate audit verified restoration of the original 1 MiB packet limit and 16 MiB buffer pool, removal of the latest temporary app account, closed test port 3197, and readable ordinary local employee/DTR/payroll tables. No live server change or commit was made. The successful build completed in 1m18s; the real-database payslip integration test passed both tests using temporary tables inside the synthetic schema, including stale sources outside a selected site and rollback/idempotency cases. Earlier failed attempts remain retained as evidence.
 
 Next capacity priorities are a durable financial job queue and bounded or precomputed financial-directory summaries, especially account payslips and billing. Preserve exact source/version validation and invalidation when designing those summaries. Do not treat the 21-second account page or the overload rejections as production-ready responsiveness. Multi-year history, status-filtered publication directories, large account-roster detail views, full exports/lookups, sustained endurance, distributed million-client traffic and actual hosting capacity remain unverified.
+## Local lookup cache and payroll queue
+
+The local database was backed up with the existing verified backup helper before adding `system_runtime` and `payroll_job`. `PAYROLL_QUEUE_ENABLED=true` and `PAYROLL_QUEUE_WORKER=true` are enabled only in the ignored local `.env`; the example defaults queue admission to disabled. No live migration, deployment or commit was performed.
+
+Reproduction for a local database:
+
+```powershell
+node --env-file=.env scripts/apply-runtime-queue-cache.mjs
+# Inspect the preview; --apply creates a backup and applies the additive schema.
+node --env-file=.env scripts/apply-runtime-queue-cache.mjs --apply
+# Set PAYROLL_QUEUE_ENABLED=true and PAYROLL_QUEUE_WORKER=true in local .env.
+```
+
+The organization metadata cache is server-only, bounded to 128 entries / 8 MiB (512 KiB per entry), with a 30-second TTL and pending-read coalescing. An SQL UUID epoch detects invalidation across app processes. Metadata writes invalidate before their response is acknowledged; direct SQL edits expire within the TTL. UUID epochs avoid generation collisions after restore. Epoch-read errors bypass cached values, and failed/oversized loads are not cached. Each caller gets a deserialized copy and independently evaluated edit permissions after authentication/module access. Payroll calculations, payslips, financial directories, employee profiles and sessions are not cached; their browser responses remain private/no-store. This first cache implementation does not remove the million-record account-payslip/billing summary bottlenecks reported above.
+
+The Payroll Processing Finalize action now creates a durable job and displays Queued, Running, Finalized, Failed or Needs review. A refresh/page close does not cancel an accepted job. Pending items are prioritized in the owner's bounded status list; users can expand it. Polling uses the existing realtime-refresh helper: it pauses for hidden/offline tabs, backs off failures, and stops when the page is deactivated or unmounted. Reject/Cancel and legacy inline clients retain their explicit synchronous behavior. A disabled queue preserves the earlier UI workflow; a failed availability check does not silently submit an uncertain job inline.
+
+Admission commits the job before HTTP 202. A UUID request key is bound to its owner, DTR and reviewed hash; a replay returns the existing job, while conflicting reuse is rejected. A unique generated active-batch column prevents simultaneous queued/running duplicates. Limits are 1,000 pending jobs per database and 100 per owner. The current conservative worker processes one queued finalization at a time per database, with an advisory lock held on a dedicated connection; it shares the existing process heavy-work budget with interactive financial work. It uses one control connection and one financial connection while processing, so reserve sufficient pool/hosting quota for ordinary reads. A full execution budget does not itself reject durable queue admission; the ordinary API admission limit still applies.
+
+At execution, the worker locks the job, rechecks the submitting user's active role and Payroll module access, and compares the current canonical financial preview with the submitted review hash. Changed inputs require a fresh review; revoked access fails safely. The job success row, payrolls, deduction receipts and balance changes commit in one transaction. A worker restart recovers interrupted Running rows only after any surviving transaction's row lock resolves. Conditional completion/error updates cannot overwrite an already committed success. No automatic retry of an uncertain financial write is introduced. Normal shutdown drains the worker before closing the pool. This depends on a running Node process: pending jobs remain stored while the app/host is stopped and resume when a worker starts. See [MariaDB's connection-scoped advisory lock semantics](https://mariadb.com/docs/server/reference/sql-functions/secondary-functions/miscellaneous-functions/get_lock). The installed Nitro runtime exposes `beforeResponse` and `close` hooks; use its installed runtime contract when upgrading Nitro.
+
+Validation evidence: `.data/scale-tests/pbsystem_scale_20261122151359_0833/queue-cache-result.json`. The fresh synthetic fixture holds 6,000 employees and two cutoffs. Its randomly generated DML-only app user was explicitly denied access to the ordinary schema. Tests verified:
+
+- 100 simultaneous distinct job submissions all returned 202; pending jobs survived process termination/restart.
+- Duplicate/replayed submissions did not create another job or payroll; another owner could not read the job, and a Viewer could not enqueue.
+- Two app processes shared invalidation correctly; cached metadata did not share edit permissions or bypass authentication.
+- A queued preview changed before execution became NeedsReview with zero payroll writes; a revoked role failed with zero payroll writes.
+- A synthetic database error on job-success update rolled back the entire financial transaction. After fresh reviews and correction, all 101 target DTRs finalized.
+- All 1,212 employee payroll amounts matched independent cent calculations, including the deliberately changed attendance row. All loan/installment balances were correct and no employee/cutoff had duplicate payrolls.
+- Cache unit tests covered concurrent fills, clone isolation, in-flight invalidation races, failed epochs/loads, oversized entries and bounded memory. Capacity tests verified admission while execution slots were full and safe lease release.
+- Browser tests verified one queue POST, no synchronous fallback when enabled, readable pending details, completion notification, and 375/1280-pixel layouts; existing directory scrolling/search checks also passed.
+
+The synthetic fixture and audit/job history are retained for review; owned test apps/accounts were removed. The ordinary local jobs endpoint and Admin health check returned HTTP 200 with the queue enabled and no original-business payroll job submitted. These are focused feature tests, not a new million-record or distributed million-client certification.

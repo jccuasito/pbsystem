@@ -73,7 +73,7 @@ try {
   child = spawn(process.execPath, ['.output/server/index.mjs'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
     DB_NAME: database, DB_USER: user, DB_PASSWORD: password, JWT_SECRET: secret,
     APP_URL: base, HOST: '127.0.0.1', PORT: '3196', NITRO_HOST: '127.0.0.1', NITRO_PORT: '3196',
-    DB_AUTO_BACKUP: 'false', LEGAL_HOLIDAY_AUTO_SEED: 'false', GMAIL_USER: '', GMAIL_APP_PASSWORD: '', GOOGLE_CLIENT_ID: '',
+    DB_AUTO_BACKUP: 'false', LEGAL_HOLIDAY_AUTO_SEED: 'false', PAYROLL_QUEUE_ENABLED:'false',PAYROLL_QUEUE_WORKER:'false',GMAIL_USER: '', GMAIL_APP_PASSWORD: '', GOOGLE_CLIENT_ID: '',
     DB_BACKUP_DIR: path.join(folder, 'backups'), PROFILE_IMAGE_STORAGE_DIR: path.join(folder, 'images'),
     GOVERNMENT_ID_STORAGE_DIR: path.join(folder, 'ids'), PAYSLIP_ARCHIVE_STORAGE_DIR: path.join(folder, 'payslips') } })
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { log.push(chunk.toString()); if (log.length > 100) log.shift() })

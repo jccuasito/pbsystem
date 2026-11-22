@@ -3,6 +3,7 @@ import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { imageData } from './inputValidation'
 import { listPage, listSearch, listId, selectListPage } from './listPagination'
+import { cachedLookup } from './lookupCache'
 
 type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-policy' | 'site' | 'site-account' | 'site-policy' | 'site-shift' | 'shift-code' | 'region'
 
@@ -198,8 +199,14 @@ export async function listOrganizationResource(event: any) {
   const session = requireSession(event)
   void session.sub
   const resourceName = resource(event)
-  const config = configs[resourceName]
   const query = getQuery(event)
+  const key=JSON.stringify([resourceName,Object.entries(query).sort(([a],[b])=>a.localeCompare(b))])
+  const result=await cachedLookup('organization:'+key,()=>readOrganizationDirectory(resourceName,query))
+  return{...result,canEdit:session.userType!=='Viewer'&&event.context?.moduleCanEdit!==false}
+}
+
+async function readOrganizationDirectory(resourceName:Resource,query:Record<string,any>){
+  const config=configs[resourceName]
   const paged = listPage(query)
   let result: any
   if (paged) {
@@ -251,7 +258,7 @@ export async function listOrganizationResource(event: any) {
       item.AgencyAccounts = agencies?.accounts || []
     }
   }
-  return { ...result, canEdit: session.userType !== 'Viewer' && event.context?.moduleCanEdit !== false, ...((!paged || query.includeLookups !== '0') && config.lookups ? await config.lookups() : {}) }
+  return { ...result, ...((!paged || query.includeLookups !== '0') && config.lookups ? await config.lookups() : {}) }
 }
 
 export async function createOrganizationResource(event: any) {

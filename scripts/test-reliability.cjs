@@ -78,6 +78,18 @@ test('capacity rejects overload before work, reserves reads during heavy writes,
   assert.equal(capacity.requestCapacity().active, 0); assert.equal(capacity.requestCapacity().heavy, 0)
 })
 
+test('queue admission remains available when heavy slots are full; background leases release once',()=>{
+  const releases=[],event={method:'POST',path:'/api/payroll/jobs',context:{},node:{req:{method:'POST'},res:{setHeader(){}}}}
+  try{
+    for(let i=0;i<capacity.requestCapacity().limits.heavy;i++){const release=capacity.acquireBackgroundCapacity();assert.equal(typeof release,'function');releases.push(release)}
+    assert.equal(capacity.acquireBackgroundCapacity(),null)
+    capacity.admitApiRequest(event,event.path)
+    assert.equal(event.context.capacityLease.heavy,false)
+    assert.throws(()=>capacity.admitApiRequest({...event,context:{}},'/api/settings/backups/restore'),e=>e.statusCode===503)
+  }finally{capacity.completeApiRequest(event);for(const release of releases){release();release()}}
+  assert.equal(capacity.requestCapacity().heavy,0)
+})
+
 test('custom error-rendered requests free capacity; recoverable captured errors do not free active work', () => {
   const hooks = {}, event = { method: 'GET', path: '/api/test', context: {} }
   load('server/plugins/request-capacity.ts', { '../utils/requestCapacity': capacity }).default({ hooks: { hook: (name, fn) => { hooks[name] = fn } } })

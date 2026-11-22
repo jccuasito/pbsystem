@@ -95,6 +95,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/rateVersions.ts`
@@ -183,6 +184,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -494,6 +496,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `PUT /api/payroll/adjustments` → `server/api/payroll/adjustments/index.put.ts`
   - `GET /api/payroll/history` → `server/api/payroll/history.get.ts`
   - `GET /api/payroll/history/[param]` → `server/api/payroll/history/[id].get.ts`
+  - `GET /api/payroll/jobs` → `server/api/payroll/jobs/index.get.ts`
+  - `POST /api/payroll/jobs` → `server/api/payroll/jobs/index.post.ts`
   - `GET /api/payroll/payslips` → `server/api/payroll/payslips.get.ts`
   - `GET /api/payroll/payslips/archive` → `server/api/payroll/payslips/archive.get.ts`
   - `POST /api/payroll/payslips/archive` → `server/api/payroll/payslips/archive.post.ts`
@@ -563,12 +567,15 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/payrollAdjustmentCrud.ts`
   - `server/utils/payrollDeductionOverrideCrud.ts`
   - `server/utils/payrollHistoryCrud.ts`
+  - `server/utils/payrollJobStore.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/payrollProgress.ts`
+  - `server/utils/payrollReviewHash.ts`
   - `server/utils/payrollSnapshotBudget.ts`
   - `server/utils/payslipArchiveCrud.ts`
   - `server/utils/payslipCrud.ts`
@@ -719,7 +726,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/payrollJobStore.ts`
   - `server/utils/payrollProcessingCrud.ts`
+  - `server/utils/payrollReviewHash.ts`
   - `server/utils/payrollSnapshotBudget.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/requestCapacity.ts`
@@ -871,6 +880,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/philippineAddress.ts`
   - `server/utils/privateProfileImages.mjs`
@@ -1125,6 +1135,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1156,6 +1167,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1212,6 +1224,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1243,6 +1256,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1274,6 +1288,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
+  - `server/utils/lookupCache.ts`
   - `server/utils/organizationCrud.ts`
   - `server/utils/requestCapacity.ts`
 - Static assets:
@@ -1430,6 +1445,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/ListProgress.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
   - `app/composables/useInfiniteCollection.ts`
+  - `app/composables/useRealtimeRefresh.ts`
   - `app/composables/useServerList.ts`
   - `app/utils/employee.ts`
   - `components/SearchableSelect.vue`
@@ -1439,6 +1455,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `PUT /api/deductions-loans/cash-bonds/cutoff` → `server/api/deductions-loans/cash-bonds/cutoff.put.ts`
   - `PUT /api/deductions-loans/employee-records` → `server/api/deductions-loans/employee-records/index.put.ts`
   - `PUT /api/deductions-loans/recurring` → `server/api/deductions-loans/recurring/index.put.ts`
+  - `GET /api/payroll/jobs` → `server/api/payroll/jobs/index.get.ts`
+  - `POST /api/payroll/jobs` → `server/api/payroll/jobs/index.post.ts`
   - `GET /api/payroll/processing` → `server/api/payroll/processing.get.ts`
   - `POST /api/payroll/processing/[param]` → `server/api/payroll/processing/[id].post.ts`
   - `POST /api/payroll/processing/[param]/deductions` → `server/api/payroll/processing/[id]/deductions.post.ts`
@@ -1456,7 +1474,9 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/jwt.ts`
   - `server/utils/listPagination.ts`
   - `server/utils/payrollDeductionOverrideCrud.ts`
+  - `server/utils/payrollJobStore.ts`
   - `server/utils/payrollProcessingCrud.ts`
+  - `server/utils/payrollReviewHash.ts`
   - `server/utils/payrollSnapshotBudget.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`

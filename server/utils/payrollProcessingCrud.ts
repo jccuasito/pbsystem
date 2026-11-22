@@ -9,6 +9,8 @@ import { postEmployeeAccountTransaction } from './employeeAccountTransactionCrud
 import { listId, listPage, listSearch, pagination } from './listPagination'
 import { coalesceRead, withHeavyRead } from './requestCapacity'
 import { payrollSnapshotJson } from './payrollSnapshotBudget'
+import { payrollReviewHash } from './payrollReviewHash'
+import { lockPayrollJob, completePayrollJob, type PayrollJobLease } from './payrollJobStore'
 
 const hours = [...payrollHourComponents, ...payrollTimeDeductions].map(([column]) => column)
 const pesos = (cents: number) => cents / 100
@@ -449,10 +451,10 @@ export async function listPayrollProcessing(event: any) {
   const query = getQuery(event)
   if (listPage(query)) {
     const result = await coalesceRead('payroll-page:' + JSON.stringify(query), () => listPayrollProcessingPage(query,event))
-    return { ...result, permissions: { canReview: ['Admin', 'Supervisor'].includes(String(session.userType)) } }
+    return { ...result, permissions: { canReview: ['Admin', 'Supervisor'].includes(String(session.userType))&&event.context?.moduleCanEdit!==false } }
   }
   const result = await payrollProcessingData(String(query.periodStart || ''), String(query.periodEnd || ''))
-  return { ...result, permissions: { canReview: ['Admin', 'Supervisor'].includes(String(session.userType)) } }
+  return { ...result,sites:result.sites.map(site=>({...site,reviewHash:payrollReviewHash(site)})), permissions: { canReview: ['Admin', 'Supervisor'].includes(String(session.userType))&&event.context?.moduleCanEdit!==false } }
 }
 
 async function listPayrollProcessingPage(query: Record<string, any>,event: any) {
@@ -541,7 +543,7 @@ async function listPayrollProcessingPage(query: Record<string, any>,event: any) 
     const result = ids.length ? await withHeavyRead(event,()=>payrollProcessingData(start, end, pool, ids)) : { sites: [] }
     sites=query.includeEmployees==='0'?result.sites.map(({employees,...site}:any)=>{void employees;return{...site,detailsLoaded:false}}):result.sites
   }
-  const items=sites
+  const items=sites.map(site=>site.employees?{...site,reviewHash:payrollReviewHash(site)}:site)
   return { cutoffs, selectedCutoff: start ? { start, end } : null, items,
     pagination: meta, counts, ...(query.includeLookups === '0' ? {} : { directory }) }
 }
@@ -563,14 +565,19 @@ export async function reviewPayrollProcessing(event: any) {
 
 async function reviewPayrollProcessingAttempt(event: any) {
   const session = requireSession(event)
+  const batchId=Number(getRouterParam(event,'id'))
+  const body=await readBody<{action?:unknown;reason?:unknown;expectedHash?:unknown}>(event)||{}
+  return executePayrollReview(session,batchId,body)
+}
+
+export async function executePayrollReview(session:{sub:number;userType:string},batchId:number,body:{action?:unknown;reason?:unknown;expectedHash?:unknown},job?:PayrollJobLease){
   if (!['Admin', 'Supervisor'].includes(String(session.userType))) {
     throw createError({ statusCode: 403, statusMessage: 'Only an Admin or Supervisor can finalize, reject, or cancel payroll processing.' })
   }
-  const batchId = Number(getRouterParam(event, 'id'))
   if (!Number.isInteger(batchId) || batchId <= 0) throw createError({ statusCode: 400, statusMessage: 'Select a valid DTR.' })
-  const body = await readBody<{ action?: unknown; reason?: unknown }>(event) || {}
   const action = body.action === 'finalize' || body.action === 'reject' || body.action === 'cancel' ? body.action : null
   if (!action) throw createError({ statusCode: 400, statusMessage: 'Choose finalize, reject, or cancel.' })
+  if(job&&action!=='finalize')throw createError({statusCode:400,statusMessage:'Only finalization can be queued.'})
   const reason = String(body.reason || '').trim()
   if (action !== 'finalize' && (reason.length < 5 || reason.length > 500)) {
     throw createError({ statusCode: 400, statusMessage: 'Enter a reason of 5–500 characters.' })
@@ -582,6 +589,7 @@ async function reviewPayrollProcessingAttempt(event: any) {
     // unrelated empty index ranges during concurrent site finalizations.
     await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
     await connection.beginTransaction()
+    if(job)await lockPayrollJob(connection,job,session.sub,batchId)
     const [[batch]] = await connection.execute<any[]>(`SELECT BatchID, Status,
       DATE_FORMAT(PeriodStart, '%Y-%m-%d') AS PeriodStart,
       DATE_FORMAT(PeriodEnd, '%Y-%m-%d') AS PeriodEnd
@@ -665,6 +673,7 @@ async function reviewPayrollProcessingAttempt(event: any) {
     const currentSite = data.sites.find(site => Number(site.BatchID) === batchId)
     if (!currentSite) throw createError({ statusCode: 409, statusMessage: 'Payroll breakdown is unavailable for this DTR.' })
     const { history, SnapshotJson, ...snapshot } = currentSite as any
+    if(body.expectedHash!==undefined&&body.expectedHash!==payrollReviewHash(currentSite))throw createError({statusCode:409,statusMessage:'Payroll data changed after review. Open the latest details and review again.'})
     if (action === 'finalize') {
       if (Number(snapshot.warningCount) > 0) {
         throw createError({ statusCode: 409, statusMessage: 'Resolve the payroll notes before finalizing this cutoff.' })
@@ -744,8 +753,10 @@ async function reviewPayrollProcessingAttempt(event: any) {
       [batchId, snapshotJson, session.sub])
       await recordDtrWorkflowEvent(connection, { batchId, action: 'Approve Payroll',
         previousStatus: batch.Status, nextStatus: batch.Status, actorUserId: session.sub, snapshot })
+      const result={success:true,reviewStatus:'Approved',dtrStatus:batch.Status,payrollCount:snapshot.employees.length}
+      if(job)await completePayrollJob(connection,job,result)
       await connection.commit()
-      return { success: true, reviewStatus: 'Approved', dtrStatus: batch.Status, payrollCount: snapshot.employees.length }
+      return result
     }
     const [[posted]] = await connection.execute<any[]>(`SELECT py.PayrollID FROM payroll py
       INNER JOIN attendance_dtr_employee de ON de.EmployeeID = py.EmployeeID AND de.DeploymentID = py.DeploymentID AND de.BatchID = ?

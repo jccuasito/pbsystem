@@ -17,7 +17,13 @@ export function admitApiRequest(event: any, path: string) {
   if (event.context.capacityLease) return
   const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(event.method || event.node.req.method)
   const fullPayrollRead = !mutation && path === '/api/payroll/processing' && !getRequestURL(event).searchParams.has('page')
-  const heavy = fullPayrollRead || mutation && (/^\/api\/attendance\/dtr\//.test(path) || /^\/api\/(?:payroll|billing)\//.test(path) || /^\/api\/settings\/backups/.test(path))
+  // Enqueueing is a small durable write, not execution of the payroll itself.
+  const enqueue=path==='/api/payroll/jobs'&&mutation
+  const heavy = !enqueue&&(fullPayrollRead || mutation && (/^\/api\/attendance\/dtr\//.test(path) || /^\/api\/(?:payroll|billing)\//.test(path) || /^\/api\/settings\/backups/.test(path)))
+  if(mutation&&/^\/api\/settings\/backups\/(?:restore|import)$/.test(path)&&counts.heavy>0){
+    setHeader(event,'Retry-After','3')
+    throw createError({statusCode:503,statusMessage:'Wait for running financial work before restoring the database.'})
+  }
   if (counts.active >= limits.requests || (heavy && counts.heavy >= limits.heavy)) {
     counts.rejected++
     setHeader(event, 'Retry-After', '3')
@@ -54,6 +60,13 @@ export function completeApiRequest(event: any) {
 }
 
 const pending = new Map<string, Promise<unknown>>()
+/** Background execution shares the same process budget as interactive work. */
+export function acquireBackgroundCapacity(){
+  if(counts.heavy>=limits.heavy)return null
+  counts.heavy++
+  let released=false
+  return()=>{if(!released){released=true;counts.heavy--}}
+}
 /** Invoked inside a coalesced read: one actual calculation owns one heavy slot,
  * while identical authenticated callers can await it without duplicating work. */
 export async function withHeavyRead<T>(event: any, read: () => Promise<T>): Promise<T> {

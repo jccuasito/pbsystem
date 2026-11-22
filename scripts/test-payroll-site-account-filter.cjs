@@ -11,7 +11,7 @@ async function buildFixture(){
   build.onResolve({filter:/^#imports$/},()=>({path:'nuxt-head-fixture',namespace:'fixture'}))
   build.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const useHead = value => { document.title = value.title }',loader:'js'}))
   build.onLoad({filter:/\.vue$/},args=>{
-   if(args.path.endsWith('PayrollProcessingDetailModal.vue'))return{contents:"import {h} from 'vue';export default {props:['site'],emits:['close'],setup:(props,{emit})=>()=>h('section',{role:'dialog','aria-label':'Payroll detail'},[h('p','DTR '+props.site.BatchID),h('button',{onClick:()=>emit('close')},'Close payroll detail')])}",loader:'js'}
+   if(args.path.endsWith('PayrollProcessingDetailModal.vue'))return{contents:"import {h} from 'vue';export default {props:['site','canReview'],emits:['close','approve'],setup:(props,{emit})=>()=>h('section',{role:'dialog','aria-label':'Payroll detail'},[h('p','DTR '+props.site.BatchID),h('button',{onClick:()=>emit('close')},'Close payroll detail'),props.canReview?h('button',{onClick:()=>emit('approve')},'Submit payroll'):null])}",loader:'js'}
    const {descriptor,errors}=sfc.parse(fs.readFileSync(args.path,'utf8'),{filename:args.path});assert.deepEqual(errors,[])
    const id='data-v-'+Buffer.from(path.relative(root,args.path)).toString('hex').slice(-18)
    const script=sfc.compileScript(descriptor,{id,inlineTemplate:true,genDefaultAs:'__component'})
@@ -23,6 +23,52 @@ async function buildFixture(){
 }
 
 
+
+test('payroll queue submits once, remains readable while pending, and reports completion on mobile',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+ const {chromium}=require('playwright'),fixture=await buildFixture(),browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
+ fs.mkdirSync(output,{recursive:true})
+ try{
+  const page=await browser.newPage({viewport:{width:1280,height:850}}),errors=[]
+  page.on('pageerror',e=>errors.push(e.message))
+  await page.setContent('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0;padding:16px}</style><div id="app"></div>')
+  await page.addStyleTag({content:fixture.css})
+  await page.evaluate(()=>{
+   window.calls=[];window.jobs=[];window.done=false;window.IntersectionObserver=class{observe(){}disconnect(){}}
+   window.$fetch=async(url,options={})=>{
+    window.calls.push({url,method:options.method||'GET',body:options.body})
+    if(url==='/api/payroll/jobs'){
+     if(options.method==='POST'){
+      if(options.body.expectedHash!=='a'.repeat(64))throw Error('Missing reviewed hash')
+      window.jobs=[{id:'queued-job',batchId:1,status:'Queued',message:'Waiting for an available worker.'}]
+      return{job:{...window.jobs[0]}}
+     }
+     return{enabled:true,items:JSON.parse(JSON.stringify(window.jobs))}
+    }
+    if(options.method==='POST')throw Error('Synchronous payroll endpoint must not be called')
+    const site={BatchID:1,AgencyID:1,AgencyName:'Test agency',ClientID:1,ClientName:'Test client',SiteName:'Test site',PeriodStart:'2026-09-01',PeriodEnd:'2026-09-15',ReviewStatus:window.done?'Approved':'Pending',reviewHash:'a'.repeat(64),employees:[{EmployeeID:1,EmployeeName:'Test employee'}],peopleCount:1,gross:100,deductions:10,netPreview:90}
+    return{items:[site],pagination:{page:1,pages:1,pageSize:25,total:1},cutoffs:[{start:site.PeriodStart,end:site.PeriodEnd}],selectedCutoff:{start:site.PeriodStart,end:site.PeriodEnd},counts:{current:1,Pending:1},directory:[site],permissions:{canReview:true}}
+   }
+  })
+  await page.addScriptTag({content:fixture.script})
+  await page.getByRole('button',{name:'Review',exact:true}).click()
+  await page.getByRole('button',{name:'Submit payroll',exact:true}).click()
+  await page.getByText('Payroll queued. You can continue working; its status appears below.',{exact:true}).waitFor()
+  assert.equal(await page.getByRole('dialog').count(),0)
+  const calls=await page.evaluate(()=>window.calls.filter(c=>c.method==='POST'))
+  assert.equal(calls.length,1);assert.equal(calls[0].url,'/api/payroll/jobs');assert.match(calls[0].body.requestKey,/^[a-f0-9-]{36}$/)
+  await page.getByRole('button',{name:'Review',exact:true}).click()
+  await page.getByRole('dialog').waitFor();assert.equal(await page.getByRole('button',{name:'Submit payroll',exact:true}).count(),0)
+  await page.getByRole('button',{name:'Close payroll detail'}).click()
+  for(const width of[1280,375]){
+   await page.setViewportSize({width,height:850});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1))
+   await page.screenshot({path:path.join(output,'queue-'+width+'.png'),fullPage:true})
+  }
+  await page.evaluate(()=>{window.done=true;window.jobs[0].status='Succeeded';window.jobs[0].message='Payroll finalized.'})
+  await page.getByText('Queued payroll finalized. Payroll records and eligible deductions were posted.',{exact:true}).waitFor()
+  await page.getByText('Finalized',{exact:true}).first().waitFor()
+  assert.deepEqual(errors,[])
+ }finally{await browser.close()}
+})
 
 test('payroll directory batches server results and searches unloaded employees', {skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'}, async()=>{
  const {chromium}=require('playwright'),fixture=await buildFixture()
@@ -38,6 +84,7 @@ test('payroll directory batches server results and searches unloaded employees',
    const cutoffs=[{start:'2026-10-01',end:'2026-10-15'},{start:'2026-09-16',end:'2026-09-30'}]
    const sites=Array.from({length:72},(_,i)=>({BatchID:i+1,AgencyID:i%2+1,AgencyName:'Agency '+(i%2+1),ClientID:i%3+1,ClientName:'Client '+(i%3+1),SiteName:'Site '+(i+1),SiteAccountID:i+1,SiteAccountName:'Account '+String(i+1).padStart(3,'0'),PeriodStart:'2026-09-16',PeriodEnd:'2026-09-30',ReviewStatus:i%4===0?'Approved':'Pending',employees:[{EmployeeName:'Worker '+(i+1)}],peopleCount:1,gross:1000+i,deductions:10,netPreview:990+i}))
    window.$fetch=async(url,options)=>{
+    if(url==='/api/payroll/jobs')return{enabled:false,items:[]}
     window.requests.push({url,query:options.query});const q=options.query||{}
     await new Promise(r=>setTimeout(r,25))
     const directory=q.periodStart==='2026-10-01'?[{...sites[0],SiteAccountID:99,SiteAccountName:'Updated Account'}]:sites
