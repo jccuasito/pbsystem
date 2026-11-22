@@ -28,7 +28,7 @@ test('manual amount form needs only employee, name and amount and sends no stale
   const source = parse(fs.readFileSync('app/components/PayrollAdjustmentsPanel.vue', 'utf8')).descriptor.scriptSetup.content
   const props = { targetDtr: { BatchID: 2 }, employees: [], initialEmployeeId: null, modal: false }
   const state = scope.run(() => evaluate(source + '\nmodule.exports={form,entryMode,amountName,amountValue,saveRequirement,canSave,save,lineDates,adjustmentLabel};', {
-    require: () => ({ ...vue, onMounted() {} }), defineProps: () => props, withDefaults: value => value,
+    require: name => name.includes('useProgressiveList') ? {useProgressiveList: source => ({visibleItems:source,progress:vue.computed(()=>({shown:source.value.length,total:source.value.length,hasMore:false})),loadMore(){}})} : ({ ...vue, onMounted() {} }), defineProps: () => props, withDefaults: value => value,
     defineEmits: () => () => {}, defineExpose() {},
     $fetch: async (url, options) => { if (options?.method === 'POST') posted.push(options.body); return { items: [] } },
   }))

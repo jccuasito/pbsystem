@@ -97,7 +97,8 @@ export async function secureApiRequest(event: any, path: string) {
     const dtrImportRows = (event.method || event.node.req.method) === 'POST'
       && /^\/api\/attendance\/dtr\/[1-9]\d*\/records$/.test(path) && body?.ImportRows === true
     const assistantGuideId = (event.method || event.node.req.method) === 'POST' && path === '/api/assistant/query'
-    validateRequestObject(body, { dtrImportRows, assistantGuideId })
+    const billingLineIds = (event.method || event.node.req.method) === 'POST' && path === '/api/billing/drafts'
+    validateRequestObject(body, { dtrImportRows, assistantGuideId, billingLineIds })
   }
   limitAuthentication(event, path, body)
 }

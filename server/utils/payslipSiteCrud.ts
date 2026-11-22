@@ -4,20 +4,21 @@ import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
 import { finalizedPayslipCte, readPayslipProfiles } from './payslipCrud'
 import { writePayslipPublication } from './payslipPublication'
+import { coalesceRead } from './requestCapacity'
 
 type Scope = { batchId:number } | { siteAccountId:number;agencyId:number;periodStart:string;periodEnd:string }
-const finalized = finalizedPayslipCte + `, eligible AS (
+const directorySql=(prefix=finalizedPayslipCte,publications=true)=>prefix + `, eligible AS (
   SELECT f.*,d.AgencyID,d.SiteID,a.AgencyName,s.SiteName,c.ClientName,
     COALESCE(coverage.SiteAccountID,0) AS SiteAccountID,
     COALESCE(account.SiteAccountName,'Unassigned Site Account') AS SiteAccountName,
     DATE_FORMAT(d.PeriodStart,'%Y-%m-%d') AS PeriodStart,DATE_FORMAT(d.PeriodEnd,'%Y-%m-%d') AS PeriodEnd,
-    CASE WHEN v.EmployeeID IS NOT NULL THEN 1 ELSE 0 END AS IsPosted
+    ${publications?'CASE WHEN v.EmployeeID IS NOT NULL THEN 1 ELSE 0 END':'0'} AS IsPosted
   FROM finalized f JOIN attendance_dtr d ON d.BatchID=f.BatchID
   LEFT JOIN agency a ON a.AgencyID=d.AgencyID LEFT JOIN site s ON s.SiteID=d.SiteID
   LEFT JOIN client c ON c.ClientID=d.ClientID
   LEFT JOIN site_agency coverage ON coverage.SiteID=d.SiteID AND coverage.AgencyID=d.AgencyID
   LEFT JOIN site_account account ON account.SiteAccountID=coverage.SiteAccountID
-  LEFT JOIN valid_publications v ON v.EmployeeID=f.EmployeeID AND v.GroupKey=f.GroupKey
+  ${publications?'LEFT JOIN valid_publications v ON v.EmployeeID=f.EmployeeID AND v.GroupKey=f.GroupKey':''}
 ), sites AS (
   SELECT BatchID,AgencyID,SiteID,AgencyName,SiteName,ClientName,PeriodStart,PeriodEnd,
     COUNT(*) AS PayrollCount,COUNT(DISTINCT EmployeeID) AS EmployeeCount,SUM(IsPosted) AS PostedPayrollCount,
@@ -30,6 +31,10 @@ const finalized = finalizedPayslipCte + `, eligible AS (
     SUM(GrossPay) AS GrossPay,SUM(TotalDeduction) AS TotalDeduction,SUM(NetPay) AS NetPay
   FROM eligible GROUP BY SiteAccountID,SiteAccountName,AgencyID,AgencyName,PeriodStart,PeriodEnd
 )`
+const finalized=directorySql()
+// These joins are one-to-one. Only the publication-validation plan needs the
+// DISTINCT materialization fence; lightweight headers can merge normally.
+const summaryDirectory=directorySql(finalizedPayslipCte.replace('SELECT DISTINCT py.EmployeeID','SELECT py.EmployeeID'),false)
 const postingStatus=(posted:number,total:number)=>posted===total?'Posted':posted>0?'Partially posted':'Not Posted'
 const id=(value:unknown)=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):0
 const validPeriod=(start:string,end:string)=>/^\d{4}-\d{2}-\d{2}$/.test(start)&&/^\d{4}-\d{2}-\d{2}$/.test(end)&&start<=end
@@ -132,15 +137,43 @@ export async function listSitePayslips(event:any){
   const where=`WHERE (?=0 OR AgencyID=?) AND (?='' OR CONVERT(CONCAT_WS(' ',${searchColumns}) USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ?)
     AND (?='' OR (PeriodStart=? AND PeriodEnd=?)) AND (${filters[filter]})`
   const params=[agencyId,agencyId,search,'%'+search+'%',start,start,end]
-  const [[count]]=await pool.execute<any[]>(finalized+' SELECT COUNT(*) AS Total FROM '+table+' '+where,params)
-  const pageSize=25,total=Number(count.Total),pages=Math.max(1,Math.ceil(total/pageSize)),page=Math.max(1,Math.min(pages,Math.floor(Number(query.page)||1)))
-  const order=byAccount?'SiteAccountName,AgencyName,SiteAccountID':'SiteName,AgencyName,BatchID DESC'
-  const results=await Promise.all([
-    pool.execute<any[]>(finalized+` SELECT * FROM ${table} ${where} ORDER BY PeriodEnd DESC,PeriodStart DESC,${order} LIMIT ? OFFSET ?`,[...params,pageSize,(page-1)*pageSize]),
-    pool.execute<any[]>(finalized+' SELECT DISTINCT AgencyID,AgencyName FROM '+table+' ORDER BY AgencyName'),
-    pool.execute<any[]>(finalized+' SELECT DISTINCT PeriodStart,PeriodEnd FROM '+table+' ORDER BY PeriodEnd DESC,PeriodStart DESC')
-  ])
-  return{items:results[0][0].map(row=>({...row,Scope:byAccount?accountScope(row):{batchId:Number(row.BatchID)},PublicationStatus:postingStatus(Number(row.PostedPayrollCount),Number(row.PayrollCount))})),agencies:results[1][0],cutoffs:results[2][0],canPost,pagination:{page,pageSize,total,pages}}
+  // Share only simultaneous identical directory reads, after per-caller auth.
+  // No settled financial result is cached, and canPost remains caller-specific.
+  const result=await coalesceRead('payslip-sites:'+JSON.stringify([byAccount,...params,filter,query.page||1]),async()=>{
+    const countSql=filter?finalized:summaryDirectory
+    const [[count]]=await pool.execute<any[]>(countSql+' SELECT COUNT(*) AS Total FROM '+table+' '+where,params)
+    const pageSize=25,total=Number(count.Total),pages=Math.max(1,Math.ceil(total/pageSize)),page=Math.max(1,Math.min(pages,Math.floor(Number(query.page)||1)))
+    const order=byAccount?'SiteAccountName,AgencyName,SiteAccountID':'SiteName,AgencyName,BatchID DESC'
+    const [[headers],[agencies],[cutoffs]]=await Promise.all([
+      pool.execute<any[]>(countSql+` SELECT * FROM ${table} ${where} ORDER BY PeriodEnd DESC,PeriodStart DESC,${order} LIMIT ? OFFSET ?`,[...params,pageSize,(page-1)*pageSize]),
+      pool.execute<any[]>(summaryDirectory+' SELECT DISTINCT AgencyID,AgencyName FROM '+table+' ORDER BY AgencyName'),
+      pool.execute<any[]>(summaryDirectory+' SELECT DISTINCT PeriodStart,PeriodEnd FROM '+table+' ORDER BY PeriodEnd DESC,PeriodStart DESC')
+    ])
+    let items=headers
+    if(!filter&&headers.length){
+      // First choose 25 groups without joining publication history. Then validate
+      // the complete payslip source sets only for employees in those groups.
+      // Other-site and legacy payrolls for those employees remain in the CTE.
+      const pageParams:any[]=[],batchParams:any[]=[]
+      const pageWhere=byAccount?headers.map(row=>{
+        pageParams.push(row.SiteAccountID,row.AgencyID,row.PeriodStart,row.PeriodEnd)
+        batchParams.push(row.SiteAccountID,row.AgencyID,row.PeriodStart,row.PeriodEnd)
+        return '(SiteAccountID=? AND AgencyID=? AND PeriodStart=? AND PeriodEnd=?)'
+      }).join(' OR '):'BatchID IN ('+headers.map(row=>{pageParams.push(row.BatchID);batchParams.push(row.BatchID);return '?'}).join(',')+')'
+      const batchWhere=byAccount?headers.map(()=>"(COALESCE(sa.SiteAccountID,0)=? AND d.AgencyID=? AND d.PeriodStart=? AND d.PeriodEnd=?)").join(' OR '):'d.BatchID IN ('+headers.map(()=>'?').join(',')+')'
+      const [employees]=await pool.execute<any[]>(`SELECT DISTINCT pp.EmployeeID FROM payroll_processing_posting pp
+        JOIN payroll py ON py.PayrollID=pp.PayrollID AND py.Status IN ('Approved','Released')
+        JOIN attendance_dtr d ON d.BatchID=pp.BatchID LEFT JOIN site_agency sa ON sa.SiteID=d.SiteID AND sa.AgencyID=d.AgencyID
+        WHERE pp.Status='Active' AND (${batchWhere})`,batchParams)
+      if(employees.length){
+        const prefix=finalizedPayslipCte.replace("WHERE py.Status IN ('Approved','Released')", "WHERE py.Status IN ('Approved','Released') AND py.EmployeeID IN ("+employees.map(()=>'?').join(',')+")")
+        const [details]=await pool.execute<any[]>(directorySql(prefix)+` SELECT * FROM ${table} WHERE ${pageWhere} ORDER BY PeriodEnd DESC,PeriodStart DESC,${order}`,[...employees.map(row=>row.EmployeeID),...pageParams])
+        items=details
+      }else items=[]
+    }
+    return{items:items.map(row=>({...row,Scope:byAccount?accountScope(row):{batchId:Number(row.BatchID)},PublicationStatus:postingStatus(Number(row.PostedPayrollCount),Number(row.PayrollCount))})),agencies,cutoffs,pagination:{page,pageSize,total,pages}}
+  })
+  return{...result,canPost}
 }
 
 export async function publishSitePayslips(event:any){
@@ -150,6 +183,9 @@ export async function publishSitePayslips(event:any){
   if(!['post','withdraw'].includes(body?.action)||!Array.isArray(body?.employeeIds)||!body.employeeIds.length||body.employeeIds.length>5000||body.employeeIds.some((value:any)=>!id(value))||new Set(body.employeeIds.map(Number)).size!==body.employeeIds.length||typeof body.reviewToken!=='string'||!/^[a-f0-9]{64}$/.test(body.reviewToken))throw createError({statusCode:400,statusMessage:'Review the payroll group and select employees before posting.'})
   const selected=new Set<number>(body.employeeIds.map(Number)),db=await pool.getConnection()
   try{
+    // DTR, employee and payroll row locks below guard publication ownership.
+    // Do not also reserve empty publication/source index gaps across sites.
+    await db.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
     await db.beginTransaction()
     const initialHeader='batchId' in scope?await readHeader(db,scope,true):null
     const candidateIds=initialHeader?initialHeader.BatchIDs:await lockAccountBatches(db,scope as Exclude<Scope,{batchId:number}>)

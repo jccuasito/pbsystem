@@ -4,7 +4,7 @@ import { requireSession } from './auth'
 
 // Shared source validation keeps employee and site publication filters in sync.
 export const finalizedPayslipCte = `WITH finalized AS (
-  SELECT py.EmployeeID,py.PayrollID,py.GrossPay,py.TotalDeduction,py.NetPay,pp.BatchID,
+  SELECT DISTINCT py.EmployeeID,py.PayrollID,py.GrossPay,py.TotalDeduction,py.NetPay,pp.BatchID,
     CONCAT(DATE_FORMAT(py.StartDate,'%Y-%m-%d'),':',DATE_FORMAT(py.EndDate,'%Y-%m-%d'),':',
       -- Legacy deployment and DTR enrollment columns can use different collations.
       -- Normalize the expression before comparing; do not alter stored payroll data.

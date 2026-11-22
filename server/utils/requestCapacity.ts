@@ -1,4 +1,4 @@
-import { createError, setHeader } from 'h3'
+import { createError, getRequestURL, setHeader } from 'h3'
 
 export function boundedSetting(name: string, fallback: number, minimum: number, maximum: number) {
   const value = Number(process.env[name])
@@ -16,7 +16,8 @@ export function requestCapacity() { return { ...counts, limits: { ...limits }, r
 export function admitApiRequest(event: any, path: string) {
   if (event.context.capacityLease) return
   const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(event.method || event.node.req.method)
-  const heavy = mutation && (/^\/api\/attendance\/dtr\//.test(path) || /^\/api\/(?:payroll|billing)\//.test(path) || /^\/api\/settings\/backups/.test(path))
+  const fullPayrollRead = !mutation && path === '/api/payroll/processing' && !getRequestURL(event).searchParams.has('page')
+  const heavy = fullPayrollRead || mutation && (/^\/api\/attendance\/dtr\//.test(path) || /^\/api\/(?:payroll|billing)\//.test(path) || /^\/api\/settings\/backups/.test(path))
   if (counts.active >= limits.requests || (heavy && counts.heavy >= limits.heavy)) {
     counts.rejected++
     setHeader(event, 'Retry-After', '3')

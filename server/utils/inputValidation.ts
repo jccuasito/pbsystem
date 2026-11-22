@@ -24,10 +24,10 @@ export function calendarDate(value: unknown, label: string) {
 }
 
 /** Structural limits shared by every JSON API, including the employee portal. Never mutates values. */
-export function validateRequestObject(value: unknown, options: { dtrImportRows?: boolean; assistantGuideId?: boolean } = {}) {
+export function validateRequestObject(value: unknown, options: { dtrImportRows?: boolean; assistantGuideId?: boolean; billingLineIds?: boolean } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Send a JSON object.')
   let nodes = 0
-  const visit = (entry: unknown, depth: number, key = '', dtrImportRow = false) => {
+  const visit = (entry: unknown, depth: number, key = '', dtrImportRow = false, billingLine = false) => {
     if (++nodes > 100000 || depth > 16) return invalid('This request is too complex.')
     if (entry != null && /(?:name|email|address|remarks|description|reason|reference|notes?|number|code|type|status|message|password|token|label)$/i.test(key) && !['string', 'number'].includes(typeof entry)) return invalid('Text fields must contain plain text.')
     if (entry != null && /(?:amount|hours|rate|minutes|quantity|balance|count|year)$/i.test(key) && !['string', 'number'].includes(typeof entry)) return invalid('Numeric fields must contain a number.')
@@ -37,7 +37,11 @@ export function validateRequestObject(value: unknown, options: { dtrImportRows?:
     // Assistant topic IDs are named slugs, not database primary keys. The
     // exact POST route opts in, and its handler still checks the known topics.
     const assistantGuide = options.assistantGuideId === true && depth === 1 && key === 'guideId'
-    if (assistantGuide && entry != null) {
+    // Invoice line keys are local UI identifiers (source-1/manual-1), not DB IDs.
+    // Only the billing draft's direct lines array opts in; billingId stays numeric.
+    if (billingLine && depth === 3 && key === 'id' && entry != null) {
+      if (typeof entry !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(entry)) return invalid('Enter a valid billing line identifier.')
+    } else if (assistantGuide && entry != null) {
       if (typeof entry !== 'string' || !/^[a-z][a-z0-9-]{0,99}$/.test(entry)) return invalid('Select a valid help topic.')
     } else if (employeeCode && entry != null) {
       if (!['string', 'number'].includes(typeof entry) || String(entry).length > 190) return invalid('Employee ID / Employee No. must contain plain text of up to 190 characters.')
@@ -54,13 +58,13 @@ export function validateRequestObject(value: unknown, options: { dtrImportRows?:
     }
     if (Array.isArray(entry)) {
       if (entry.length > 10000) return invalid('This request contains too many rows.')
-      for (const item of entry) visit(item, depth + 1, key, options.dtrImportRows === true && depth === 1 && key === 'Rows')
+      for (const item of entry) visit(item, depth + 1, key, options.dtrImportRows === true && depth === 1 && key === 'Rows', options.billingLineIds === true && depth === 1 && key === 'lines')
       return
     }
     if (typeof entry !== 'object' || Object.getPrototypeOf(entry) !== Object.prototype) return invalid('Send plain JSON values.')
     for (const [name, item] of Object.entries(entry)) {
       if (['__proto__', 'constructor', 'prototype'].includes(name) || name.length > 100 || /[\u0000-\u001f\u007f]/.test(name)) return invalid('Invalid field name.')
-      visit(item, depth + 1, name, dtrImportRow)
+      visit(item, depth + 1, name, dtrImportRow, billingLine)
     }
   }
   visit(value, 0)

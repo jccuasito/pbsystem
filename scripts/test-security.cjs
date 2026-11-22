@@ -153,7 +153,10 @@ test('SQL injection payload remains a bind value in the DTR search, never SQL sy
   const dtr = load('server/utils/dtrCrud.ts', dependencies)
   await dtr.listDtrs({ node: { req: { url: '/api/attendance/dtr?search=' + encodeURIComponent(attack) } } })
   const search = calls.find(([sql]) => sql.includes('GROUP BY d.BatchID'))
-  assert.ok(search); assert.ok(!search[0].includes(attack)); assert.deepEqual(search[1], ['%' + attack + '%', '%' + attack + '%', '%' + attack + '%'])
+  assert.ok(search); assert.ok(!search[0].includes(attack))
+  const words = attack.trim().split(/\s+/).map(word => '%' + word.replace(/[=%_]/g, character => '=' + character) + '%')
+  assert.deepEqual(search[1], words.flatMap(word => [word, word, word, word]))
+  assert.match(search[0], /ESCAPE '='/)
 })
 
 test('public staff registration is Active but cannot select its own role or bypass email verification', async () => {

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { createError, getQuery, getRouterParam, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { coalesceRead } from './requestCapacity'
 import { loadVersionMap, snapshotAtDate } from './rateVersions'
 import { billingLineAmount, calculateBillingDraft, normalizeBillingDraft } from '../../shared/utils/billingDraft'
 import { billingComponents, normalizeBillingProfile, profileBillingLines } from '../../shared/utils/billingProfile'
@@ -38,7 +39,9 @@ export async function saveBillingProfile(event: any) {
     const [[scope]] = await connection.execute<any[]>(`SELECT s.SiteID FROM site s INNER JOIN site_agency sa ON sa.SiteID=s.SiteID
       WHERE sa.AgencyID=? AND s.ClientID=? LIMIT 1`, [agencyId, clientId])
     if (!agency || !client || !scope) fail(400, 'Choose a client with sites under this agency.')
-    const [[existing]] = await connection.execute<any[]>('SELECT Revision FROM billing_client_profile WHERE AgencyID=? AND ClientID=? FOR UPDATE', [agencyId, clientId])
+    // The agency row is already locked before the first consistent read.
+    // An absent profile must not lock a gap shared by another agency's insert.
+    const [[existing]] = await connection.execute<any[]>('SELECT Revision FROM billing_client_profile WHERE AgencyID=? AND ClientID=?', [agencyId, clientId])
     if (!Number.isSafeInteger(body.revision) || body.revision !== Number(existing?.Revision || 0)) fail(409, 'This client setup changed. Close and reopen it before saving.')
     const revision = Number(existing?.Revision || 0) + 1
     await connection.execute(`INSERT INTO billing_client_profile(AgencyID,ClientID,Revision,ConfigJson,UpdatedBy) VALUES(?,?,?,?,?)
@@ -116,6 +119,7 @@ export async function billingSourceData(connection: any, requestedIds: number[])
 export async function listBillingDrafts(event: any) {
   const session = requireSession(event), query = getQuery(event)
   if ((query.periodStart || query.periodEnd) && (!date(query.periodStart) || !date(query.periodEnd) || String(query.periodStart) > String(query.periodEnd))) fail(400, 'Choose valid service dates.')
+  const result = await coalesceRead('billing-directory:' + JSON.stringify(query), async () => {
   const [accounts] = await pool.execute<any[]>(`SELECT DISTINCT a.AgencyID,a.AgencyName,c.ClientID,c.ClientName,p.Revision,p.ConfigJson
     FROM site s INNER JOIN site_agency sa ON sa.SiteID=s.SiteID INNER JOIN agency a ON a.AgencyID=sa.AgencyID
     INNER JOIN client c ON c.ClientID=s.ClientID LEFT JOIN billing_client_profile p ON p.AgencyID=a.AgencyID AND p.ClientID=c.ClientID AND p.Status='Active'
@@ -131,12 +135,15 @@ export async function listBillingDrafts(event: any) {
     ORDER BY d.PeriodStart DESC,s.SiteName,d.BatchID`)
   const [drafts] = await pool.execute<any[]>(`SELECT d.BillingID,d.AgencyID,a.AgencyName,d.ClientID,c.ClientName,d.Revision,
       DATE_FORMAT(d.PeriodStart,'%Y-%m-%d') AS PeriodStart,DATE_FORMAT(d.PeriodEnd,'%Y-%m-%d') AS PeriodEnd,
-      DATE_FORMAT(d.UpdatedAt,'%Y-%m-%d %H:%i:%s') AS UpdatedAt,b.TotalAmount,b.Status,d.SnapshotJson
+      DATE_FORMAT(d.UpdatedAt,'%Y-%m-%d %H:%i:%s') AS UpdatedAt,b.TotalAmount,b.Status,
+      JSON_UNQUOTE(JSON_EXTRACT(d.SnapshotJson,'$.source.SiteName')) AS SiteName
     FROM billing_draft d INNER JOIN billing b ON b.BillingID=d.BillingID INNER JOIN agency a ON a.AgencyID=d.AgencyID INNER JOIN client c ON c.ClientID=d.ClientID
     ORDER BY d.PeriodStart DESC,d.BillingID DESC`)
   const within = (item: any) => !query.periodStart || item.PeriodStart >= query.periodStart && item.PeriodEnd <= query.periodEnd
   return { accounts: accounts.map(({ ConfigJson, Revision, ...account }) => ({ ...account, profile: ConfigJson ? { revision: Number(Revision), config: decode(ConfigJson) } : null })),
-    sources: sources.filter(within), drafts: drafts.filter(within).map(({ SnapshotJson, ...draft }) => { const snapshot = decode(SnapshotJson); return { ...draft, SiteName: snapshot.source.SiteName } }), permissions: { canEdit: canEdit(event, session) } }
+    sources: sources.filter(within), drafts: drafts.filter(within) }
+  })
+  return { ...result, permissions: { canEdit: canEdit(event, session) } }
 }
 
 export async function previewBillingDraft(event: any) {
@@ -219,7 +226,10 @@ export async function saveBillingDraftData(connection: any, input: any, actorId:
   const [[saved]] = billingId ? await connection.execute<any[]>(`SELECT d.*,b.Status FROM billing_draft d INNER JOIN billing b ON b.BillingID=d.BillingID WHERE d.BillingID=? FOR UPDATE`, [billingId]) : [[]]
   if (billingId && !saved) fail(404, 'Billing draft not found.')
   if (!Number.isSafeInteger(input.revision) || input.revision !== Number(saved?.Revision || 0) || saved && saved.Status !== 'Draft') fail(409, 'This draft changed or is no longer editable. Close and reopen it.')
-  const [claimed] = await connection.execute<any[]>(`SELECT BillingID,BatchID FROM billing_draft_source WHERE BatchID IN (${ids.map(() => '?').join(',')}) FOR UPDATE`, ids)
+  // The source DTR parents above already serialize every competing claim for
+  // these BatchIDs. Locking absent source rows also locks neighboring gaps and
+  // deadlocks unrelated invoices being inserted at the same time.
+  const [claimed] = await connection.execute<any[]>(`SELECT BillingID,BatchID FROM billing_draft_source WHERE BatchID IN (${ids.map(() => '?').join(',')})`, ids)
   if (claimed.some(row => Number(row.BillingID) !== billingId)) fail(409, 'A payroll source already belongs to another saved bill.')
   if (saved) {
     const [existing] = await connection.execute<any[]>('SELECT BatchID FROM billing_draft_source WHERE BillingID=? ORDER BY BatchID', [billingId])

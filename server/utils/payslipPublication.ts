@@ -6,7 +6,9 @@ import { readEmployeePayslips } from './payslipCrud'
 // Caller owns the transaction and locks the employee and their payroll rows first.
 // Both employee and site posting use this writer, including the same snapshot and audit trail.
 export async function writePayslipPublication(db:any,employeeId:number,key:string,actorId:number,action:string,profile?:any) {
-  const [[existing]]=await db.execute<any[]>('SELECT PublicationID,SnapshotJson,Status FROM payslip_publication WHERE EmployeeID=? AND GroupKey=? FOR UPDATE',[employeeId,key])
+  // Both callers already hold the owning employee row lock. Avoid locking an
+  // absent publication's index gap across unrelated employees being posted.
+  const [[existing]]=await db.execute<any[]>('SELECT PublicationID,SnapshotJson,Status FROM payslip_publication WHERE EmployeeID=? AND GroupKey=?',[employeeId,key])
   if(action==='withdraw'){
     if(!existing||existing.Status!=='Posted')return false
     await db.execute("UPDATE payslip_publication SET Status='Withdrawn',WithdrawnBy=?,WithdrawnAt=NOW() WHERE PublicationID=?",[actorId,existing.PublicationID])
@@ -21,7 +23,7 @@ export async function writePayslipPublication(db:any,employeeId:number,key:strin
   const [result]=await db.execute<any>(`INSERT INTO payslip_publication(EmployeeID,GroupKey,Status,SnapshotJson,PostedBy) VALUES(?,?,'Posted',?,?)
     ON DUPLICATE KEY UPDATE Status='Posted',SnapshotJson=VALUES(SnapshotJson),PostedBy=VALUES(PostedBy),PostedAt=NOW(),WithdrawnBy=NULL,WithdrawnAt=NULL`,[employeeId,key,snapshot,actorId])
   const publicationId=existing?.PublicationID||result.insertId
-  await db.execute('DELETE FROM payslip_publication_source WHERE PublicationID=?',[publicationId])
+  if(existing)await db.execute('DELETE FROM payslip_publication_source WHERE PublicationID=?',[publicationId])
   for(const id of cutoff.payrollIds)await db.execute('INSERT INTO payslip_publication_source(PublicationID,PayrollID) VALUES(?,?)',[publicationId,id])
   await db.execute("INSERT INTO payslip_publication_event(PublicationID,Action,SnapshotJson,ActorUserID) VALUES(?,'Posted',?,?)",[publicationId,snapshot,actorId])
   return true
@@ -34,6 +36,7 @@ export async function publishPayslip(event:any) {
   if(!Number.isSafeInteger(employeeId)||employeeId<1||typeof body?.key!=='string'||body.key.length>150||!['post','withdraw'].includes(body.action))throw createError({statusCode:400,statusMessage:'Choose an employee, payslip and posting action.'})
   const db=await pool.getConnection()
   try{
+    await db.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
     await db.beginTransaction()
     const [[employee]]=await db.execute<any[]>('SELECT EmployeeID FROM employee WHERE EmployeeID=? FOR UPDATE',[employeeId])
     if(!employee)throw createError({statusCode:404,statusMessage:'Employee not found.'})

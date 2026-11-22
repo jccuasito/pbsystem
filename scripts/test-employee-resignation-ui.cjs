@@ -27,7 +27,7 @@ const bundlePromise=build({stdin:{contents:`import{createApp}from'vue';import Pa
     employees[0].Status='Inactive';employees[0].ResignationDate=opts.body.ResignationDate
     return{success:true}
    }
-   return{items:employees,agencies:[],positions:[],agencyPositions:[]}
+   return{pagination:{page:1,pages:1,total:employees.length},items:employees,agencies:[],positions:[],agencyPositions:[]}
   }
  })
  await page.addScriptTag({content:bundle})

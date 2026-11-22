@@ -7,6 +7,8 @@ import { requireSession } from './auth'
 import { recordEmployeeResignation } from './employeeResignation'
 import { listGovernmentIds, saveGovernmentId } from './governmentIdCrud'
 import { imageData } from './inputValidation'
+import { listPage, listSearch, pagination } from './listPagination'
+import { coalesceRead } from './requestCapacity'
 import { privateProfileDirectory, privateProfilePath } from './privateProfileImages.mjs'
 import { alertMessages, DEPLOYMENT_ALREADY_EXISTS, EMPLOYEE_DUPLICATE, EMPLOYEE_SIMILAR } from '../../components/alertmessage/messages'
 
@@ -634,16 +636,12 @@ function sectionValues(config: SectionConfig, body: Record<string, unknown>, emp
 }
 
 function latestDeploymentJoin() {
-  return `
-    LEFT JOIN (
-      SELECT * FROM (
-        SELECT ed.*, ROW_NUMBER() OVER (PARTITION BY ed.EmployeeID ORDER BY ed.StartDate DESC, ed.DeploymentID DESC) AS rn
-        FROM employee_deployment ed
-        WHERE ed.StartDate <= CURDATE() AND (ed.EndDate IS NULL OR ed.EndDate >= CURDATE())
-      ) ranked
-      WHERE ranked.rn = 1
-    ) ld ON ld.EmployeeID = e.EmployeeID AND e.Status = 'Active'
-  `
+  return `LEFT JOIN employee_deployment ld ON ld.DeploymentID = (
+    SELECT dated.DeploymentID FROM employee_deployment dated
+    WHERE dated.EmployeeID=e.EmployeeID AND dated.StartDate<=CURDATE()
+      AND (dated.EndDate IS NULL OR dated.EndDate>=CURDATE())
+    ORDER BY dated.StartDate DESC,dated.DeploymentID DESC LIMIT 1
+  ) AND e.Status='Active'`
 }
 
 function employeeListSql(filters: string[]) {
@@ -682,7 +680,7 @@ function employeeListSql(filters: string[]) {
     'LEFT JOIN site_shift ss ON ss.SiteShiftID = ld.SiteShiftID',
     'LEFT JOIN shift_code sc ON sc.ShiftCodeID = ss.ShiftCodeID',
     filters.length ? `WHERE ${filters.join(' AND ')}` : '',
-    'ORDER BY e.LastName, e.FirstName, e.EmployeeNumber'
+    'ORDER BY e.LastName, e.FirstName, e.EmployeeNumber, e.EmployeeID'
   ].filter(Boolean).join('\n')
 }
 
@@ -811,6 +809,26 @@ export async function listEmployees(event: any) {
     values.push(positionId)
   }
 
+  const request = listPage(query)
+  if (request) {
+    if (query.status) {
+      if (!['Active','Inactive','Resigned','Terminated','AWOL'].includes(query.status)) throw createError({statusCode:400,statusMessage:'Choose a valid employee status.'})
+      filters.push('e.Status=?'); values.push(query.status)
+    }
+    filters.push(...listSearch(query.search, ["CONCAT('EMP-',LPAD(e.EmployeeID,GREATEST(4,CHAR_LENGTH(e.EmployeeID)),'0'))", 'e.EmployeeNumber',
+      "CONCAT_WS(' ',e.FirstName,e.MiddleName,e.LastName,e.Nickname)", 'a.AgencyName', 'p.PositionName', 's.SiteName'], values))
+    return coalesceRead('employee-page:'+JSON.stringify([query.page,query.pageSize,query.includeLookups,...filters,...values]), async () => {
+      const sql=employeeListSql(filters), base=sql.slice(0,sql.lastIndexOf('\nORDER BY '))
+      const [[count]]=await pool.execute<any[]>(`SELECT COUNT(*) AS Total FROM (${base}) listed`,values)
+      const meta=pagination(Number(count.Total),request)
+      const [[items],lookupData]=await Promise.all([
+        pool.execute<any[]>(sql+' LIMIT ? OFFSET ?',[...values,meta.pageSize,(meta.page-1)*meta.pageSize]),
+        query.includeLookups==='0'?Promise.resolve({}):Promise.all([activeAgencies(),activePositions(),activeAgencyPositions()])
+          .then(([agencies,positions,agencyPositions])=>({agencies,positions,agencyPositions}))
+      ])
+      return{items,...lookupData,pagination:meta}
+    })
+  }
   const [items, lookups] = await Promise.all([pool.execute<any[]>(employeeListSql(filters), values), lookupBundles()])
   return { items: items[0], ...lookups }
 }

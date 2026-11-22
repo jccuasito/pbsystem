@@ -5,7 +5,7 @@ const staffAuth={requireSession:e=>{if(!e.actor)throw h3.createError({statusCode
 
 const staff={actor:{sub:42,userType:'Admin'},context:{moduleCanEdit:true},query:{}}
 test('site endpoints reject anonymous and read-only posting before database work',async()=>{
- const sites=evaluate('server/utils/payslipSiteCrud.ts',{'node:crypto':crypto,h3,'../connection/dbconnect':{},'./auth':staffAuth,'./payslipCrud':{},'./payslipPublication':{}})
+ const sites=evaluate('server/utils/payslipSiteCrud.ts',{'node:crypto':crypto,h3,'../connection/dbconnect':{},'./auth':staffAuth,'./payslipCrud':{finalizedPayslipCte:''},'./payslipPublication':{},'./requestCapacity':{coalesceRead:(_,read)=>read()}})
  await assert.rejects(()=>sites.listSitePayslips({}),e=>e.statusCode===401)
  for(const actor of [{userType:'Viewer'}, {userType:'Encoder'}])await assert.rejects(()=>sites.publishSitePayslips({actor,context:{moduleCanEdit:false}}),e=>e.statusCode===403)
 })

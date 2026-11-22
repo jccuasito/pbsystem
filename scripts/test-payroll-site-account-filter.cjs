@@ -24,47 +24,55 @@ async function buildFixture(){
 
 
 
-test('searchable account filter handles large lists, combined filters, counters and cutoff changes',{skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'},async()=>{
+test('payroll directory batches server results and searches unloaded employees', {skip:process.env.PORTAL_MOBILE_BROWSER_TEST!=='1'}, async()=>{
  const {chromium}=require('playwright'),fixture=await buildFixture()
  const browser=await chromium.launch({executablePath:process.env.PORTAL_BROWSER_PATH||undefined,headless:true})
  fs.mkdirSync(output,{recursive:true})
  try{
-  const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message))
+  const page=await browser.newPage({viewport:{width:1280,height:850}}),errors=[]
+  page.on('pageerror',error=>errors.push(error.message))
   await page.setContent('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0;padding:16px}</style><div id="app"></div>')
   await page.addStyleTag({content:fixture.css})
   await page.evaluate(()=>{
-   window.requests=[]
-   const make=(id,agency,client,account,name,status,gross)=>({BatchID:id,AgencyID:agency,AgencyName:'Agency '+agency,ClientID:client,ClientName:'Client '+client,SiteID:id,SiteName:id<=2?'Shared site':'Site '+id,SiteAccountID:account,SiteAccountName:name,ReviewStatus:status,employees:[],peopleCount:1,gross,deductions:0,netPreview:gross})
-   const sites=[make(1,1,1,10,'DJA OtherPosts','Approved',1000),make(2,2,1,20,'GSSI Residential','Approved',2000),make(3,1,2,10,'DJA OtherPosts','Pending',500),make(4,1,1,null,null,'Pending',100),make(5,1,1,10,'DJA OtherPosts','Cancelled',300),make(6,1,1,10,'DJA OtherPosts','Rejected',400),...Array.from({length:160},(_,index)=>make(100+index,3,3,100+index,'Extra Account '+String(index).padStart(3,'0'),'Pending',1000+index))]
+   window.requests=[];window.IntersectionObserver=class {observe(){}disconnect(){}}
    const cutoffs=[{start:'2026-10-01',end:'2026-10-15'},{start:'2026-09-16',end:'2026-09-30'}]
-   window.$fetch=async(url,options)=>{window.requests.push({url,...options});return{cutoffs,selectedCutoff:options.query?.periodStart==='2026-10-01'?cutoffs[0]:cutoffs[1],sites:options.query?.periodStart==='2026-10-01'?[{...sites[0],SiteAccountID:30,SiteAccountName:'DJA Updated'}]:sites,permissions:{canReview:false}}}
+   const sites=Array.from({length:72},(_,i)=>({BatchID:i+1,AgencyID:i%2+1,AgencyName:'Agency '+(i%2+1),ClientID:i%3+1,ClientName:'Client '+(i%3+1),SiteName:'Site '+(i+1),SiteAccountID:i+1,SiteAccountName:'Account '+String(i+1).padStart(3,'0'),ReviewStatus:i%4===0?'Approved':'Pending',employees:[{EmployeeName:'Worker '+(i+1)}],peopleCount:1,gross:1000+i,deductions:10,netPreview:990+i}))
+   window.$fetch=async(url,options)=>{
+    window.requests.push({url,query:options.query});const q=options.query||{}
+    await new Promise(r=>setTimeout(r,25))
+    const directory=q.periodStart==='2026-10-01'?[{...sites[0],SiteAccountID:99,SiteAccountName:'Updated Account'}]:sites
+    const matching=directory.filter(s=>(!q.search||('site '+s.BatchID+' '+s.employees[0].EmployeeName).toLowerCase().includes(q.search.toLowerCase()))&&(!q.agencyId||String(s.AgencyID)===q.agencyId)&&(!q.clientId||String(s.ClientID)===q.clientId)&&(!q.siteAccountId||String(s.SiteAccountID)===q.siteAccountId))
+    const counts={current:matching.length,Pending:matching.filter(s=>s.ReviewStatus==='Pending').length,Approved:matching.filter(s=>s.ReviewStatus==='Approved').length}
+    const selected=matching.filter(s=>!q.status||q.status==='current'||s.ReviewStatus===q.status),pages=Math.max(1,Math.ceil(selected.length/25)),page=Math.min(q.page,pages)
+    return{items:selected.slice((page-1)*25,page*25),pagination:{page,pages,pageSize:25,total:selected.length},cutoffs,selectedCutoff:cutoffs[q.periodStart==='2026-10-01'?0:1],counts,...(q.includeLookups==='0'?{}:{directory}),permissions:{canReview:false}}
+   }
   })
   await page.addScriptTag({content:fixture.script})
-  await page.getByRole('combobox',{name:'Site Account',exact:true}).waitFor()
+  await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===25)
+  assert.equal(await page.evaluate(()=>window.requests.length),1)
+  await page.getByRole('button',{name:'Load more',exact:true}).click()
+  await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===50)
+  assert.equal(await page.evaluate(()=>window.requests[1].query.page),2)
+  const search=page.getByRole('searchbox')
+  await search.fill('Worker 72')
+  await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===1&&document.querySelector('.processing-table tbody').textContent.includes('Site 72'))
+  assert.equal(await page.evaluate(()=>window.requests.at(-1).query.page),1)
+  await search.fill('')
+  await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===25)
   const account=page.getByRole('combobox',{name:'Site Account',exact:true})
-  await account.click();await page.getByRole('status').filter({hasText:'Showing 100 of'}).waitFor()
-  await account.fill('Extra Account 159');await page.getByRole('option',{name:'Extra Account 159',exact:true}).click()
-  assert.equal(await page.locator('.processing-table tbody tr').count(),1)
-  assert.match(await page.locator('.summary-strip').innerText(),/1,159.00/)
-  await account.click();await account.fill('DJA OtherPosts');await account.press('ArrowDown');await account.press('Enter')
-  assert.equal(await page.locator('.processing-table tbody tr').count(),2)
-  assert.match(await page.locator('.summary-strip').innerText(),/1,500.00/)
-  for(const [name,count] of [['Current',2],['To review',1],['Finalized',1],['Returned',1],['Cancelled',1]])assert.equal(await page.getByRole('button',{name:new RegExp('^'+name+' '+count+'$')}).count(),1,'Counters follow account filter')
-  await page.getByRole('button',{name:'Finalized 1',exact:true}).click();assert.equal(await page.locator('.processing-table tbody tr').count(),1)
-  assert.match(await page.locator('.processing-table tbody').innerText(),/DJA OtherPosts/)
-  await page.getByRole('button',{name:'Current 2',exact:true}).click()
-  for(const width of [1280,375]){await page.setViewportSize({width,height:850});const fits=await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);assert.ok(fits,'Page fits '+width);await page.screenshot({path:path.join(output,'account-filter-'+width+'.png'),fullPage:true})}
+  await account.fill('Account 071');await page.getByRole('option',{name:'Account 071',exact:true}).click()
+  await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===1&&document.querySelector('.processing-table tbody').textContent.includes('Site 71'))
+  assert.equal(await page.getByRole('button',{name:'To review 1',exact:true}).count(),1)
   await page.getByRole('combobox',{name:/^Agency/}).selectOption('1')
-  assert.equal(await account.inputValue(),'All site accounts','Changing agency resets dependent account')
-  await page.getByRole('combobox',{name:/^Client/}).selectOption('1')
-  await account.click();await account.fill('Unassigned');await page.getByRole('option',{name:'Unassigned Site Account',exact:true}).click()
-  assert.equal(await page.locator('.processing-table tbody tr').count(),1);assert.match(await page.locator('.processing-table tbody').innerText(),/Site 4/)
-  assert.equal(await page.evaluate(()=>window.requests.length),1,'Filters operate locally without repeated payroll requests')
-  await account.click();await account.fill('DJA OtherPosts');await page.getByRole('option',{name:'DJA OtherPosts',exact:true}).click()
+  await page.waitForFunction(()=>document.querySelectorAll('.processing-table tbody tr').length===25)
+  assert.equal(await account.inputValue(),'All site accounts')
+  for(const width of [1280,375]){
+   await page.setViewportSize({width,height:850})
+   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Fits '+width)
+   await page.screenshot({path:path.join(output,'server-batches-'+width+'.png'),fullPage:true})
+  }
   await page.getByRole('combobox',{name:/^Cutoff/}).selectOption('2026-10-01:2026-10-15')
-  await page.getByText('Site Account: DJA Updated',{exact:true}).waitFor()
-  assert.equal(await account.inputValue(),'All site accounts','Cutoff removes unavailable account selection')
-  assert.equal(await page.evaluate(()=>window.requests.length),2)
+  await page.getByText('Site Account: Updated Account',{exact:true}).waitFor()
   assert.deepEqual(errors,[])
  }finally{await browser.close()}
 })

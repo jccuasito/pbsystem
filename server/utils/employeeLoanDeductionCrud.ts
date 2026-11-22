@@ -1,6 +1,7 @@
 import { createError, getQuery, readBody } from 'h3'
 import pool from '../connection/dbconnect'
 import { requireSession } from './auth'
+import { coalesceRead } from './requestCapacity'
 import { generatedIssuanceCode } from '../../shared/utils/issuanceCode'
 
 type EntryType = 'Loan' | 'Deduction'
@@ -348,6 +349,7 @@ export async function listEmployeeLoanDeductions(event: any) {
     return { employee, records, catalogItems: lookups }
   }
 
+  return coalesceRead('employee-accounts:' + JSON.stringify(query), async () => {
   const search = String(query.search ?? '').trim()
   const agencyId = query.agencyId ? positiveId(query.agencyId, 'Agency') : null
   const page = Math.max(1, Number.parseInt(String(query.page || '1'), 10) || 1)
@@ -415,6 +417,7 @@ export async function listEmployeeLoanDeductions(event: any) {
     catalogItems: lookups,
     pagination: { page, pageSize, total: Number(countRows[0]?.total || 0), pages: Math.max(1, Math.ceil(Number(countRows[0]?.total || 0) / pageSize)) },
   }
+  })
 }
 
 export async function createEmployeeLoanDeduction(event: any) {

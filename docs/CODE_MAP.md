@@ -715,6 +715,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/requestCapacity.ts`
@@ -824,7 +825,10 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/components/EmployeeAddressFields.vue`
   - `app/components/EmployeePositionChangeModal.vue`
   - `app/components/EmployeeRehireModal.vue`
+  - `app/components/ListProgress.vue`
+  - `app/composables/useInfiniteCollection.ts`
   - `app/composables/useRealtimeRefresh.ts`
+  - `app/composables/useServerList.ts`
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/philippineAddress.ts`
@@ -901,6 +905,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/governmentIdCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/privateProfileImages.mjs`
   - `server/utils/requestCapacity.ts`
   - `shared/utils/governmentIds.ts`
@@ -937,6 +942,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/governmentIdOcr.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/privateProfileImages.mjs`
   - `server/utils/requestCapacity.ts`
   - `shared/utils/governmentIdOcr.ts`
@@ -1416,7 +1422,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related frontend files:
   - `app/components/ListProgress.vue`
   - `app/components/PayrollProcessingDetailModal.vue`
-  - `app/composables/useProgressiveList.ts`
+  - `app/composables/useInfiniteCollection.ts`
+  - `app/composables/useServerList.ts`
   - `app/utils/employee.ts`
   - `components/SearchableSelect.vue`
   - `shared/utils/payrollPreview.ts`
@@ -1439,6 +1446,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/employeeLoanDeductionCrud.ts`
   - `server/utils/inputValidation.ts`
   - `server/utils/jwt.ts`
+  - `server/utils/listPagination.ts`
   - `server/utils/payrollDeductionOverrideCrud.ts`
   - `server/utils/payrollProcessingCrud.ts`
   - `server/utils/rateVersions.ts`

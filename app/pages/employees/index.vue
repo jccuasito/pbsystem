@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useServerList } from '~/composables/useServerList'
+import ListProgress from '~/components/ListProgress.vue'
 import { requestErrorMessage } from '~~/shared/utils/requestError'
 
 import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
@@ -68,16 +70,12 @@ const filters = ref({ agencyId: '', positionId: '', status: '' })
 const search = ref('')
 const ageAsOf = ref(employeeCurrentDate())
 useRealtimeRefresh(() => { ageAsOf.value = employeeCurrentDate() }, { intervalMs: 60_000, immediate: true })
-const visibleEmployeeCount = ref(50)
-const loadMoreSentinel = ref<HTMLElement | null>(null)
 const isCompactView = ref(false)
-const employeeBatchSize = 50
 const suggestedBirthYear = new Date().getFullYear() - 25
 const relationshipOptions = ['Spouse', 'Child', 'Parent', 'Sibling', 'Grandchild', 'Grandparent', 'Legal Guardian', 'Other Relative', 'Partner', 'Other']
 const genderOptions = ['Male', 'Female', 'Non-binary', 'Prefer not to say']
 const civilStatusOptions = ['Single', 'Married', 'Widowed', 'Separated', 'Divorced', 'Annulled']
 const bankOptions = ['BDO', 'BPI', 'Chinabank', 'Metrobank', 'Landbank', 'PNB', 'Security Bank', 'UnionBank', 'RCBC']
-let employeeObserver: IntersectionObserver | null = null
 let compactViewQuery: MediaQueryList | null = null
 const deleteWarning = alertMessages.employeePermanentDelete()
 const unsavedChangesWarning = alertMessages.employeeUnsavedChanges()
@@ -241,30 +239,9 @@ function reset(item: any = null) {
   photoError.value = ''
 }
 
-let employeeLoad: Promise<void> | null = null
-let employeeLoadError = ''
 async function load(silent = false) {
-  if (employeeLoad) return employeeLoad
-  if (silent !== true) error.value = ''
-  loading.value = !items.value.length
-  employeeLoad = (async () => {
-    try {
-      const response: any = await $fetch('/api/employees', { timeout: 15000, retry: 0 })
-      items.value = response.items || []
-      agencies.value = response.agencies || []
-      positions.value = response.positions || []
-      agencyPositions.value = response.agencyPositions || []
-      if (error.value === employeeLoadError) error.value = ''
-      employeeLoadError = ''
-    } catch (cause: any) {
-      employeeLoadError = requestErrorMessage(cause, 'Unable to load employees. Please try again.')
-      error.value = employeeLoadError
-    } finally {
-      loading.value = false
-      employeeLoad = null
-    }
-  })()
-  return employeeLoad
+  if (silent === true) { if (!employeeDirectory.loading.value && !employeeDirectory.loadingMore.value) await employeeDirectory.poll() }
+  else await employeeDirectory.refresh()
 }
 
 async function save(confirmPossibleDuplicate = false) {
@@ -470,22 +447,23 @@ const agencyPositionOptions = computed(() => agencyPositions.value.map((item) =>
   search: `${item.AgencyName} ${item.PositionName}`
 })))
 
-const filteredItems = computed(() => {
-  const query = search.value.trim().toLowerCase()
-  return items.value.filter((item) => (!filters.value.agencyId || String(item.AgencyID) === String(filters.value.agencyId))
-    && (!filters.value.positionId || String(item.PositionID) === String(filters.value.positionId))
-    && (!filters.value.status || item.Status === filters.value.status)
-    && (!query || [formatEmployeeId(item.EmployeeID), item.EmployeeNumber, formatEmployeeName(item), item.AgencyName, item.PositionName, item.SiteName]
-      .some((value) => String(value || '').toLowerCase().includes(query))))
+const employeeDirectory = useServerList<any>({
+  query: () => ({ ...filters.value, search: search.value }),
+  fetchPage: (page, query, signal) => $fetch('/api/employees', { query: { ...query, page, pageSize: 25, includeLookups: page === 1 ? '1' : '0' }, signal, retry: 0, timeout: 15000 }),
+  key: item => Number(item.EmployeeID),
+  paused: () => busy.value || modalOpen.value || transferOpen.value || deleteOpen.value || !!resigning.value || !!positionEmployeeId.value || !!employmentEmployeeId.value,
+  onLoaded: response => {
+    if (response.agencies) agencies.value = response.agencies
+    if (response.positions) positions.value = response.positions
+    if (response.agencyPositions) agencyPositions.value = response.agencyPositions
+  },
 })
-
-const visibleItems = computed(() => filteredItems.value.slice(0, visibleEmployeeCount.value))
-const hasMoreEmployees = computed(() => visibleItems.value.length < filteredItems.value.length)
-
-function loadMoreEmployees() {
-  if (!hasMoreEmployees.value) return
-  visibleEmployeeCount.value = Math.min(visibleEmployeeCount.value + employeeBatchSize, filteredItems.value.length)
-}
+watch(employeeDirectory.items, value => { items.value = value })
+watch(() => [employeeDirectory.loading.value, items.value.length], () => { loading.value = employeeDirectory.loading.value && !items.value.length })
+watch(employeeDirectory.error, value => { error.value = value })
+const filteredItems = items
+const visibleItems = items
+const employeeListProgress = employeeDirectory.progress
 
 function handleCompactViewChange(event: MediaQueryListEvent) {
   isCompactView.value = event.matches
@@ -709,15 +687,6 @@ function sanitizeBankAccountNumber(event: Event) {
   form.value.AccountNumber = sanitized
 }
 
-watch([search, () => filters.value.agencyId, () => filters.value.positionId, () => filters.value.status], () => {
-  visibleEmployeeCount.value = employeeBatchSize
-})
-
-watch(loadMoreSentinel, (next, previous) => {
-  if (previous) employeeObserver?.unobserve(previous)
-  if (next) employeeObserver?.observe(next)
-})
-
 watch(() => filters.value.agencyId, () => {
   filters.value.positionId = ''
 })
@@ -854,25 +823,20 @@ function handleEmployeeAction(action: string, employee: any) {
   }
 }
 
-onMounted(load)
 onMounted(() => {
   document.addEventListener('click', closeRatePicker)
   compactViewQuery = window.matchMedia('(max-width: 980px)')
   isCompactView.value = compactViewQuery.matches
   compactViewQuery.addEventListener('change', handleCompactViewChange)
-  employeeObserver = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) loadMoreEmployees()
-  }, { rootMargin: '500px 0px' })
-  if (loadMoreSentinel.value) employeeObserver.observe(loadMoreSentinel.value)
+
 })
 onBeforeUnmount(() => {
   releaseResignationScroll()
   document.removeEventListener('click', closeRatePicker)
   compactViewQuery?.removeEventListener('change', handleCompactViewChange)
-  employeeObserver?.disconnect()
 })
 onDeactivated(() => { resigning.value = null; releaseResignationScroll() })
-useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !busy.value && !modalOpen.value && !transferOpen.value && !deleteOpen.value && !resigning.value && !positionEmployeeId.value && !employmentEmployeeId.value })
+useRealtimeRefresh(() => load(true), { intervalMs: 30000, shouldRefresh: () => !loading.value && !busy.value && !modalOpen.value && !transferOpen.value && !deleteOpen.value && !resigning.value && !positionEmployeeId.value && !employmentEmployeeId.value })
 </script>
 
 <template>
@@ -995,13 +959,7 @@ useRealtimeRefresh(() => load(true), { shouldRefresh: () => !loading.value && !b
       </article>
     </section>
 
-    <div v-if="!loading && filteredItems.length" class="employee-list-progress" aria-live="polite">
-      <span>Showing <strong>{{ visibleItems.length }}</strong> of <strong>{{ filteredItems.length }}</strong> employees</span>
-      <button v-if="hasMoreEmployees" ref="loadMoreSentinel" type="button" @click="loadMoreEmployees">
-        Load more employees
-      </button>
-      <span v-else>All employees displayed</span>
-    </div>
+    <ListProgress v-bind="employeeListProgress" unit="employees" :paused="employeeDirectory.loading.value || busy || modalOpen || transferOpen || deleteOpen || !!resigning || !!positionEmployeeId || !!employmentEmployeeId" @load-more="employeeDirectory.loadMore" />
 
     <Teleport to="body">
       <div v-if="modalOpen" class="backdrop">

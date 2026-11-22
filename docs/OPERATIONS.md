@@ -4,9 +4,9 @@ Prepared November 14, 2026 for an initial target of 30–50 office users. Actual
 
 ## Controls in the application
 
-- MySQL uses 10 connections per process by default, a finite queue of 200, a 10-second connection handshake timeout and a 5-second acquisition timeout. A connection arriving after acquisition timeout is released, not leaked. Idle connections expire after 60 seconds. Pool/database outages produce a temporary 503 where recognized. There is no automatic retry of a write or transaction, especially after an uncertain commit.
-- A Node process admits at most 128 API requests at once. At most 2 simultaneous DTR/payroll/billing/backup mutations run by default; excess receives 503 and `Retry-After: 3` before auth/body/database work. Capacity is released after the handler finishes or unwinds through Nitro request-error rendering, including errors, not immediately when a browser disconnects. These are per-process safeguards, not a distributed job queue or a WAF.
-- Simultaneous dashboard reads share the same in-flight query result after each caller is authenticated/authorized. Settled responses and failures are not cached, so a later refresh still reads current data. Payroll progress coalesces separately for each cutoff. Staff sessions/permissions are never shared by this mechanism.
+- MySQL uses 10 connections per process by default, a finite queue of 200, a 10-second connection handshake timeout and a 5-second acquisition timeout. A connection arriving after acquisition timeout is released, not leaked. Idle connections expire after 60 seconds. Pool/database outages produce a temporary 503 where recognized. There is no automatic retry after a network error or uncertain commit. Payroll review alone retries at most twice after a confirmed InnoDB deadlock and rollback; each attempt reacquires business locks and rechecks eligibility.
+- A Node process admits at most 128 API requests at once. At most 2 simultaneous DTR/payroll/billing/backup mutations or unpaged payroll previews run by default; excess receives 503 and `Retry-After: 3` before auth/body/database work. Capacity is released after the handler finishes or unwinds through Nitro request-error rendering, including errors, not immediately when a browser disconnects. These are per-process safeguards, not a distributed job queue or a WAF.
+- Simultaneous identical dashboard and selected directory reads share the same in-flight query result after each caller is authenticated/authorized. Settled responses and failures are not cached, so a later refresh still reads current data. Payroll progress coalesces separately for each cutoff. Staff sessions/permissions are never shared by this mechanism.
 - Automatic page refresh defaults to 10 seconds with jitter, skips hidden/offline tabs, avoids overlap, and backs off when its callback rejects. Existing callbacks that catch errors internally cannot signal failure to the composable. Manual buttons remain available.
 - Request diagnostics log slow API method/path/duration without query strings, payloads, cookies or SQL values. Public health responses contain no database identity or exception details. Existing transaction locks, duplicate checks, financial review snapshots and parameterized SQL remain.
 
@@ -91,3 +91,52 @@ Heavy import/compute concurrency and the 1,000-row import cap remain in force. A
 
 
 The November 22 local HTTP run used the production build, 50 concurrent read clients, and two rounds over six directory endpoints (including initial lookup metadata in the first round). All 600 requests returned HTTP 200; p95 was 222 ms and maximum 239 ms. Pool acquisition timeouts/failures and rejected requests remained zero, and active/acquiring connections returned to zero. RSS rose from 67 MB before warm-up to 160 MB after this run; that short sample does not establish long-term memory stability. Startup backup/holiday maintenance was disabled for the temporary test process, and no financial writes, schema migrations or live-server requests were performed. The process was stopped after verification. The browser suite separately uses 60 synthetic rows/groups to exercise append/retry/search beyond the first page, including mobile fallback and stale-request cancellation.
+
+
+## Synthetic scale verification (November 22, 2026)
+
+The previously interrupted run has now completed its final verification. Source changes remain uncommitted and local; no live server deployment or original payroll-data write was performed. The fresh verification database is `pbsystem_scale_20261121184027_94eb`. Raw per-phase JSON, the synthetic workbook, and [machine-readable summary](../.data/scale-tests/pbsystem_scale_20261121184027_94eb/summary.json) remain under `.data/scale-tests/` (ignored local evidence, not deployed files). Older failed diagnostic runs are retained separately and are not counted as successful final results.
+
+### Fixture and isolation
+
+The fixture clones schema only, including foreign keys, views and the existing trigger, then seeds synthetic records: 6,000 employees, 10 agencies, 500 sites, 150 clients, 1,500 site rates, and 180,000 normalized attendance rows across 1,000 site DTRs / two September cutoffs. It includes 2,000 loans (200 paused), 1,500 installment deductions, 1,200 recurring plans, agency-position contributions, effective-dated rates, flat allowances, OT, night differential, rest days, absence/leave, late and undertime. Boundary tests subsequently add 29 attendance rows and separate test DTRs.
+
+Each phase starts a separate production-build Node process on `127.0.0.1:3196`, with a random short-lived app account granted DML only on the generated database, and verifies access to the original schema is denied. A schema marker and exact generated database-name check prevent accidentally selecting the ordinary database. Startup backups/holiday seeding and SMTP are disabled only in that child. Test private storage is isolated. The app process stops and its temporary database account is removed after each phase; final checks found no leftover temporary account or port-3196 listener. Synthetic databases are retained for inspection. `.env` is not changed by the harness.
+
+### Results
+
+| Check | Final local result |
+| --- | --- |
+| Payroll compute/finalize | All 1,000 site DTRs processed; 12,000 Approved employee-cutoff payrolls match independent integer-cent calculations. All 3,500 declining loan/installment balances checked for both cutoffs. |
+| Duplicate and cancellation safety | Cancellation restores balances; recompute/refinalize succeeds; concurrent same-DTR finalization cannot double-charge. All Approved payrolls reconcile to detail/deduction lines; exactly 6,600 Posted account receipts. |
+| Billing | All 500 sites included in 250 finalized agency/client invoices; totals checked independently, including concurrent new client-profile creation. |
+| Payslips | 12,000 posted cutoff payslips; own-employee access, partial posting, stale review token and exact source-set checks pass, including an extra legacy source. |
+| Paging correctness | First/last payroll pages equal full calculation; Employee List searches unloaded employee IDs; agency/position filters and per-caller permissions pass. An employee moved between two sites receives one allowance and one set of installments/contributions across page boundaries. |
+| Biometric import | A generated seven-row XLSX roundtrip exercises late, undertime, missing punch, no punches, missing shift and unmatched employee. Oversized 1,001-row request returns 400; incomplete payroll compute returns 409. |
+| Annual preview | All 6,000 basic-earnings and configured 13th-month previews match independent cent calculations; no annual payment released. |
+| Ramp reads | 1,820 workload requests across 10 routes at 1/5/10/25/50 concurrent clients, all HTTP 200; 1,828 including auth/health probes. At 50 clients: p95 537.9 ms, max 650.2 ms; end-of-ramp app RSS 309 MB. |
+| Mixed reads/writes | 20 readers plus 2 billing writers; 360 directory reads and 40 billing reopen/finalize writes, all successful. All invoices remain Finalized and loan balances are unchanged. |
+| Capacity protection | Two intentionally blocked financial operations occupy the heavy slots; a third gets expected 503 while a directory read succeeds. After releasing the locks, duplicate guards return 409 and heavy capacity recovers to zero. |
+| Sustained read run | 60 seconds / 10 read clients: 2,038 requests including probes, all HTTP 200; p95 515.2 ms, max 771.8 ms. Final app RSS 142 MB / heap 55 MB. |
+| Build and regression | Production build succeeds. 74 regression tests pass, 6 optional database tests skipped, 0 failed. Three actual Chromium suites pass (employee rehire/resignation and paged Payroll Processing, including mobile checks). |
+
+The final 10 phases contain 8,342 HTTP requests in total, including deliberate 400/401/403/409/503 rejection tests. Every phase finishes without database acquisition timeouts/failures or outstanding pool leases. Health samples count their own request as active; that is not a leak.
+
+### Changes supported by these measurements
+
+Employee List and Payroll Processing now request server batches instead of full financial/employee arrays. Search/filters cover unloaded data. Payroll calculation limits metadata to the selected cutoff and relevant shared-employee sites; finalization no longer recalculates 500 unrelated sites for each site. Pending identical financial-directory reads share work, while permission flags remain per caller and settled data is never cached. Payslip directory queries select page groups before exact-source checks, avoiding the reproduced large repeated grouping query. Billing directory reads extract only a source label rather than all invoice snapshots. Confirmed absent-child gap-lock contention in billing/payslip creation was removed using existing parent ownership locks; financial writes retain transactions, revision/source-hash checks, and duplicate guards. Billing line string keys are accepted only in the exact draft route's direct lines array. No scale-test schema migration or index change was required.
+
+### Reproduce and interpret
+
+```powershell
+npm run build
+node --env-file=.env scripts/test-system-scale.mjs setup
+# Use the exact generated database printed by setup; keep this order.
+node --env-file=.env scripts/test-system-scale.mjs payroll --database=pbsystem_scale_TIMESTAMP_SUFFIX
+node --env-file=.env scripts/test-system-scale.mjs workflows --database=pbsystem_scale_TIMESTAMP_SUFFIX
+# Then run directory, scope, imports, annual, capacity, mixed, load, soak individually.
+```
+
+Run phases sequentially because each owns port 3196. Do not rebuild while its child is running: native Windows modules in `.output` may be locked. `scope` creates unique future transfer fixtures and should run once on a fresh fixture. Reports record checks, durations, statuses and health counters; unexpected failures exit nonzero. Expected rejection checks are assertions, not blind retries of financial writes. Setup needs local database privileges to create a separate schema and temporary limited users; the app itself cannot create users or access the original schema.
+
+Environment: Windows, Node 24.13.0, MariaDB 10.4.32, Intel i7-13620H / 16 logical cores / 16 GiB RAM. These measurements establish behavior for this local production build and synthetic dataset, not Namecheap Linux/shared-host capacity or a guarantee against downtime. The 6,000 employees are stored records, not 6,000 concurrent employee logins. Bulk attendance was seeded as normalized data; only the small workbook tested Excel parsing/import workflow. Billing remains a full lightweight directory, and status-filtered payslip queries still validate all matching source sets. Unpaged/export and annual-preview paths still need appropriate capacity planning as historical years grow. The one-minute run is not a multi-hour endurance test. Hosting quotas, sustained mixed financial load, multi-year growth, restore/failover, host/power/network loss, and external email/payment delivery remain separate staging/operations checks. No real salary or bank payment occurred.

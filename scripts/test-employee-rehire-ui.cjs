@@ -39,7 +39,7 @@ fs.mkdirSync(output,{recursive:true})
      Object.assign(e,{Status:'Active',LastRehireDate:body.RehireDate,ResignationDate:null,AgencyPositionID:target.AgencyPositionID,AgencyID:target.AgencyID})
      return{success:true}
     }
-    return{items:employees.map(e=>({...e})),agencies:[{AgencyID:1,AgencyName:'Original agency'},{AgencyID:2,AgencyName:'Return agency'}],positions:[],agencyPositions:[]}
+    const matched=employees.filter(e=>!options?.query?.status||e.Status===options.query.status);return{pagination:{page:1,pages:1,total:matched.length},items:matched.map(e=>({...e})),agencies:[{AgencyID:1,AgencyName:'Original agency'},{AgencyID:2,AgencyName:'Return agency'}],positions:[],agencyPositions:[]}
    }
   })
   await page.addScriptTag({content:bundle.outputFiles[0].text})

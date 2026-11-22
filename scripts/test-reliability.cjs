@@ -71,6 +71,20 @@ test('custom error-rendered requests free capacity; recoverable captured errors 
   assert.equal(capacity.requestCapacity().active, 0)
 })
 
+test('unpaged payroll reports share heavy capacity while paged directory reads remain available', () => {
+  const event = query => ({ method: 'GET', path: '/api/payroll/processing' + query, context: {}, node: { req: { method: 'GET', url: '/api/payroll/processing' + query, headers: { host: 'localhost' } }, res: { setHeader() {} } } })
+  const admitted = []
+  try {
+    for (let n = 0; n < capacity.requestCapacity().limits.heavy; n++) {
+      const read = event(''); capacity.admitApiRequest(read, '/api/payroll/processing'); admitted.push(read)
+    }
+    assert.throws(() => capacity.admitApiRequest(event(''), '/api/payroll/processing'), error => error.statusCode === 503)
+    const page = event('?page=1'); capacity.admitApiRequest(page, '/api/payroll/processing'); admitted.push(page)
+    assert.equal(capacity.requestCapacity().heavy, capacity.requestCapacity().limits.heavy)
+  } finally { for (const read of admitted) capacity.completeApiRequest(read) }
+  assert.equal(capacity.requestCapacity().active, 0)
+})
+
 test('dashboard stats authorize each caller while 50 callers share four SQL statements', async () => {
   let checks = 0, queries = 0
   const handler = load('server/api/dashboard/stats.get.ts', {
