@@ -7,6 +7,7 @@ import WorkspaceLoading from '../../../components/WorkspaceLoading.vue'
 import PayrollRunProgress from '../../components/PayrollRunProgress.vue'
 import DjaAssistant from '../../components/DjaAssistant.vue'
 import NotificationBell from '../../components/NotificationBell.vue'
+import ActivityHistoryButton from '../../components/ActivityHistoryButton.vue'
 import type { NotificationTarget } from '~~/shared/utils/notifications'
 
 // Load only the workspace being opened; keep the shell and navigation responsive.
@@ -581,6 +582,7 @@ onBeforeUnmount(() => {
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7Z"/></svg>
             </button>
             <NotificationBell v-if="moduleAccess && currentUser && !isUsingCachedData" :key="currentUser.id" @navigate="openNotification" />
+            <ActivityHistoryButton v-if="moduleAccess && currentUser && !isUsingCachedData" :key="'history-'+currentUser.id" :view="activeWorkspaceView || 'dashboard'" :access="moduleAccess" />
             <NuxtLink to="/userprofile/viewprofile" class="dash-user-chip">
               <span class="dash-avatar">
                 <img v-if="currentUser?.image" :src="currentUser.image" alt="" />

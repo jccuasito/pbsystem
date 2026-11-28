@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { createError, getRequestHeader, getRequestURL, setHeader } from 'h3'
 import { validateRequestObject } from './inputValidation'
+import { activityInput } from './activityHistoryPolicy'
 
 const mutations = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const attempts = new Map<string, { count: number; expires: number }>()
@@ -101,4 +102,5 @@ export async function secureApiRequest(event: any, path: string) {
     validateRequestObject(body, { dtrImportRows, assistantGuideId, billingLineIds })
   }
   limitAuthentication(event, path, body)
+  if (event.context.securityActor) event.context.activityInput = activityInput(body)
 }

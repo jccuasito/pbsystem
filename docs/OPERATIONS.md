@@ -238,3 +238,77 @@ Validation evidence: `.data/scale-tests/pbsystem_scale_20261122151359_0833/queue
 - Browser tests verified one queue POST, no synchronous fallback when enabled, readable pending details, completion notification, and 375/1280-pixel layouts; existing directory scrolling/search checks also passed.
 
 The synthetic fixture and audit/job history are retained for review; owned test apps/accounts were removed. The ordinary local jobs endpoint and Admin health check returned HTTP 200 with the queue enabled and no original-business payroll job submitted. These are focused feature tests, not a new million-record or distributed million-client certification.
+
+## Local user activity history — 2026-11-28
+
+The shared staff dashboard header now has an Activity history clock icon. It defaults to the current workspace, with Page and Action filters, collapsed details, PHT timestamps, Newer/Older paging and an explicit Done/close action. Admins see team activity; Supervisors see team activity only on an accessible business page. Other staff see their own activity. Settings team history is Admin-only. This is operational action history, not editable notes; users cannot erase it through the application.
+
+The local migration creates `user_activity_event` after a verified backup, without changing business records or creating another database:
+
+```powershell
+node --env-file=.env scripts/apply-user-activity-history.mjs --apply
+```
+
+The migration was applied to ordinary local `pbsystem`. Authenticated read-only checks of localhost:3000 history and health returned 200; no original-business test action was submitted. Live/Namecheap was not changed. The history begins with future actions after activation; old edits/deletions cannot be reconstructed. API_MAP documents coverage, permissions, bounded caching and the supplemental log's crash/failure window. Existing financial transaction audits are retained. Deployments/restores must apply the additive table before enabling the queue worker: actual queued completion history is deliberately part of the financial transaction.
+
+Validation uses the existing guarded synthetic fixture `pbsystem_scale_20261122151359_0833`, not another generated schema. The randomly generated DML-only test account was explicitly denied access to the ordinary database. The API test verified actual create/update/delete capture, actor snapshots, guest denial, own/team visibility, 100 simultaneous mutations with recorded headers, 25-row keyset pages without duplicates, and permission revocation after warming an older-page cache. A synthetic audit-storage trigger failure verified a successful business operation still returned success plus an unavailable-history header and diagnostic counter, without replay. After removing that trigger, an unused synthetic DTR finalized through the real worker and produced exactly one transaction-bound Completed event. Temporary test users, new organization rows and the owned test app were removed; synthetic activity and financial evidence were retained.
+
+Evidence: `.data/scale-tests/pbsystem_scale_20261122151359_0833/activity-history-result.json`, `.data/activity-integration.log`, `.data/activity-unit.log`, `.data/activity-regression.log`, `.data/activity-browser.log`, and `.data/activity-history-ui/`. Unit tests cover all existing mutation route scope mappings, secret/attachment exclusion, status filtering, bound BIGINT cursors, per-user cache isolation/permission checks, read coalescing, batching/failure diagnostics and transaction connection reuse. Browser QA covers on-demand loading, 25-row paging, details, permission-denial cleanup, focus trap/restoration, Escape, body scroll locking, and 375/1280 light/dark layouts.
+
+Reproduce focused checks:
+
+```powershell
+node --test scripts/test-activity-history.cjs scripts/test-security.cjs scripts/test-employee-portal.cjs scripts/test-lookup-cache.cjs scripts/test-reliability.cjs
+node --env-file=.env scripts/test-activity-history-integration.mjs --database=pbsystem_scale_20261122151359_0833
+# Optional existing Playwright installation; does not change package dependencies.
+$env:NODE_PATH=(Resolve-Path '.data/assistant-browser-tools/node_modules').Path
+$env:PORTAL_BROWSER_PATH='C:/Program Files/Google/Chrome/Application/chrome.exe'
+$env:ACTIVITY_BROWSER_TEST='1'
+node --test scripts/test-activity-history-browser.cjs
+```
+
+The integration rerun uses the next unused synthetic Draft DTR; it must not be pointed at the ordinary application database. These are focused activity/queue tests, not a new million-user capacity claim. Logging is compact and paged but still consumes storage; retention/archiving should be planned according to office requirements before production. There is no automatic deletion of audit evidence.
+
+### Follow-up: localhost recorder startup and agency address — 2026-11-28
+
+A user agency-address edit exposed a gap in the initial verification: the already-running dev instance had refreshed the history API/UI without registering the newly added Nitro recorder plugin. The isolated production test app did load it on a fresh start. This was not history caching or a missing database table. Explicit plugin registration in nuxt.config now triggers a configuration reload and makes startup registration visible in the Admin health response. The history endpoint rejects an inactive recorder with 503 instead of reporting an empty successful history. The local dev server was restarted on port 3000 and is running with recorderRegistered=true.
+
+Actual localhost verification used one explicitly named temporary agency, edited its address through the real dashboard form in a headless browser, and opened the real Activity history modal. The PUT returned recorded and its Update row included AgencyAddress; the address value did not appear in the audit payload. Creation and removal also recorded successfully. Only that temporary agency was removed afterward; the four existing agencies were preserved. Synthetic verification activity remains in history. No historical user action was fabricated or backfilled. The edit made before the recorder started cannot be recovered from this activity table.
+
+Evidence: `.data/activity-local-browser-check.log` and `.data/activity-local-history-verified.png`. Tests now check missing-recorder diagnostics/503 behavior, plugin startup registration, one event per address save, and the integration fixture's recorderRegistered flag/address metadata. No live server or commits were involved.
+
+### Named records and page coverage - 2026-11-28
+
+History now stores up to three saved record-name snapshots per operation, including the previous name after a rename. The collapsed timeline shows the affected agency, employee, site, DTR cutoff, rate or account name; details retain its kind and ID. A permanent deletion keeps the pre-delete name. Older events without captured names are explicitly labelled and are not backfilled with today's names.
+
+Agency updates compare the locked saved row with normalized incoming values and report only the field names actually changed (for example, Address). An identical save reports no tracked changes. Other modules say Submitted fields rather than claiming a before/after comparison. Address/contact values, passwords, files and financial snapshots are not copied into history. Ordinary organization deactivation is Update / Deactivated, while permanent removal remains Delete. The name resolver runs after module authorization and uses only fixed indexed queries with bound IDs, at most three before and three after a write. Existing 25-row keyset paging, bounded server caching and per-request permission checks remain in place.
+
+The real API coverage run completed **45 successful mutations across 28 distinct page scopes** in the existing guarded synthetic schema. It verified both the inserted event and the real page-filtered history response, including agency address-only changes, rename/no-op/deactivation, permanent shift deletion, clients/sites/accounts/regions/positions, all three rate families, employees/documents/status/deployment/portal accounts, DTR and holidays, deduction/loan catalog and accounts, contribution plans, refundable cutoff overrides, adjustments, payroll finalization, site payslip posting, individual withdrawal, 13th-month previous earnings, billing setup and department creation/removal. A forbidden Viewer write created no successful event. This validates representative real workflows across pages; it does not certify every button or reconstruct historical edits.
+
+Evidence: `.data/scale-tests/pbsystem_scale_20261122151359_0833/activity-pages-result.json` and `.data/activity-pages.log`. Rerun with `node --env-file=.env scripts/test-activity-pages.mjs --database=pbsystem_scale_20261122151359_0833`; it uses a DML-only app account denied access to the ordinary schema and retains synthetic financial/activity evidence. It does not create another database.
+
+The focused integration rerun also passed 100 simultaneous real mutations, per-role visibility, duplicate-free cursor pages, warm-cache permission revocation, simulated log-storage failure without business-action replay, and exactly one transaction-bound event from actual queued payroll completion. Related regression checks passed 50 tests with two optional database tests skipped; the dedicated real-database suites above ran separately. Browser QA passed mobile/desktop, both themes, named subjects, friendly agency change labels, paging, focus handling and permission-denial cleanup. Actual localhost form verification recorded the saved agency name and only the changed Address field; the temporary test agency was removed and the original four agencies preserved. No live change or commit was made.
+
+### Plain-language activity presentation - 2026-11-28
+
+The history timeline now reads as a sentence: actor + action + named record (for example, Sample Staff changed the address for agency Sample Agency). The main entry shows only this sentence, its page and time; action badges, role, raw endpoint-like operations and IDs no longer crowd the timeline. Actual agency changed fields drive the wording; merely submitted fields never become a claimed change. Unchanged saves and accepted-but-not-completed requests have explicit notes. Deactivation, permanent removal, payroll calculation/finalization and payslip publication/withdrawal have distinct wording. Older entries without a name use a generic record description without inventing a historical name.
+
+View details contains changed/submitted fields, related records and the exact timestamp. Technical references are collapsed again inside it, keeping original stored operations, IDs and counts available for investigation. The action filter uses familiar labels such as Added/Edited while sending the same canonical API values. This is a frontend presentation change; stored evidence, authorization, paging, cache and server APIs are unchanged. No migration or extra requests are introduced. Focused unit/browser checks cover truthful wording, collapsed references, filter values, keyboard interaction and mobile/desktop in both themes.
+
+### Seven-day history archive and bounded scroll reads - 2026-11-28
+
+Recent is a rolling last-seven-days view; Archive automatically shows older events in the same append-only storage. Refresh/reopen advances a UTC-minute boundary; continuation retains the initial boundary to prevent records crossing views mid-scroll. There is no Monday reset, destructive cleanup, weekly bulk copy or archive worker. This does not shrink the database or guarantee uptime. Disk capacity/backups and an office-approved long-term retention plan still need operational monitoring.
+
+The index migration was applied to ordinary local pbsystem after a verified backup using `node --env-file=.env scripts/apply-user-activity-history.mjs --apply`. It preserves all history while replacing ID-only read indexes with time/cursor indexes. Apply it before deploying the new reader; runtime APIs never alter schema. Live hosting remains unchanged.
+
+Scroll requests return at most 25 entries with an exact microsecond timestamp/BIGINT seek cursor, without OFFSET or COUNT. The modal allows only one request in flight and no background poll. It appends near the bottom, supports a Load more button, and retains at most 250 entries in a rolling browser window with preserved scroll position and Back to latest. Filters/archive switches abort/reset old reads. Network failures retain displayed entries for retry; permission failures clear them. Existing bounded server caching/coalescing applies to both periods with fresh authorization.
+
+Validation evidence: `.data/scale-tests/pbsystem_scale_20261122151359_0833/activity-archive-result.json`, `.data/activity-archive-integration.log`, `.data/activity-archive-existing-integration.log`, `.data/activity-archive-unit.log`, `.data/activity-archive-browser.log`, `.data/activity-archive-regression.log`. The guarded existing synthetic database test read 101 recent rows across five pages and 1,001 archived rows across 41 pages, including the exact seven-day boundary and equal timestamps. Every expected row appeared once in the correct period. Forty concurrent archive continuation reads succeeded; action filtering and permission revocation after a warm cache passed; all seeded evidence remained stored. EXPLAIN verified an indexed range scan without filesort for own scoped archive. The schema upgrade's second call made no changes. No extra database was created.
+
+The existing integration suite also passed 100 concurrent real writes, own/team permissions, log-failure handling and one transaction-bound queued payroll completion. Related regressions passed 52 tests with two optional DB suites skipped; dedicated database tests above ran separately. Browser checks cover actual scrolling/single-flight calls, a stable anchor, the 250-entry bound, archive switching, retry after a failed continuation, keyboard interaction, permission cleanup and mobile/desktop in both themes. These are focused history checks, not a hosting-capacity certification.
+
+Reproduce: `node --env-file=.env scripts/test-activity-archive.mjs --database=pbsystem_scale_20261122151359_0833`. The DML-only app account is denied access to the ordinary schema and cleaned up after the test; synthetic history remains as evidence. No commit or live deployment was made.
+
+Read-only localhost verification passed both Recent and Archive UI/API paths with recorderRegistered=true and unchanged history row count. Evidence: `.data/activity-archive-local.log` and `.data/activity-archive-local.png`. Production build passed; code map regenerated.
+
+UI refinement: Recent/Archive tabs were replaced by one compact header archive icon. Recent remains the default; archive mode changes the title to Activity archive and uses the same position for an accessible Back to recent arrow. Both icon controls have descriptive accessible names/tooltips, and mobile/light/dark browser checks passed. Data, filters, permissions and scroll loading are unchanged.

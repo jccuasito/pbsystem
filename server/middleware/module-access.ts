@@ -1,6 +1,7 @@
 import { createError, getMethod, getRequestURL } from 'h3'
 import { accessForUser, currentActor, moduleForPath } from '../utils/settingsAccess'
 import { isDatabaseRestoring } from '../utils/databaseBackup.mjs'
+import { prepareActivitySubjects } from '../utils/activitySubject'
 
 export default defineEventHandler(async (event) => {
   const path = getRequestURL(event).pathname
@@ -9,10 +10,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 503, statusMessage: 'Database restore is in progress. Try again shortly.' })
   }
   const module = moduleForPath(path)
-  if (!module) return
+  if (!module) { await prepareActivitySubjects(event); return }
   const actor = await currentActor(event)
   event.context.activeUserType = actor.UserType
-  if (actor.UserType === 'Admin') { event.context.moduleCanEdit = true; return }
+  if (actor.UserType === 'Admin') { event.context.moduleCanEdit = true; await prepareActivitySubjects(event); return }
   const access = await accessForUser(actor.UserID, actor.UserType)
   const permission = access[module]
   event.context.moduleCanEdit = permission?.canEdit === true
@@ -20,4 +21,5 @@ export default defineEventHandler(async (event) => {
   if (!permission?.canView || (method !== 'GET' && method !== 'HEAD' && !permission.canEdit)) {
     throw createError({ statusCode: 403, statusMessage: `You do not have ${method === 'GET' ? 'view' : 'edit'} access to ${module}.` })
   }
+  await prepareActivitySubjects(event)
 })

@@ -276,6 +276,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Page: `app/pages/dashboard/index.vue`
 - Global styles: `assets/css/base.css`, `assets/css/theme.css`, `assets/css/components.css`, `assets/css/auth.css`, `assets/css/dashboard.css`, `assets/css/payroll-processing.css`, `assets/css/interactions.css`
 - Related frontend files:
+  - `app/components/ActivityHistoryButton.vue`
   - `app/components/ArchivedPayslipsPanel.vue`
   - `app/components/BillingDraftModal.vue`
   - `app/components/BillingWorkspace.vue`
@@ -339,6 +340,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `app/pages/rates/payroll/index.vue`
   - `app/pages/rates/site/index.vue`
   - `app/pages/settings/index.vue`
+  - `app/utils/activityPresentation.ts`
   - `app/utils/bodyScrollLock.ts`
   - `app/utils/employee.ts`
   - `app/utils/philippineAddress.ts`
@@ -360,6 +362,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `components/SearchableSelect.vue`
   - `components/SiteRateCrud.vue`
   - `components/WorkspaceLoading.vue`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/attendanceFieldControls.ts`
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/billingDraft.ts`
@@ -387,6 +390,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `shared/utils/requestError.ts`
   - `shared/utils/thirteenthMonth.ts`
 - API calls and handlers:
+  - `GET /api/activity-history` → `server/api/activity-history.get.ts`
   - `POST /api/assistant/query` → `server/api/assistant/query.post.ts`
   - `GET /api/attendance/dtr` → `server/api/attendance/dtr/index.get.ts`
   - `POST /api/attendance/dtr` → `server/api/attendance/dtr/index.post.ts`
@@ -536,6 +540,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/assets/addresses/philippines.json`
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
+  - `server/utils/activityHistory.ts`
+  - `server/utils/activityHistoryPolicy.ts`
   - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
   - `server/utils/billingDraftCrud.ts`
@@ -597,6 +603,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/siteAccountSummary.ts`
   - `server/utils/staffAccountDeletion.ts`
   - `server/utils/thirteenthMonthCrud.ts`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/attendanceFieldControls.ts`
   - `shared/utils/attendanceStatuses.ts`
   - `shared/utils/billingDraft.ts`
@@ -715,6 +722,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
+  - `server/utils/activityHistory.ts`
+  - `server/utils/activityHistoryPolicy.ts`
   - `server/utils/agencyContributionCrud.ts`
   - `server/utils/auth.ts`
   - `server/utils/cashBondCrud.ts`
@@ -732,6 +741,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/payrollSnapshotBudget.ts`
   - `server/utils/rateVersions.ts`
   - `server/utils/requestCapacity.ts`
+  - `server/utils/settingsAccess.ts`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`
@@ -808,6 +819,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
+  - `server/utils/activityHistoryPolicy.ts`
   - `server/utils/auth.ts`
   - `server/utils/djaAssistant.ts`
   - `server/utils/employeeInformationCrud.ts`
@@ -820,6 +832,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/requestCapacity.ts`
   - `server/utils/requestSecurity.ts`
   - `server/utils/settingsAccess.ts`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/djaAssistant.ts`
   - `shared/utils/djaAssistantGuides.ts`
   - `shared/utils/employeeInformation.ts`
@@ -999,6 +1012,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
+  - `server/utils/activityHistoryPolicy.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeInformationCrud.ts`
   - `server/utils/employeePortalAdmin.ts`
@@ -1011,6 +1025,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/portalAccountsCrud.ts`
   - `server/utils/requestCapacity.ts`
   - `server/utils/requestSecurity.ts`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
@@ -1363,6 +1378,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
+  - `server/utils/activityHistoryPolicy.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeInformationCrud.ts`
   - `server/utils/employeePortalAdmin.ts`
@@ -1375,6 +1391,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/portalAccountsCrud.ts`
   - `server/utils/requestCapacity.ts`
   - `server/utils/requestSecurity.ts`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
@@ -1416,6 +1433,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
+  - `server/utils/activityHistoryPolicy.ts`
   - `server/utils/auth.ts`
   - `server/utils/employeeInformationCrud.ts`
   - `server/utils/employeePortalAdmin.ts`
@@ -1430,6 +1448,7 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/portalAccountsCrud.ts`
   - `server/utils/requestCapacity.ts`
   - `server/utils/requestSecurity.ts`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/employeeInformation.ts`
   - `shared/utils/employeePortal.ts`
   - `shared/utils/governmentIds.ts`
@@ -1463,6 +1482,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
 - Related backend utilities:
   - `server/connection/dbconnect.ts`
   - `server/connection/managedPool.ts`
+  - `server/utils/activityHistory.ts`
+  - `server/utils/activityHistoryPolicy.ts`
   - `server/utils/auth.ts`
   - `server/utils/cashBondCrud.ts`
   - `server/utils/cashBondLedger.ts`
@@ -1481,6 +1502,8 @@ This map shows which source files belong to each Nuxt page route. `docs/API_MAP.
   - `server/utils/rateVersions.ts`
   - `server/utils/recurringDeductionCrud.ts`
   - `server/utils/requestCapacity.ts`
+  - `server/utils/settingsAccess.ts`
+  - `shared/utils/activityHistory.ts`
   - `shared/utils/issuanceCode.ts`
   - `shared/utils/payrollPreview.ts`
   - `shared/utils/rateFields.ts`

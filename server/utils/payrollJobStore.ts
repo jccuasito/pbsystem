@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto'
 import {createError,getRouterParam,readBody,setResponseStatus} from 'h3'
 import pool from '../connection/dbconnect'
 import {requireSession} from './auth'
+import {recordQueuedPayrollActivity} from './activityHistory'
 
 export type PayrollJobLease={id:string;token:string}
 const uuid=(value:unknown)=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value)
@@ -70,4 +71,5 @@ export async function lockPayrollJob(db:any,lease:PayrollJobLease,actorId:number
 export async function completePayrollJob(db:any,lease:PayrollJobLease,result:unknown){
   const [changed]=await db.execute("UPDATE payroll_job SET Status='Succeeded',ResultJson=?,Message='Payroll finalized.',RunToken=NULL,FinishedAt=NOW(6) WHERE JobID=? AND Status='Running' AND RunToken=?",[JSON.stringify(result),lease.id,lease.token])
   if(changed.affectedRows!==1)throw createError({statusCode:409,statusMessage:'Payroll job ownership changed.'})
+  await recordQueuedPayrollActivity(db,lease.id)
 }

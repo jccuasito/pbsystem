@@ -54,7 +54,7 @@ async function waitForJobs(){
 }
 try{
   const [[used]]=await db.execute('SELECT COUNT(*) AS n FROM payroll');assert.equal(Number(used.n),0,'Fresh financial fixture required')
-  const ddl=await fs.readFile('database/runtime-queue-cache.sql','utf8')
+  const ddl=await fs.readFile('database/runtime-queue-cache.sql','utf8')+';'+await fs.readFile('database/user-activity-history.sql','utf8')
   for(const sql of ddl.split(';').map(s=>s.trim()).filter(Boolean))await db.query(sql)
   await insert(db,'user',[{UserID:3,FirstName:'SCALE',LastName:'Supervisor',Gender:'Prefer not to say',Email:'supervisor@scale.example.invalid',EmailVerified:1,DepartmentID:1,UserType:'Supervisor'}])
   await db.query('CREATE USER ?@? IDENTIFIED BY ?',[user,'localhost',password]);created=true

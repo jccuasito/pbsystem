@@ -4,6 +4,7 @@ import { requireSession } from './auth'
 import { imageData } from './inputValidation'
 import { listPage, listSearch, listId, selectListPage } from './listPagination'
 import { cachedLookup } from './lookupCache'
+import { createHash } from 'node:crypto'
 
 type Resource = 'agency' | 'position' | 'agency-position' | 'client' | 'client-policy' | 'site' | 'site-account' | 'site-policy' | 'site-shift' | 'shift-code' | 'region'
 
@@ -316,6 +317,24 @@ export async function updateOrganizationResource(event: any) {
     assignments.push('LogoData = ?', 'LogoMimeType = ?')
     updateValues.push(logo.data, logo.mimeType)
   }
+  if (resourceName === 'agency') {
+    const connection=await pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      const [[previous]]=await connection.execute<any[]>(`SELECT AgencyName,AgencyAddress,AgencyEmail,AgencyContact,Status${logo!==undefined?',SHA2(LogoData,256) AS LogoHash':''} FROM agency WHERE AgencyID=? FOR UPDATE`,[id])
+      if(!previous)throw createError({statusCode:404,statusMessage:'Agency not found.'})
+      const changedFields=config.fields.filter((field,index)=>String(previous[field]??'')!==String(values[index]??''))
+      if(logo!==undefined&&(previous.LogoHash||null)!==(logo?createHash('sha256').update(logo.data).digest('hex'):null))changedFields.push('LogoData')
+      await connection.execute(`UPDATE agency SET ${assignments.join(', ')} WHERE AgencyID=?`,[...updateValues,id])
+      await connection.commit()
+      event.context.activityAction='Update'
+      event.context.activityChangedFields=changedFields
+      event.context.activitySubjects=[{kind:'agency',id:String(id),label:String(values[0]).slice(0,220),...(previous.AgencyName!==values[0]?{previousLabel:previous.AgencyName}:{})}]
+      event.context.activitySubjectsExact=true
+      event.context.activityOperation=changedFields.length?'Updated agency':'Saved agency (no tracked changes)'
+      return {success:true}
+    }catch(error){await connection.rollback();throw error}finally{connection.release()}
+  }
   if (resourceName === 'site') {
     const ids = siteAgencyIds(body)
     const connection = await pool.getConnection()
@@ -398,5 +417,7 @@ export async function deleteOrganizationResource(event: any) {
 
   const [result] = await pool.execute<any>(`UPDATE ${config.table} SET Status = 'Inactive' WHERE ${config.id} = ?`, [id])
   if (result.affectedRows === 0) throw createError({ statusCode: 404, statusMessage: 'Record not found.' })
+  event.context.activityAction='Update'
+  event.context.activityOperation=`Deactivated ${resourceName}`
   return { success: true }
 }

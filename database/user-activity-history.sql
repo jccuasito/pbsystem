@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS user_activity_event (
+  EventID BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  EventKey VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  Scope VARCHAR(60) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  ActorUserID INT NOT NULL,
+  ActorName VARCHAR(200) NOT NULL,
+  ActorRole VARCHAR(30) NOT NULL,
+  Action VARCHAR(20) NOT NULL,
+  Operation VARCHAR(160) NOT NULL,
+  Outcome VARCHAR(20) NOT NULL,
+  DetailsJson TEXT NOT NULL,
+  CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY uq_activity_event_key (EventKey),
+  KEY ix_activity_time_cursor (CreatedAt, EventID),
+  KEY ix_activity_scope_cursor (Scope, CreatedAt, EventID),
+  KEY ix_activity_actor_cursor (ActorUserID, CreatedAt, EventID),
+  KEY ix_activity_scope_actor_cursor (Scope, ActorUserID, CreatedAt, EventID),
+  KEY ix_activity_scope_actor_action_cursor (Scope, ActorUserID, Action, CreatedAt, EventID),
+  KEY ix_activity_scope_action_cursor (Scope, Action, CreatedAt, EventID),
+  KEY ix_activity_actor_action_cursor (ActorUserID, Action, CreatedAt, EventID),
+  KEY ix_activity_action_cursor (Action, CreatedAt, EventID)
+) ENGINE=InnoDB;

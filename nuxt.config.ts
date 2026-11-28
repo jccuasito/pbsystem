@@ -2,6 +2,9 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: false },
+  // Register the recorder explicitly: adding a server plugin to an already
+  // running dev session must trigger a config reload, not just add its GET UI.
+  nitro: { plugins: ['~~/server/plugins/activity-history.ts'] },
   css: [
     '~~/assets/css/base.css',
     '~~/assets/css/theme.css',

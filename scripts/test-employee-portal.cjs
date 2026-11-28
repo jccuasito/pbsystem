@@ -4,7 +4,7 @@ const h3={createError:d=>Object.assign(new Error(d.statusMessage),d),getQuery:e=
 const staffAuth={requireSession:e=>{if(!e.actor)throw h3.createError({statusCode:401});return e.actor},hashPassword:value=>bcrypt.hash(value,12),passwordMatches:(value,hash)=>bcrypt.compare(value,hash),normalizeEmail:value=>value.trim().toLowerCase(),assertPassword:value=>{if(value.length<12||!/[a-z]/i.test(value)||!/[0-9]/.test(value))throw h3.createError({statusCode:400})}}
 const government=evaluate('shared/utils/governmentIds.ts'),privacy=evaluate('shared/utils/employeePortal.ts'),presentation=evaluate('shared/utils/payslipPresentation.ts')
 const recoveryHelpers=evaluate('server/utils/employeePortalRecovery.ts',{'node:crypto':crypto})
-const requestSecurity=evaluate('server/utils/requestSecurity.ts',{'node:crypto':crypto,'h3':h3,'./inputValidation':{}},{URL,process:{env:{NODE_ENV:'test'}}})
+const requestSecurity=evaluate('server/utils/requestSecurity.ts',{'node:crypto':crypto,'h3':h3,'./inputValidation':{},'./activityHistoryPolicy':{}},{URL,process:{env:{NODE_ENV:'test'}}})
 const publicEvent=(ip='127.0.0.5')=>({cookies:{},headers:{'content-type':'application/json',origin:'http://localhost:3000'},url:'http://localhost:3000',node:{req:{socket:{remoteAddress:ip}}}})
 test('portal pages compile and privacy terms do not waive employee rights',()=>{
  for(const file of ['app/pages/employee-portal/index.vue','app/pages/payroll/payslip/index.vue','app/pages/employees/portal-accounts/index.vue','app/components/EmployeePayslipWorkspace.vue','app/pages/payroll/payslip-sites/index.vue','app/pages/dashboard/index.vue','app/components/EmployeePayslipSheet.vue']){
@@ -34,7 +34,7 @@ test('portal account endpoints and legacy aliases require Employee Management pe
  for(const path of paths)assert.equal(permissions.moduleForPath(path),'employees')
  for(const path of ['/api/payroll/payslips','/api/payroll/payslips/sites','/api/payroll/payslips/archive'])assert.equal(permissions.moduleForPath(path),'payslips')
  let rights={employees:{canView:false,canEdit:false},payslips:{canView:true,canEdit:true}}
- const handler=evaluate('server/middleware/module-access.ts',{'h3':{...h3,getMethod:event=>event.method||'GET'},'../utils/settingsAccess':{moduleForPath:permissions.moduleForPath,currentActor:async()=>({UserID:42,UserType:'Supervisor'}),accessForUser:async()=>rights},'../utils/databaseBackup.mjs':{isDatabaseRestoring:()=>false}}).default
+ const handler=evaluate('server/middleware/module-access.ts',{'h3':{...h3,getMethod:event=>event.method||'GET'},'../utils/settingsAccess':{moduleForPath:permissions.moduleForPath,currentActor:async()=>({UserID:42,UserType:'Supervisor'}),accessForUser:async()=>rights},'../utils/activitySubject':{prepareActivitySubjects:async()=>{}},'../utils/databaseBackup.mjs':{isDatabaseRestoring:()=>false}}).default
  for(const path of paths)await assert.rejects(()=>handler({url:'http://localhost:3000'+path,method:'GET',context:{}}),error=>error.statusCode===403)
  rights={employees:{canView:true,canEdit:false},payslips:{canView:true,canEdit:true}}
  for(const path of paths){await handler({url:'http://localhost:3000'+path,method:'GET',context:{}});await assert.rejects(()=>handler({url:'http://localhost:3000'+path,method:'POST',context:{}}),error=>error.statusCode===403)}
